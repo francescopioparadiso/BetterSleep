@@ -1,0 +1,11 @@
+{
+  "service_name": "BedAnalytics",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8081
+  },
+  "catalog": {
+    "host": "0.0.0.0",
+    "port": 8080
+  }
+}
