@@ -1,4 +1,8 @@
 import json
+import time
+import threading
+from datetime import datetime
+
 import cherrypy
 import requests
 
@@ -9,6 +13,10 @@ class BedAnalytics:
     def __init__(self, conf):
         self.catalog_url = conf['catalogURL']
         self.service_info = conf['serviceInfo']
+        self.remove_interval = conf.get('removeInterval', 10)
+        self._stop_event = threading.Event()
+        self._worker = None
+        self.actualTime=datetime.now().strftime("%Y-%m-%d %H:%M")
         self.register_service()
 
     def register_service(self):
@@ -16,7 +24,8 @@ class BedAnalytics:
         service = {
             "serviceID": self.service_info['serviceID'],
             "name": self.service_info['name'],
-            "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}"
+            "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
+            "last_update": self.actualTime
         }
         try:
             # Note: Changed 'body' to 'json' to handle serialization automatically
@@ -25,6 +34,56 @@ class BedAnalytics:
             print('Successfully registered with Catalog')
         except Exception as e:
             print(f'Registration failed: {e}')
+
+    def update_service(self):
+        """Logic to update this service's info to the Catalog."""
+        service = {
+            "serviceID": self.service_info['serviceID'],
+            "name": self.service_info['name'],
+            "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+        try:
+            # Note: Changed 'body' to 'json' to handle serialization automatically
+            response = requests.put(f'{self.catalog_url}/updateService', json=service, timeout=5)
+            response.raise_for_status()
+            print('Successfully updated with Catalog')
+        except Exception as e:
+            print(f'Update failed: {e}')
+
+    def unregister_service(self):
+        """Logic to unregister this service from the Catalog."""
+        try:
+            response = requests.delete(
+                f'{self.catalog_url}/removeService',
+                params={'serviceID': self.service_info['serviceID']},
+                timeout=5
+            )
+            response.raise_for_status()
+            print('Service unregistered from Catalog')
+        except Exception as e:
+            print(f'Unregister failed: {e}')
+
+    def start_background_loop(self):
+        """Start the background loop for periodic updates."""
+        if self._worker is not None:
+            return
+
+        def _loop():
+            while not self._stop_event.is_set():
+                time.sleep(self.remove_interval)
+                print(f"Updating service info at {datetime.now()}...")
+                self.update_service()
+
+        self._worker = threading.Thread(target=_loop, daemon=True)
+        self._worker.start()
+
+    def stop_background_loop(self):
+        """Stop the background loop for periodic updates."""
+        self._stop_event.set()
+        if self._worker is not None:
+            self._worker.join(timeout=2)
+            self._worker = None
 
 
 
@@ -36,11 +95,16 @@ if __name__ == "__main__":
     # Configure the dispatcher to use GET/POST/PUT/DELETE methods
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
-    cherrypy.tree.mount(BedAnalytics(full_conf), '/', conf)
+    bed_analytics = BedAnalytics(full_conf)
+    cherrypy.tree.mount(bed_analytics, '/', conf)
     cherrypy.config.update({
         'server.socket_host': full_conf['serviceInfo']['host'],
         'server.socket_port': full_conf['serviceInfo']['port']
     })
+
+    cherrypy.engine.subscribe('start', bed_analytics.start_background_loop)
+    cherrypy.engine.subscribe('stop', bed_analytics.stop_background_loop)
+    cherrypy.engine.subscribe('stop', bed_analytics.unregister_service)
 
     cherrypy.engine.start()
     cherrypy.engine.block()

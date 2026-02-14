@@ -1,7 +1,7 @@
 -- ==========================================
--- 1. CLEANUP (Optional: Drops tables to start fresh)
+-- 1. CLEANUP
 -- ==========================================
-DROP TABLE IF EXISTS device_services CASCADE;
+DROP TABLE IF EXISTS devices_services_details CASCADE;
 DROP TABLE IF EXISTS devices CASCADE;
 DROP TABLE IF EXISTS bedrooms CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
@@ -9,21 +9,29 @@ DROP TABLE IF EXISTS services CASCADE;
 DROP TABLE IF EXISTS project_config CASCADE;
 
 -- ==========================================
--- 2. SCHEMA DEFINITION
+-- 2. CONFIGURAZIONE FUSO ORARIO (SINTASSI CORRETTA)
+-- ==========================================
+-- Imposta il timezone per il database corrente
+-- Imposta il fuso orario per l'intero database
+ALTER DATABASE bettersleep_catalog SET timezone TO 'Europe/Rome';
+
+-- Forza il fuso orario per la sessione corrente
+SET timezone = 'Europe/Rome';
+
+-- ==========================================
+-- 3. SCHEMA DEFINITION
 -- ==========================================
 
--- Table for the "servicesList" (Microservices in the architecture)
 CREATE TABLE services (
-    service_id VARCHAR(100) PRIMARY KEY,
+    service_id INT PRIMARY KEY,
     name TEXT,
     endpoint VARCHAR(255),
-    timestamp TIMESTAMP
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Tabella utenti
 CREATE TABLE users (
-    user_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- Auto-generato
-    username VARCHAR(100) UNIQUE NOT NULL,                -- Nome unico
+    user_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    username VARCHAR(100) UNIQUE NOT NULL,
     telegram_chat_id BIGINT
 );
 
@@ -33,23 +41,18 @@ CREATE TABLE bedrooms (
     room_name VARCHAR(100) DEFAULT 'Bedroom'
 );
 
-
-
--- Table for "devicesList"
 CREATE TABLE devices (
-    device_id INT PRIMARY KEY,
+    device_id VARCHAR(100) PRIMARY KEY,
     device_name VARCHAR(100),
-    measure_types TEXT[], -- Postgres Array to store ["Temperature", "Humidity"]
-    bedroom_id INT REFERENCES bedrooms(bedroom_id) ON DELETE SET NULL, -- Link to room
-    last_update TIMESTAMP
+    measure_types TEXT[],
+    bedroom_id INT REFERENCES bedrooms(bedroom_id) ON DELETE SET NULL,
+    last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Table for "service-sDetails" (How to connect to the device)
 CREATE TABLE devices_services_details (
     id SERIAL PRIMARY KEY,
-    device_id INT REFERENCES devices(device_id) ON DELETE CASCADE,
-    service_type VARCHAR(20), -- 'MQTT' or 'REST'
-    service_ip VARCHAR(100),  -- For REST
-    mqtt_topics TEXT[]        -- For MQTT (Array of strings)
+    device_id VARCHAR(100) REFERENCES devices(device_id) ON DELETE CASCADE,
+    service_type VARCHAR(20),
+    service_ip VARCHAR(100),
+    mqtt_topics TEXT[]
 );
-

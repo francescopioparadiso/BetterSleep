@@ -11,6 +11,5 @@
       "topic": "bed/analytics"
     },
   "catalogURL": "http://localhost:8080",
-  "removeInterval": 10,
-  "removeThreshold": 20
+  "removeInterval": 10
 }

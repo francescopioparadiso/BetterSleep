@@ -1,6 +1,8 @@
 import json
 import sys
 import cherrypy
+import threading
+import time
 from postgres_db import PostgresDB
 
 
@@ -29,8 +31,33 @@ class Catalog:
 
     exposed = True
 
-    def __init__(self, db_adaptor):
+    def __init__(self, db_adaptor, cleanup_interval_s=30, service_ttl_s=60):
         self.db = db_adaptor
+        self.cleanup_interval_s = cleanup_interval_s
+        self.service_ttl_s = service_ttl_s
+        self._stop_event = threading.Event()
+        self._worker = None
+
+    def start_cleanup_loop(self):
+        if self._worker is not None:
+            return
+
+        def _loop():
+            while not self._stop_event.is_set():
+                print("Running cleanup loop...")
+                deleted = self.db.delete_stale_services_count(self.service_ttl_s)
+                if deleted:
+                    print(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
+                time.sleep(self.cleanup_interval_s)
+
+        self._worker = threading.Thread(target=_loop, daemon=True)
+        self._worker.start()
+
+    def stop_cleanup_loop(self):
+        self._stop_event.set()
+        if self._worker is not None:
+            self._worker.join(timeout=2)
+            self._worker = None
 
     # --------------------------------------------------------
     # POST METHOD - Add new resources
@@ -219,6 +246,9 @@ if __name__ == "__main__":
             full_conf = json.load(f)
             server_conf = full_conf['server']
             db_conf = full_conf['database']
+            cleanup_conf = full_conf.get('service_cleanup', {})
+            cleanup_interval_s = cleanup_conf.get('interval_seconds', 30)
+            service_ttl_s = cleanup_conf.get('ttl_seconds', 60)
     except Exception as e:
         print(f"Error reading conf.json: {e}")
         sys.exit(1)
@@ -227,7 +257,8 @@ if __name__ == "__main__":
     my_db_adaptor = PostgresDB(db_conf)
 
     # Mount the Catalog REST Service
-    cherrypy.tree.mount(Catalog(my_db_adaptor), '/', conf)
+    catalog = Catalog(my_db_adaptor, cleanup_interval_s, service_ttl_s)
+    cherrypy.tree.mount(catalog, '/', conf)
 
     # Configure Server Settings
     cherrypy.config.update({
@@ -237,5 +268,7 @@ if __name__ == "__main__":
 
     # Start the Web Server
     print(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
+    cherrypy.engine.subscribe('start', catalog.start_cleanup_loop)
+    cherrypy.engine.subscribe('stop', catalog.stop_cleanup_loop)
     cherrypy.engine.start()
     cherrypy.engine.block()

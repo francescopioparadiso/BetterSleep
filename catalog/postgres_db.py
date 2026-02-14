@@ -45,19 +45,48 @@ class PostgresDB:
             VALUES (%s, %s, %s, %s)
         """
         # Just one line to execute everything!
-        return self._execute(query, (s['serviceID'], s['name'],s['endpoint'] ,datetime.now().strftime("%Y-%m-%d %H:%M")))
+        return self._execute(query, (s['serviceID'], s['name'],s['endpoint'] ,s['last_update']))
 
     def update_service(self, s):
         query = """
             UPDATE services
-            SET rest_endpoint = %s, mqtt_topic = %s, timestamp = %s
+            SET name = %s, endpoint = %s, timestamp = %s
             WHERE service_id = %s
         """
-        return self._execute(query, (s['serviceID'], s['name'],s['endpoint'] ,datetime.now().strftime("%Y-%m-%d %H:%M")))
+        return self._execute(query, ( s['name'],s['endpoint'] ,s['last_update'],s['serviceID']))
     def delete_service(self, service_id):
         query = "DELETE FROM services WHERE service_id = %s"
         return self._execute(query, (service_id,))
 
+    def delete_stale_services(self, ttl_seconds):
+        query = """
+            DELETE FROM services
+            WHERE timestamp IS NULL
+               OR timestamp < (NOW() - (%s * INTERVAL '1 second'))
+        """
+        return self._execute(query, (ttl_seconds,))
+
+    def delete_stale_services_count(self, ttl_seconds):
+        # Usiamo l'operatore * con INTERVAL '1 second'
+        query = """
+                DELETE \
+                FROM services
+                WHERE timestamp < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                   OR timestamp IS NULL \
+                """
+        conn = None
+        try:
+            conn = self.connect()
+            with conn:
+                with conn.cursor() as cur:
+                    # Forza il valore a intero per sicurezza
+                    cur.execute(query, (int(ttl_seconds),))
+                    return cur.rowcount
+        except Exception as e:
+            print(f"Errore durante il cleanup: {e}")
+            return 0
+        finally:
+            if conn: conn.close()
     def insert_device(self, d):
         query = """
             INSERT INTO devices (device_id, device_name, measure_types,bedroom_id)

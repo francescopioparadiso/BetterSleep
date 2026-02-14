@@ -19,5 +19,9 @@
   "broker": {
     "host": "broker.hivemq.com",
     "port": 1883
+  },
+  "service_cleanup": {
+    "interval_seconds": 10,
+    "ttl_seconds": 30
   }
 }
