@@ -22,19 +22,20 @@ CREATE TABLE services (
     timestamp TIMESTAMP
 );
 
--- Table for "usersList"
+-- Tabella utenti
 CREATE TABLE users (
-    user_id INT PRIMARY KEY, -- Using INT to match your JSON "userID": 1
-    username VARCHAR(100),
+    user_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- Auto-generato
+    username VARCHAR(100) UNIQUE NOT NULL,                -- Nome unico
     telegram_chat_id BIGINT
 );
 
--- Table for Bedrooms (Links Users to Rooms)
 CREATE TABLE bedrooms (
-    bedroom_id INT PRIMARY KEY,
+    bedroom_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
     room_name VARCHAR(100) DEFAULT 'Bedroom'
 );
+
+
 
 -- Table for "devicesList"
 CREATE TABLE devices (

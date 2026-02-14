@@ -14,8 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_catalog.sql:/docker-entrypoint-initdb.d/init_catalog.sql
-    networks:
-      - bettersleep
+
 
   # --- 2. MongoDB Time Series Data ---
   timeseries-mongo:
@@ -29,8 +28,7 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
-    networks:
-      - bettersleep
+
 
 volumes:
   postgres_data:

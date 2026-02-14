@@ -1,4 +1,6 @@
 import sys
+from datetime import datetime
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -43,7 +45,7 @@ class PostgresDB:
             VALUES (%s, %s, %s, %s)
         """
         # Just one line to execute everything!
-        return self._execute(query, (s['serviceID'], s['REST_endpoint'], s['MQTT_topic'], s['timestamp']))
+        return self._execute(query, (s['serviceID'], s['REST_endpoint'], s['MQTT_topic'], datetime.now().strftime("%Y-%m-%d %H:%M")))
 
     def update_service(self, s):
         query = """
@@ -51,7 +53,45 @@ class PostgresDB:
             SET rest_endpoint = %s, mqtt_topic = %s, timestamp = %s
             WHERE service_id = %s
         """
-        return self._execute(query, (s['REST_endpoint'], s['MQTT_topic'], s['timestamp'], s['serviceID']))
+        return self._execute(query, (s['REST_endpoint'], s['MQTT_topic'], datetime.now().strftime("%Y-%m-%d %H:%M"), s['serviceID']))
     def delete_service(self, service_id):
         query = "DELETE FROM services WHERE service_id = %s"
         return self._execute(query, (service_id,))
+
+    def insert_device(self, d):
+        query = """
+            INSERT INTO devices (device_id, device_name, measure_types,bedroom_id)
+            VALUES (%s, %s, %s, %s)
+        """
+        return self._execute(query, (d['deviceID'], d['deviceName'], d['measureTypes'], d['bedroomID']))
+
+    def update_device(self, d):
+        query = """
+            UPDATE devices
+            SET device_name = %s, measure_types = %s, bedroom_id = %s
+            WHERE device_id = %s
+        """
+        return self._execute(query, (d['deviceName'], d['measureTypes'], d['bedroomID'], d['deviceID']))
+
+    def delete_device(self, device_id):
+        query = "DELETE FROM devices WHERE device_id = %s"
+        return self._execute(query, (device_id,))
+
+    def insert_user(self, u):
+        query = """
+            INSERT INTO users (username, telegram_chat_id)
+            VALUES (%s, %s)
+        """
+        return self._execute(query, (u['username'], u['telegram_chat_id']))
+
+    def update_user(self, u):
+        query = """
+            UPDATE users
+            SET telegram_chat_id = %s
+            WHERE username = %s
+        """
+        return self._execute(query, (u['telegram_chat_id'], u['username']))
+
+    def delete_user(self, username):
+        query = "DELETE FROM users WHERE username = %s"
+        return self._execute(query, (username,))
