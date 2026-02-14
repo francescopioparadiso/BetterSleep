@@ -45,8 +45,8 @@ CREATE TABLE devices (
     last_update TIMESTAMP
 );
 
--- Table for "servicesDetails" (How to connect to the device)
-CREATE TABLE servicesDetails (
+-- Table for "service-sDetails" (How to connect to the device)
+CREATE TABLE devices_services_details (
     id SERIAL PRIMARY KEY,
     device_id INT REFERENCES devices(device_id) ON DELETE CASCADE,
     service_type VARCHAR(20), -- 'MQTT' or 'REST'

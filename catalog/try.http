@@ -1,0 +1,20 @@
+
+# curl -X POST http://localhost:8000/addService
+#     -H "Content-Type: application/json"
+#     -d '{
+#           "serviceID": "Time Shift 001",
+#           "REST_endpoint": "",
+#           "MQTT_topic": "",
+#           "timestamp": ""
+#         }'
+POST http://localhost:8080/addService
+Content-Type: application/json
+
+{
+  "serviceID": "Time Shift 001",
+  "REST_endpoint": "",
+  "MQTT_topic": "",
+  "timestamp": "2020-03-30 12:58"
+}
+###
+DELETE http://localhost:8080/removeService?serviceID=Time Shift 001

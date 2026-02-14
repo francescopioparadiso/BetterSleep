@@ -1,14 +1,11 @@
-FROM python:3.12
+FROM python:3.12-slim
 
-# Imposta la cartella di lavoro dentro il container (così i file finiscono qui e non a caso)
 WORKDIR /app
 
-# Copia prima i requirements (per sfruttare la cache di Docker e velocizzare le build successive)
 COPY requirements.txt .
-RUN pip3 install -r requirements.txt
 
-# Copia tutto il resto (inclusi catalog.py, postgres.py, conf.json, ecc.)
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . .
 
-# Comando di avvio
 CMD ["python3", "catalog.py"]

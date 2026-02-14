@@ -1,23 +1,25 @@
-
 services:
   # --- 1. PostgreSQL (For Catalog) ---
   catalog-postgres:
-    image: postgres:15-alpine
+    image: postgres:latest
     container_name: bs_postgres
     restart: always
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password_sql
       POSTGRES_DB: bettersleep_catalog
+      PGDATA: /var/lib/postgresql/data
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_catalog.sql:/docker-entrypoint-initdb.d/init_catalog.sql
+    networks:
+      - bettersleep
 
   # --- 2. MongoDB Time Series Data ---
   timeseries-mongo:
-    image: mongo:6.0
+    image: mongo:latest
     container_name: bs_mongo
     restart: always
     environment:
@@ -27,6 +29,8 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    networks:
+      - bettersleep
 
 volumes:
   postgres_data:

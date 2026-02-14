@@ -2,7 +2,7 @@ import json
 import cherrypy
 import sys
 
-from catalog.postgres_db import PostgresDB
+from postgres_db import PostgresDB
 
 # --- CLASS 2: REST SERVICE (Handles HTTP) ---
 def checkifisaService(new_service):
@@ -65,7 +65,7 @@ class Catalog:
 
         if uri[0] == "removeService":
             service_id = params.get('serviceID')
-
+            print(service_id)
             if not service_id:
                 raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
 
