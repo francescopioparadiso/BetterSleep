@@ -35,6 +35,12 @@ class PostgresDB:
         except psycopg2.IntegrityError:
             print("Error: Duplicate key or constraint violation.")
             return False
+        except psycopg2.OperationalError as e:
+            print(f"Operational error: {e}")
+            return False
+        except psycopg2.DatabaseError as e:
+            print(f"Database error: {e}")
+            return False
         except Exception as e:
             print(f"Generic SQL error: {e}")
             return False
