@@ -45,8 +45,8 @@ class Catalog:
         def _loop():
             while not self._stop_event.is_set():
                 print("Running cleanup loop...")
-                deleted = self.db.delete_stale_services_count(self.service_ttl_s)
-                if deleted:
+                deleted = self.db.delete_stale_services(self.service_ttl_s)
+                if deleted > 0:
                     print(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
                 time.sleep(self.cleanup_interval_s)
 
@@ -56,7 +56,7 @@ class Catalog:
     def stop_cleanup_loop(self):
         self._stop_event.set()
         if self._worker is not None:
-            self._worker.join(timeout=2)
+            self._worker.join(timeout=10)
             self._worker = None
 
     # --------------------------------------------------------

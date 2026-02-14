@@ -16,7 +16,7 @@ class BedAnalytics:
         self.remove_interval = conf.get('removeInterval', 10)
         self._stop_event = threading.Event()
         self._worker = None
-        self.actualTime=datetime.now().strftime("%Y-%m-%d %H:%M")
+        self.actualTime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.register_service()
 
     def register_service(self):
@@ -25,7 +25,7 @@ class BedAnalytics:
             "serviceID": self.service_info['serviceID'],
             "name": self.service_info['name'],
             "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
-            "last_update": self.actualTime
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         try:
             # Note: Changed 'body' to 'json' to handle serialization automatically
@@ -41,7 +41,7 @@ class BedAnalytics:
             "serviceID": self.service_info['serviceID'],
             "name": self.service_info['name'],
             "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
-            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M")
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         try:
             # Note: Changed 'body' to 'json' to handle serialization automatically

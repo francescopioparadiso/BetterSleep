@@ -29,13 +29,32 @@ class PostgresDB:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(query, params)
-                    return cur.rowcount > 0 or True # True if the query doesn't return rows but succeeds
+                    if cur.description is not None:
+                        return True
+                    return cur.rowcount > 0
         except psycopg2.IntegrityError:
             print("Error: Duplicate key or constraint violation.")
             return False
         except Exception as e:
             print(f"Generic SQL error: {e}")
             return False
+        finally:
+            if conn: conn.close()
+
+    def _execute_rowcount(self, query, params=None):
+        """
+        Private helper method that returns the number of affected rows.
+        """
+        conn = None
+        try:
+            conn = self.connect()
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    return cur.rowcount
+        except Exception as e:
+            print(f"Generic SQL error: {e}")
+            return 0
         finally:
             if conn: conn.close()
 
@@ -58,35 +77,16 @@ class PostgresDB:
         query = "DELETE FROM services WHERE service_id = %s"
         return self._execute(query, (service_id,))
 
-    def delete_stale_services(self, ttl_seconds):
-        query = """
-            DELETE FROM services
-            WHERE timestamp IS NULL
-               OR timestamp < (NOW() - (%s * INTERVAL '1 second'))
-        """
-        return self._execute(query, (ttl_seconds,))
-
-    def delete_stale_services_count(self, ttl_seconds):
-        # Usiamo l'operatore * con INTERVAL '1 second'
+    def delete_stale_services(self, tot):
         query = """
                 DELETE \
                 FROM services
-                WHERE timestamp < CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
-                   OR timestamp IS NULL \
+                WHERE timestamp < (NOW() - make_interval(secs => %s))
+                   OR timestamp IS NULL;
                 """
-        conn = None
-        try:
-            conn = self.connect()
-            with conn:
-                with conn.cursor() as cur:
-                    # Forza il valore a intero per sicurezza
-                    cur.execute(query, (int(ttl_seconds),))
-                    return cur.rowcount
-        except Exception as e:
-            print(f"Errore durante il cleanup: {e}")
-            return 0
-        finally:
-            if conn: conn.close()
+        # Assicurati che 'tot' sia il numero di secondi (es. 60)
+        return self._execute_rowcount(query, (tot,))
+
     def insert_device(self, d):
         query = """
             INSERT INTO devices (device_id, device_name, measure_types,bedroom_id)
