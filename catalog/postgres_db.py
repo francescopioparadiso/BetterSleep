@@ -41,11 +41,11 @@ class PostgresDB:
 
     def insert_service(self, s):
         query = """
-            INSERT INTO services (service_id, rest_endpoint, mqtt_topic, timestamp)
+            INSERT INTO services (service_id, name, endpoint, timestamp)
             VALUES (%s, %s, %s, %s)
         """
         # Just one line to execute everything!
-        return self._execute(query, (s['serviceID'], s['REST_endpoint'], s['MQTT_topic'], datetime.now().strftime("%Y-%m-%d %H:%M")))
+        return self._execute(query, (s['serviceID'], s['name'],s['endpoint'] ,datetime.now().strftime("%Y-%m-%d %H:%M")))
 
     def update_service(self, s):
         query = """
@@ -53,7 +53,7 @@ class PostgresDB:
             SET rest_endpoint = %s, mqtt_topic = %s, timestamp = %s
             WHERE service_id = %s
         """
-        return self._execute(query, (s['REST_endpoint'], s['MQTT_topic'], datetime.now().strftime("%Y-%m-%d %H:%M"), s['serviceID']))
+        return self._execute(query, (s['serviceID'], s['name'],s['endpoint'] ,datetime.now().strftime("%Y-%m-%d %H:%M")))
     def delete_service(self, service_id):
         query = "DELETE FROM services WHERE service_id = %s"
         return self._execute(query, (service_id,))

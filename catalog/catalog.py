@@ -10,7 +10,7 @@ from postgres_db import PostgresDB
 
 def check_if_is_a_service(new_service):
     """Validate that the service contains all required fields."""
-    required_fields = ['serviceID', 'REST_endpoint', 'MQTT_topic']
+    required_fields = ['serviceID','name']
     if not all(field in new_service for field in required_fields):
         raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 
@@ -26,14 +26,10 @@ def check_if_is_a_device(new_device):
 # ============================================================
 
 class Catalog:
-    """
-    REST API Service for managing the IoT Catalog.
-    Handles Services, Devices, and Users via HTTP methods.
-    """
+
     exposed = True
 
     def __init__(self, db_adaptor):
-        """Initialize the Catalog with a database adaptor (Dependency Injection)."""
         self.db = db_adaptor
 
     # --------------------------------------------------------

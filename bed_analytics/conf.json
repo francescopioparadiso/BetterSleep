@@ -1,11 +1,16 @@
 {
-  "service_name": "BedAnalytics",
-  "server": {
+  "serviceInfo": {
+    "serviceID": 1,
+    "name": "BedAnalytics",
     "host": "0.0.0.0",
-    "port": 8081
+    "port": 9091
   },
-  "catalog": {
-    "host": "0.0.0.0",
-    "port": 8080
-  }
+ "MQTT": {
+      "broker": "localhost",
+      "port": 1883,
+      "topic": "bed/analytics"
+    },
+  "catalogURL": "http://localhost:8080",
+  "removeInterval": 10,
+  "removeThreshold": 20
 }

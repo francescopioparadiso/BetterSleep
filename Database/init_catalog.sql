@@ -15,10 +15,8 @@ DROP TABLE IF EXISTS project_config CASCADE;
 -- Table for the "servicesList" (Microservices in the architecture)
 CREATE TABLE services (
     service_id VARCHAR(100) PRIMARY KEY,
-    description TEXT,
-    rest_endpoint VARCHAR(255),
-    mqtt_topic VARCHAR(255),
-    token VARCHAR(255),
+    name TEXT,
+    endpoint VARCHAR(255),
     timestamp TIMESTAMP
 );
 
