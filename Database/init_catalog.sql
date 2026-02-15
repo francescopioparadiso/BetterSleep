@@ -6,6 +6,7 @@ CREATE TABLE services (
     service_id INT PRIMARY KEY,
     name TEXT,
     endpoint VARCHAR(255),
+    type VARCHAR(20),
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

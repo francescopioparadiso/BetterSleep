@@ -3,7 +3,8 @@
     "serviceID": 3,
     "name": "Time Series DB Adapter",
     "host": "0.0.0.0",
-    "port": 9093
+    "port": 9093,
+    "type": "DatabaseAdapter"
   },
  "MQTT": {
       "broker": "localhost",

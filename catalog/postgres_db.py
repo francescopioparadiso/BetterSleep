@@ -77,19 +77,27 @@ class PostgresDB:
 #CRUD operations for services, devices and users
     def insert_service(self, s):
         query = """
-            INSERT INTO services (service_id, name, endpoint, timestamp)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO services (service_id, name, endpoint, timestamp, type)
+            VALUES (%s, %s, %s, %s, %s)
         """
         # Just one line to execute everything!
-        return self._execute(query, (s['serviceID'], s['name'],s['endpoint'] ,s['last_update']))
+        return self._execute(query, (s['serviceID'], s['name'],s['endpoint'] ,s['last_update'],s['type']))
 
     def update_service(self, s):
         query = """
             UPDATE services
-            SET name = %s, endpoint = %s, timestamp = %s
+            SET name = %s, endpoint = %s, timestamp = %s , type = %s
             WHERE service_id = %s
         """
-        return self._execute(query, ( s['name'],s['endpoint'] ,s['last_update'],s['serviceID']))
+        return self._execute(query, ( s['name'],s['endpoint'] ,s['last_update'],s['serviceID'],s['type']))
+    def update_service_last_update(self,service_id, last_update):
+        query = """
+            UPDATE services
+            SET timestamp = %s
+            WHERE service_id = %s
+        """
+        return self._execute(query, (last_update, service_id))
+
     def delete_service(self, service_id):
         query = "DELETE FROM services WHERE service_id = %s"
         return self._execute(query, (service_id,))

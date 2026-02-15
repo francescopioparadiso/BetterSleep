@@ -3,7 +3,8 @@
     "serviceID": 2,
     "name": "Sleep Cycle Manager",
     "host": "0.0.0.0",
-    "port": 9092
+    "port": 9092,
+    "type": "Manager"
   },
  "MQTT": {
       "broker": "localhost",

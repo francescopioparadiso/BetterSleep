@@ -12,7 +12,7 @@ from postgres_db import PostgresDB
 
 def check_if_is_a_service(new_service):
     """Validate that the service contains all required fields."""
-    required_fields = ['serviceID','name']
+    required_fields = ['serviceID','name','type','endpoint']
     if not all(field in new_service for field in required_fields):
         raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 
@@ -155,7 +155,21 @@ class Catalog:
                 else:
                     print(f"Update failed for serviceID {updated_service.get('serviceID')}")
                     raise cherrypy.HTTPError(404, "The Service ID does not exist")
+            except json.JSONDecodeError:
+                raise cherrypy.HTTPError(400, "Invalid JSON format")
+        elif uri[0] == "updateServiceLastUpdate":
+            body = cherrypy.request.body.read()
+            try:
+                updated_service = json.loads(body)
+                if 'serviceID' not in updated_service or 'last_update' not in updated_service:
+                    raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 
+                success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
+                if success:
+                    return json.dumps({"status": "success", "message": "Service last_update updated"})
+                else:
+                    print(f"Update failed for serviceID {updated_service.get('serviceID')}")
+                    raise cherrypy.HTTPError(404, "The Service ID does not exist")
             except json.JSONDecodeError:
                 raise cherrypy.HTTPError(400, "Invalid JSON format")
 

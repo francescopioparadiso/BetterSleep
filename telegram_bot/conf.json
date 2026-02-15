@@ -3,7 +3,8 @@
     "serviceID": 4,
     "name": "Telegram Bot",
     "host": "0.0.0.0",
-    "port": 9094
+    "port": 9094,
+    "type": "TelegramBot"
   },
  "MQTT": {
       "broker": "localhost",

@@ -44,6 +44,7 @@ class TimeSeriesDBAdapter:
             "serviceID": self.service_info['serviceID'],
             "name": self.service_info['name'],
             "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
+            "type": self.service_info.get('type', 'DatabaseAdapter'),
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         try:
@@ -70,12 +71,10 @@ class TimeSeriesDBAdapter:
 
         service = {
             "serviceID": self.service_info['serviceID'],
-            "name": self.service_info['name'],
-            "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         try:
-            response = requests.put(f'{self.catalog_url}/updateService', json=service, timeout=5)
+            response = requests.put(f'{self.catalog_url}/updateServiceLastUpdate', json=service, timeout=5)
             response.raise_for_status()
             print('Successfully updated with Catalog')
         except HTTPError as e:
