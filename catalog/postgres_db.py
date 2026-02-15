@@ -1,8 +1,5 @@
 import sys
-from datetime import datetime
-
 import psycopg2
-from psycopg2.extras import RealDictCursor
 
 class PostgresDB:
     def __init__(self, db_conf):
@@ -64,6 +61,9 @@ class PostgresDB:
         finally:
             if conn: conn.close()
 
+
+#############################
+#CRUD operations for services, devices and users
     def insert_service(self, s):
         query = """
             INSERT INTO services (service_id, name, endpoint, timestamp)

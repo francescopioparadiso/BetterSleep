@@ -1,0 +1,15 @@
+{
+  "serviceInfo": {
+    "serviceID": 4,
+    "name": "Telegram Bot",
+    "host": "0.0.0.0",
+    "port": 9094
+  },
+ "MQTT": {
+      "broker": "localhost",
+      "port": 1883,
+      "topic": "bed/analytics"
+    },
+  "catalogURL": "http://localhost:8080",
+  "removeInterval": 10
+}
