@@ -123,3 +123,8 @@ class PostgresDB:
     def get_endpoint_server_database(self):
         query = "SELECT  endpoint FROM services WHERE type = 'DatabaseAdapter' LIMIT 1"
         return self._execute(query, fetch=True, single=True)
+
+    def check_join_bedroom(self, room_id, password):
+        query = "SELECT 1 FROM bedrooms WHERE bedroom_id = %s AND password = %s"
+        result = self._execute(query, (room_id, password), fetch=True, single=True)
+        return result is not None
