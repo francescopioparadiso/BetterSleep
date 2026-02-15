@@ -64,26 +64,39 @@ class TelegramBot:
             elif curr_state == "waiting_room_password":
                 room_name = self.user_states[chat_ID]["room_name"]
                 password = message
-                self.bot.sendMessage(chat_ID, f"Room '{room_name}' created successfully with password '{password}'!")
-                try:
-                    bedroom={
-                        "room_name": room_name,
-                        "password": password
-                    }
-                    res = requests.post(f"{self.catalog_url}/addBedroom",json=bedroom)
 
+                bedroom = {
+                    "room_name": room_name,
+                    "password": password
+                }
+
+                try:
+                    res = requests.post(f"{self.catalog_url}/addBedroom", json=bedroom)
                     if res.status_code == 200:
-                        self.bot.sendMessage(chat_ID, f"Successfully created room '{room_name}'!")
+                        # Assumiamo che il server ritorni JSON con il nuovo bedroom_id
+                        data = res.json()
+                        room_id = data.get("bedroom_id")  # <- qui ottieni l'ID
+                        self.bot.sendMessage(chat_ID, f"Successfully created room '{room_name}' with ID {room_id}!")
                     else:
                         self.bot.sendMessage(chat_ID, "Access denied: room creation failed.")
+                        room_id = None
                 except Exception as e:
                     self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
-                del self.user_states[chat_ID]
+                    room_id = None
+
+                if room_id:
+                    self.user_states[chat_ID] = {
+                        "state": "registing_user",
+                        "bedroom_id": room_id
+                    }
+                    print(f"User {chat_ID} registered in room {room_id}")
+                    self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
 
             elif curr_state == "waiting_join_bedroom_id":
                 self.user_states[chat_ID]["join_id"] = message
                 self.user_states[chat_ID]["state"] = "waiting_join_password"
                 self.bot.sendMessage(chat_ID, "Enter the password for this room:")
+
 
             elif curr_state == "waiting_join_password":
                 room_id = self.user_states[chat_ID]["join_id"]
@@ -93,12 +106,42 @@ class TelegramBot:
                                        params={"bedroom_id": room_id, "password": password})
                     if res.status_code == 200:
                         self.bot.sendMessage(chat_ID, f"Successfully joined room {room_id}!")
+                        self.user_states[chat_ID] = {
+                            "state": "registing_user",
+                            "bedroom_id": room_id
+                        }
+                        self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
                     else:
                         self.bot.sendMessage(chat_ID, "Access denied: wrong ID or password.")
+                        self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
+                except requests.exceptions.RequestException as e:
+                    self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+                    self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
+
+            elif curr_state == "registing_user":
+                # Get room_id from either creating or joining a room
+                bedroom_id = self.user_states[chat_ID].get("bedroom_id")
+                print(bedroom_id)
+                username = message
+                user = {
+                    "username": username,
+                    "telegram_chat_id": chat_ID,
+                    "bedroom_id": bedroom_id
+                }
+                try:
+                    res = requests.get(f"{self.catalog_url}/checkUsername",
+                                        params={"username": username})
+                    if res.status_code == 200 and res.json().get("exists"):
+                            self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another one.")
+                            return
+
+                    res = requests.post(f"{self.catalog_url}/addUser", json=user)
+                    if res.status_code == 200:
+                        self.bot.sendMessage(chat_ID, f"Successfully registered as '{username}' in room {bedroom_id}!")
+                    elif res.status_code == 409:
+                        self.bot.sendMessage(chat_ID, f"Error You are already registered in a room")
                 except Exception as e:
                     self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
-
-                del self.user_states[chat_ID]
 
     def send_room_options(self, chat_ID):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[

@@ -122,11 +122,12 @@ class Catalog:
                 new_bedroom = json.loads(body)
                 if  'room_name' not in new_bedroom or 'password' not in new_bedroom:
                     raise cherrypy.HTTPError(400, "Missing required fields in JSON")
-                success = self.db.insert_bedroom(new_bedroom)
-                if success:
-                    return json.dumps({"status": "success", "message": "Bedroom Added"})
+                beed_room_id = self.db.insert_bedroom(new_bedroom)
+                if beed_room_id:
+                    return json.dumps({"status": "success", "message": "Bedroom Added", "bedroom_id": beed_room_id})
                 else:
-                    raise cherrypy.HTTPError(400, "Error adding bedroom")
+                    raise cherrypy.HTTPError(409, "Failed to create bedroom")
+
             except json.JSONDecodeError:
                 raise cherrypy.HTTPError(400, "Invalid JSON format")
 
@@ -278,9 +279,23 @@ class Catalog:
                 raise cherrypy.HTTPError(400, "Missing 'bedroom_id' or 'password' parameter")
             try:
                 can_join = self.db.check_join_bedroom(bedroom_id, password)
+                print(can_join)
+                if not can_join :
+                    raise cherrypy.HTTPError(404, "Bedroom not found")
                 return json.dumps({"status": "success", "can_join": can_join})
             except Exception as e:
                 print(f"Error checking join bedroom: {e}")
+                raise cherrypy.HTTPError(500, "Internal Server Error")
+        elif uri[0] == "checkUsername":
+            username = params.get('username')
+            if not username:
+                raise cherrypy.HTTPError(400, "Missing 'username' parameter")
+            try:
+                exists = self.db.check_user_exists(username)
+                print(exists)
+                return json.dumps({"status": "success", "exists": exists})
+            except Exception as e:
+                print(f"Error checking username: {e}")
                 raise cherrypy.HTTPError(500, "Internal Server Error")
         else:
             raise cherrypy.HTTPError(404, "Endpoint not found")

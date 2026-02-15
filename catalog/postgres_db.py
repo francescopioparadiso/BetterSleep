@@ -102,8 +102,19 @@ class PostgresDB:
 
     # --- CRUD USERS ---
     def insert_user(self, u):
-        query = "INSERT INTO users (username, telegram_chat_id) VALUES (%s, %s)"
-        return self._execute(query, (u['username'], u['telegram_chat_id']))
+        query = "INSERT INTO users (username, telegram_chat_id, bedroom_id) VALUES (%s, %s, %s)"
+        return self._execute(query, (u['username'], u['telegram_chat_id'], u.get('bedroom_id')))
+
+    def check_user_exists(self, username):
+        username = username.strip()  # rimuove spazi iniziali/finali
+        print(f"Checking username: '{username}'")
+
+        query = "SELECT 1 FROM users WHERE username = %s"
+        result = self._execute(query, (username,), fetch=True, single=True)
+
+        print(f"Query result: {result}")
+
+        return result is not None
 
     def update_user(self, u):
         query = "UPDATE users SET telegram_chat_id = %s WHERE username = %s"
@@ -111,8 +122,15 @@ class PostgresDB:
 
     # --- BEDROOMS & CHECKS ---
     def insert_bedroom(self, b):
-        query = "INSERT INTO bedrooms (room_name, password) VALUES (%s, %s)"
-        return self._execute(query, (b['room_name'], b['password']))
+        query = """
+                INSERT INTO bedrooms (room_name, password)
+                VALUES (%s, %s)
+                RETURNING bedroom_id \
+                """
+        # _execute deve restituire la riga con RETURNING
+        result = self._execute(query, (b['room_name'], b['password']), fetch=True, single=True)
+        # result dovrebbe essere qualcosa come [(id,)]
+        return result[0] if result else None
 
     def room_exists(self, room_id):
         query = "SELECT 1 FROM bedrooms WHERE bedroom_id = %s"
