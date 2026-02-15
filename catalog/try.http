@@ -18,3 +18,22 @@ Content-Type: application/json
 }
 ###
 DELETE http://localhost:8080/removeService?serviceID=Time Shift 001
+###
+
+POST http://localhost:8080/addBedroom
+Content-Type: application/json
+
+{
+  "room_name": "Bedroom 001",
+  "password": "123"
+}
+
+###
+POST http://localhost:8080/addUser
+Content-Type: application/json
+
+{
+  "username": "User 001",
+  "telegram_chat_id": "123456789",
+  "bedroom_id": "1"
+}

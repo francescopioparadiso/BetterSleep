@@ -104,9 +104,10 @@ class Catalog:
             body = cherrypy.request.body.read()
             try:
                 new_user = json.loads(body)
-                if 'username' not in new_user or 'telegram_chat_id' not in new_user:
+                if 'username' not in new_user or 'telegram_chat_id' not in new_user or 'bedroom_id' not in new_user:
                     raise cherrypy.HTTPError(400, "Missing required fields in JSON")
-
+                if self.db.room_exists(new_user['bedroom_id'])  is False:
+                        raise cherrypy.HTTPError(400, "The specified bedroom_id does not exist")
                 success = self.db.insert_user(new_user)
                 if success:
                     return json.dumps({"status": "success", "message": "User Added"})
@@ -115,6 +116,20 @@ class Catalog:
 
             except json.JSONDecodeError:
                 raise cherrypy.HTTPError(400, "Invalid JSON format")
+        elif uri[0] == 'addBedroom':
+            body = cherrypy.request.body.read()
+            try:
+                new_bedroom = json.loads(body)
+                if  'room_name' not in new_bedroom or 'password' not in new_bedroom:
+                    raise cherrypy.HTTPError(400, "Missing required fields in JSON")
+                success = self.db.insert_bedroom(new_bedroom)
+                if success:
+                    return json.dumps({"status": "success", "message": "Bedroom Added"})
+                else:
+                    raise cherrypy.HTTPError(400, "Error adding bedroom")
+            except json.JSONDecodeError:
+                raise cherrypy.HTTPError(400, "Invalid JSON format")
+
 
         else:
             raise cherrypy.HTTPError(404, "Endpoint not found")

@@ -61,7 +61,18 @@ class PostgresDB:
         finally:
             if conn: conn.close()
 
+    def _fetch_one(self, query, params):
+        # Esempio di come dovrebbe essere un metodo per leggere
+        cursor = self.connect().cursor()
+        cursor.execute(query, params)
+        return cursor.fetchone()  # Restituisce la riga o None
 
+    def room_exists(self, room_id):
+        query = "SELECT 1 FROM bedrooms WHERE bedroom_id = %s"
+        result = self._fetch_one(query, (room_id,))
+
+        # Ora result sarà o (1,) oppure None
+        return result is not None
 #############################
 #CRUD operations for services, devices and users
     def insert_service(self, s):
@@ -130,3 +141,10 @@ class PostgresDB:
     def delete_user(self, username):
         query = "DELETE FROM users WHERE username = %s"
         return self._execute(query, (username,))
+
+    def insert_bedroom(self, b):
+        query = """
+            INSERT INTO bedrooms (room_name, password)
+            VALUES (%s, %s)
+        """
+        return self._execute(query, (b['room_name'], b['password']))
