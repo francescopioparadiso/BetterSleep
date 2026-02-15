@@ -11,5 +11,12 @@
       "topic": "bed/analytics"
     },
   "catalogURL": "http://localhost:8080",
-  "removeInterval": 10
+  "removeInterval": 10,
+    "timeSeriesDB": {
+        "host": "localhost",
+        "port": 27017,
+        "username": "admin",
+        "password": "password_mongo",
+        "database": "timeseriesdb"
+    }
 }

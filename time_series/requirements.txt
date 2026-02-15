@@ -1,2 +1,2 @@
 cherrypy
-psycopg2-binary
+pymongo

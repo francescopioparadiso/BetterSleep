@@ -5,6 +5,8 @@ from datetime import datetime
 
 import cherrypy
 import requests
+from requests import HTTPError
+
 
 class SleepCycleManager:
   exposed = True
@@ -15,7 +17,6 @@ class SleepCycleManager:
     self.remove_interval = conf.get('removeInterval', 10)
     self._stop_event = threading.Event()
     self._worker = None
-    self.actualTime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     self.register_service()
 
   def register_service(self):
@@ -27,10 +28,14 @@ class SleepCycleManager:
       "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     try:
-      # Note: Changed 'body' to 'json' to handle serialization automatically
       response = requests.post(f'{self.catalog_url}/addService', json=service, timeout=5)
       response.raise_for_status()
       print('Successfully registered with Catalog')
+    except HTTPError as e:
+      print(f"HTTP error during registration: {e}")
+      if e.response is not None:
+        print("Status code:", e.response.status_code)
+        print("Server message:", e.response.text)
     except Exception as e:
       print(f'Registration failed: {e}')
 
@@ -43,10 +48,14 @@ class SleepCycleManager:
       "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     try:
-      # Note: Changed 'body' to 'json' to handle serialization automatically
       response = requests.put(f'{self.catalog_url}/updateService', json=service, timeout=5)
       response.raise_for_status()
       print('Successfully updated with Catalog')
+    except HTTPError as e:
+      print(f"HTTP error during update: {e}")
+      if e.response is not None:
+        print("Status code:", e.response.status_code)
+        print("Server message:", e.response.text)
     except Exception as e:
       print(f'Update failed: {e}')
 
@@ -60,6 +69,11 @@ class SleepCycleManager:
       )
       response.raise_for_status()
       print('Service unregistered from Catalog')
+    except HTTPError as e:
+      print(f"HTTP error during unregistration: {e}")
+      if e.response is not None:
+        print("Status code:", e.response.status_code)
+        print("Server message:", e.response.text)
     except Exception as e:
       print(f'Unregister failed: {e}')
 

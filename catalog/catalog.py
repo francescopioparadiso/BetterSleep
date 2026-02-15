@@ -138,6 +138,7 @@ class Catalog:
                 if success:
                     return json.dumps({"status": "success", "message": "Service updated"})
                 else:
+                    print(f"Update failed for serviceID {updated_service.get('serviceID')}")
                     raise cherrypy.HTTPError(404, "The Service ID does not exist")
 
             except json.JSONDecodeError:
@@ -227,9 +228,20 @@ class Catalog:
             raise cherrypy.HTTPError(404, "Endpoint not found")
 
 
-# ============================================================
-# MAIN - Server Startup
-# ============================================================
+def json_error_page(status, message, traceback, version):
+    """Override CherryPy HTTPError to return JSON instead of HTML."""
+    cherrypy.response.headers["Content-Type"] = "application/json"
+
+    # Status arriva come "404 Not Found" → prendiamo solo il numero
+    try:
+        status_code = int(status.split(" ")[0])
+    except Exception:
+        status_code = 500
+
+    return json.dumps({
+        "status": status_code,
+        "error": message
+    })
 
 if __name__ == "__main__":
     # CherryPy Configuration
@@ -263,8 +275,11 @@ if __name__ == "__main__":
     # Configure Server Settings
     cherrypy.config.update({
         'server.socket_port': server_conf['port'],
-        'server.socket_host': server_conf['host']
+        'server.socket_host': server_conf['host'],
+        'error_page.default': json_error_page
+
     })
+
 
     # Start the Web Server
     print(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")

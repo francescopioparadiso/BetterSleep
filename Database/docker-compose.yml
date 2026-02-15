@@ -15,7 +15,6 @@ services:
       volumes:
         - postgres_data:/var/lib/postgresql/data
         - ./init_catalog.sql:/docker-entrypoint-initdb.d/init_catalog.sql
-        # AGGIUNGI QUESTE DUE RIGHE SOTTO PER SINCRONIZZARE L'ORA
         - /etc/localtime:/etc/localtime:ro
         - /etc/timezone:/etc/timezone:ro
 
@@ -27,10 +26,13 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: password_mongo
+      TZ: "Europe/Rome"
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
 
 
 volumes:
