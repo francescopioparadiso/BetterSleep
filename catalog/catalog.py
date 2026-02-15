@@ -255,7 +255,24 @@ class Catalog:
 
         else:
             raise cherrypy.HTTPError(404, "Endpoint not found")
+    def GET(self, *uri, **params):
+        """Handle GET requests to retrieve information about Services, Devices, or Users."""
+        if not uri:
+            raise cherrypy.HTTPError(400, "Endpoint not specified")
 
+        # Endpoint: /getServices
+        if uri[0] == "getDatabaseEndpoint":
+            try:
+                endpoint = self.db.get_endpoint_server_database()
+                if endpoint:
+                    return json.dumps({"status": "success", "endpoint": endpoint})
+                else:
+                    raise cherrypy.HTTPError(404, "Database endpoint not found")
+            except Exception as e:
+                print(f"Error retrieving database endpoint: {e}")
+                raise cherrypy.HTTPError(500, "Internal Server Error")
+        else:
+            raise cherrypy.HTTPError(404, "Endpoint not found")
 
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""

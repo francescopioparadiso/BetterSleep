@@ -37,3 +37,6 @@ Content-Type: application/json
   "telegram_chat_id": "123456789",
   "bedroom_id": "1"
 }
+
+###
+GET http://localhost:8080/getDatabaseEndpoint
