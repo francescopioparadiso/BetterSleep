@@ -7,7 +7,6 @@ from datetime import datetime
 import cherrypy
 from dotenv import load_dotenv
 import requests
-from requests import HTTPError
 import telepot
 from telepot.loop import MessageLoop
 from telepot.namedtuple import InlineKeyboardButton, InlineKeyboardMarkup
@@ -40,108 +39,163 @@ class TelegramBot:
         message = msg['text']
 
         if message == "/start":
-            if chat_ID not in self.chatIDs:
-                self.chatIDs.append(chat_ID)
-            self.bot.sendMessage(chat_ID, text="Welcome to BetterSleep User Bot! Use /help to see available commands.")
-            self.send_room_options(chat_ID)
+            self._handle_start(chat_ID)
             return
 
-        elif message == "/help":
-            self.bot.sendMessage(chat_ID,
-                                 text="Available commands:\n/start - Start the bot\n/help - Show this help message")
+        if message == "/help":
+            self._send_help(chat_ID)
             return
 
         state_info = self.user_states.get(chat_ID)
+        if not state_info:
+            return
 
-        if state_info:
-            curr_state = state_info.get("state")
+        curr_state = state_info.get("state")
+        self._dispatch_state(chat_ID, curr_state, message)
 
-            if curr_state == "waiting_room_name":
-                self.user_states[chat_ID]["room_name"] = message
-                self.user_states[chat_ID]["state"] = "waiting_room_password"
-                self.bot.sendMessage(chat_ID, f"Room '{message}' set. Now enter the password:")
+    def _handle_start(self, chat_ID):
+        if chat_ID not in self.chatIDs:
+            self.chatIDs.append(chat_ID)
+    #!TODO check if user is already registered in a room and show options accordingly
+        self.bot.sendMessage(chat_ID, text="Welcome to BetterSleep! Use /help to see available commands.")
+        self.send_room_options(chat_ID)
 
-            elif curr_state == "waiting_room_password":
-                room_name = self.user_states[chat_ID]["room_name"]
-                password = message
+    def _send_help(self, chat_ID):
+        self.bot.sendMessage(chat_ID,
+                             text="Available commands:\n/start - Start the bot\n/help - Show this help message")
 
-                bedroom = {
-                    "room_name": room_name,
-                    "password": password
-                }
-
-                try:
-                    res = requests.post(f"{self.catalog_url}/addBedroom", json=bedroom)
-                    if res.status_code == 200:
-                        # Assumiamo che il server ritorni JSON con il nuovo bedroom_id
-                        data = res.json()
-                        room_id = data.get("bedroom_id")  # <- qui ottieni l'ID
-                        self.bot.sendMessage(chat_ID, f"Successfully created room '{room_name}' with ID {room_id}!")
-                    else:
-                        self.bot.sendMessage(chat_ID, "Access denied: room creation failed.")
-                        room_id = None
-                except Exception as e:
-                    self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
-                    room_id = None
-
-                if room_id:
-                    self.user_states[chat_ID] = {
-                        "state": "registing_user",
-                        "bedroom_id": room_id
-                    }
-                    print(f"User {chat_ID} registered in room {room_id}")
-                    self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
-
-            elif curr_state == "waiting_join_bedroom_id":
-                self.user_states[chat_ID]["join_id"] = message
-                self.user_states[chat_ID]["state"] = "waiting_join_password"
-                self.bot.sendMessage(chat_ID, "Enter the password for this room:")
+    def _dispatch_state(self, chat_ID, curr_state, message):
+        handlers = {
+            "waiting_room_name": self._handle_waiting_room_name,
+            "waiting_room_password": self._handle_waiting_room_password,
+            "waiting_join_bedroom_id": self._handle_waiting_join_bedroom_id,
+            "waiting_join_password": self._handle_waiting_join_password,
+            "registing_user": self._handle_registing_user,
+            "registered": self._handle_registered_user
+        }
+        handler = handlers.get(curr_state)
+        if handler:
+            handler(chat_ID, message)
 
 
-            elif curr_state == "waiting_join_password":
-                room_id = self.user_states[chat_ID]["join_id"]
-                password = message
-                try:
-                    res = requests.get(f"{self.catalog_url}/checkRoom",
-                                       params={"bedroom_id": room_id, "password": password})
-                    if res.status_code == 200:
-                        self.bot.sendMessage(chat_ID, f"Successfully joined room {room_id}!")
-                        self.user_states[chat_ID] = {
-                            "state": "registing_user",
-                            "bedroom_id": room_id
-                        }
-                        self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
-                    else:
-                        self.bot.sendMessage(chat_ID, "Access denied: wrong ID or password.")
-                        self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
-                except requests.exceptions.RequestException as e:
-                    self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
-                    self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
+    def _handle_registered_user(self, chat_ID, message):
+        username = self.user_states[chat_ID].get("username", "User")
+        bedroom_id = self.user_states[chat_ID].get("bedroom_id", "N/A")
+        # se e giorno invia Good morning, altrimenti Good evening
+        #!TODO Implement this
 
-            elif curr_state == "registing_user":
-                # Get room_id from either creating or joining a room
-                bedroom_id = self.user_states[chat_ID].get("bedroom_id")
-                print(bedroom_id)
-                username = message
-                user = {
-                    "username": username,
-                    "telegram_chat_id": chat_ID,
-                    "bedroom_id": bedroom_id
-                }
-                try:
-                    res = requests.get(f"{self.catalog_url}/checkUsername",
-                                        params={"username": username})
-                    if res.status_code == 200 and res.json().get("exists"):
-                            self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another one.")
-                            return
 
-                    res = requests.post(f"{self.catalog_url}/addUser", json=user)
-                    if res.status_code == 200:
-                        self.bot.sendMessage(chat_ID, f"Successfully registered as '{username}' in room {bedroom_id}!")
-                    elif res.status_code == 409:
-                        self.bot.sendMessage(chat_ID, f"Error You are already registered in a room")
-                except Exception as e:
-                    self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+    def _handle_waiting_room_name(self, chat_ID, message):
+        self.user_states[chat_ID]["room_name"] = message
+        self.user_states[chat_ID]["state"] = "waiting_room_password"
+        self.bot.sendMessage(chat_ID, f"Room '{message}' set. Now enter the password:")
+
+    def _handle_waiting_room_password(self, chat_ID, message):
+        room_name = self.user_states[chat_ID]["room_name"]
+        room_id = self._create_bedroom(chat_ID, room_name, message)
+        if room_id:
+            self.user_states[chat_ID] = {
+                "state": "registing_user",
+                "bedroom_id": room_id
+            }
+            print(f"User {chat_ID} registered in room {room_id}")
+            self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
+
+    def _handle_waiting_join_bedroom_id(self, chat_ID, message):
+        self.user_states[chat_ID]["bedroom_id"] = message
+        self.user_states[chat_ID]["state"] = "waiting_join_password"
+        self.bot.sendMessage(chat_ID, "Enter the password for this room:")
+
+    def _handle_waiting_join_password(self, chat_ID, message):
+        room_id = self.user_states[chat_ID]["bedroom_id"]
+        if self._check_room(chat_ID, room_id, message):
+            self.bot.sendMessage(chat_ID, f"Successfully joined room {room_id}!")
+            self.user_states[chat_ID] = {
+                "state": "registing_user",
+                "bedroom_id": room_id
+            }
+            self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
+        else:
+            self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
+
+    def _handle_registing_user(self, chat_ID, message):
+        bedroom_id = self.user_states[chat_ID].get("bedroom_id")
+        print(bedroom_id)
+        username = message
+        if self._check_username_exists(chat_ID, username):
+            return
+        if self._add_user(chat_ID, username, bedroom_id):
+            if 6 <= datetime.now().hour < 18:
+                greeting = "Good morning"
+            else:
+                greeting = "Good evening"
+            self.bot.sendMessage(chat_ID,
+                                 f"{greeting}, {username} from room {bedroom_id}! You can use the following commands:")
+            self.user_states[chat_ID] = {
+                "state": "registered",
+                "bedroom_id": bedroom_id,
+                "username": username
+            }
+
+    def _create_bedroom(self, chat_ID, room_name, password):
+        bedroom = {
+            "room_name": room_name,
+            "password": password
+        }
+        try:
+            res = requests.post(f"{self.catalog_url}/addBedroom", json=bedroom)
+            if res.status_code == 200:
+                data = res.json()
+                room_id = data.get("bedroom_id")
+                self.bot.sendMessage(chat_ID, f"Successfully created room '{room_name}' with ID {room_id}!")
+                return room_id
+            self.bot.sendMessage(chat_ID, "Access denied: room creation failed.")
+        except requests.exceptions.RequestException:
+            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+        return None
+
+    def _check_room(self, chat_ID, room_id, password):
+        try:
+            res = requests.get(f"{self.catalog_url}/checkRoom",
+                               params={"bedroom_id": room_id, "password": password})
+            if res.status_code == 200:
+                return True
+            self.bot.sendMessage(chat_ID, "Access denied: wrong ID or password.")
+        except requests.exceptions.RequestException:
+            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+        return False
+
+    def _check_username_exists(self, chat_ID, username):
+        try:
+            res = requests.get(f"{self.catalog_url}/checkUsername",
+                               params={"username": username})
+            if res.status_code == 200 and res.json().get("exists"):
+                self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another one.")
+                return True
+        except requests.exceptions.RequestException:
+            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+            return True
+        return False
+
+    def _add_user(self, chat_ID, username, bedroom_id):
+        user = {
+            "username": username,
+            "telegram_chat_id": chat_ID,
+            "bedroom_id": bedroom_id
+        }
+        try:
+            res = requests.post(f"{self.catalog_url}/addUser", json=user)
+            if res.status_code == 200:
+                self.bot.sendMessage(chat_ID, f"Successfully registered as '{username}' in room {bedroom_id}!")
+                return True
+            if res.status_code == 409:
+                self.bot.sendMessage(chat_ID, "Error You are already registered in a room")
+                #!TODO need to find the way to get the username and room_id of the user to update the state
+                self.user_states [chat_ID] = {"state": "registered", "bedroom_id": None, "username": None}
+                return True
+        except requests.exceptions.RequestException:
+            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+        return False
 
     def send_room_options(self, chat_ID):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[

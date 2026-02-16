@@ -13,16 +13,17 @@ from postgres_db import PostgresDB
 def check_if_is_a_service(new_service):
     """Validate that the service contains all required fields."""
     required_fields = ['serviceID','name','type','endpoint']
-    if not all(field in new_service for field in required_fields):
-        raise cherrypy.HTTPError(400, "Missing required fields in JSON")
+    require_fields(new_service, required_fields)
 
 
 def check_if_is_a_device(new_device):
     """Validate that the device contains all required fields."""
     required_fields = ['deviceID', 'device_name', 'measure_types', 'bedroom_id']
-    if not all(field in new_device for field in required_fields):
-        raise cherrypy.HTTPError(400, "Missing required fields in JSON")
+    require_fields(new_device, required_fields)
 
+def require_fields(payload, required_fields):
+    if not all(field in payload for field in required_fields):
+        raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 # ============================================================
 # CATALOG REST SERVICE
 # ============================================================
@@ -59,6 +60,15 @@ class Catalog:
             self._worker.join(timeout=10)
             self._worker = None
 
+    def _load_json_body(self):
+        body = cherrypy.request.body.read()
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            raise cherrypy.HTTPError(400, "Invalid JSON format")
+
+
+
     # --------------------------------------------------------
     # POST METHOD - Add new resources
     # --------------------------------------------------------
@@ -67,73 +77,54 @@ class Catalog:
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
-        # Endpoint: /addService
-        if uri[0] == "addService":
-            body = cherrypy.request.body.read()
-            try:
-                new_service = json.loads(body)
-                check_if_is_a_service(new_service)
-
-                success = self.db.insert_service(new_service)
-                if success:
-                    return json.dumps({"status": "success", "message": "Service Added"})
-                else:
-                    raise cherrypy.HTTPError(409, "The Service ID already exists")
-
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-
-        # Endpoint: /addDevice
-        elif uri[0] == 'addDevice':
-            body = cherrypy.request.body.read()
-            try:
-                new_device = json.loads(body)
-                check_if_is_a_device(new_device)
-
-                success = self.db.insert_device(new_device)
-                if success:
-                    return json.dumps({"status": "success", "message": "Device Added"})
-                else:
-                    raise cherrypy.HTTPError(409, "The Device ID already exists")
-
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-
-        # Endpoint: /addUser
-        elif uri[0] == 'addUser':
-            body = cherrypy.request.body.read()
-            try:
-                new_user = json.loads(body)
-                if 'username' not in new_user or 'telegram_chat_id' not in new_user or 'bedroom_id' not in new_user:
-                    raise cherrypy.HTTPError(400, "Missing required fields in JSON")
-                if self.db.room_exists(new_user['bedroom_id'])  is False:
-                        raise cherrypy.HTTPError(400, "The specified bedroom_id does not exist")
-                success = self.db.insert_user(new_user)
-                if success:
-                    return json.dumps({"status": "success", "message": "User Added"})
-                else:
-                    raise cherrypy.HTTPError(409, "The User ID already exists")
-
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-        elif uri[0] == 'addBedroom':
-            body = cherrypy.request.body.read()
-            try:
-                new_bedroom = json.loads(body)
-                if  'room_name' not in new_bedroom or 'password' not in new_bedroom:
-                    raise cherrypy.HTTPError(400, "Missing required fields in JSON")
-                beed_room_id = self.db.insert_bedroom(new_bedroom)
-                if beed_room_id:
-                    return json.dumps({"status": "success", "message": "Bedroom Added", "bedroom_id": beed_room_id})
-                else:
-                    raise cherrypy.HTTPError(409, "Failed to create bedroom")
-
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-
-
-        else:
+        handlers = {
+            "addService": self._post_add_service,
+            "addDevice": self._post_add_device,
+            "addUser": self._post_add_user,
+            "addBedroom": self._post_add_bedroom,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler()
+
+    def _post_add_service(self):
+        new_service = self._load_json_body()
+        check_if_is_a_service(new_service)
+
+        success = self.db.insert_service(new_service)
+        if success:
+            return json.dumps({"status": "success", "message": "Service Added"})
+        raise cherrypy.HTTPError(409, "The Service ID already exists")
+
+    def _post_add_device(self):
+        new_device = self._load_json_body()
+        check_if_is_a_device(new_device)
+
+        success = self.db.insert_device(new_device)
+        if success:
+            return json.dumps({"status": "success", "message": "Device Added"})
+        raise cherrypy.HTTPError(409, "The Device ID already exists")
+
+    def _post_add_user(self):
+        new_user = self._load_json_body()
+        require_fields(new_user, ['username', 'telegram_chat_id', 'bedroom_id'])
+        if self.db.room_exists(new_user['bedroom_id']) is False:
+            raise cherrypy.HTTPError(400, "The specified bedroom_id does not exist")
+
+        success = self.db.insert_user(new_user)
+        if success:
+            return json.dumps({"status": "success", "message": "User Added"})
+        raise cherrypy.HTTPError(409, "The User ID already exists")
+
+    def _post_add_bedroom(self):
+        new_bedroom = self._load_json_body()
+        require_fields(new_bedroom, ['room_name', 'password'])
+
+        beed_room_id = self.db.insert_bedroom(new_bedroom)
+        if beed_room_id:
+            return json.dumps({"status": "success", "message": "Bedroom Added", "bedroom_id": beed_room_id})
+        raise cherrypy.HTTPError(409, "Failed to create bedroom")
 
     # --------------------------------------------------------
     # PUT METHOD - Update existing resources
@@ -143,72 +134,54 @@ class Catalog:
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
-        # Endpoint: /updateService
-        if uri[0] == "updateService":
-            body = cherrypy.request.body.read()
-            try:
-                updated_service = json.loads(body)
-                check_if_is_a_service(updated_service)
-
-                success = self.db.update_service(updated_service)
-                if success:
-                    return json.dumps({"status": "success", "message": "Service updated"})
-                else:
-                    print(f"Update failed for serviceID {updated_service.get('serviceID')}")
-                    raise cherrypy.HTTPError(404, "The Service ID does not exist")
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-        elif uri[0] == "updateServiceLastUpdate":
-            body = cherrypy.request.body.read()
-            try:
-                updated_service = json.loads(body)
-                if 'serviceID' not in updated_service or 'last_update' not in updated_service:
-                    raise cherrypy.HTTPError(400, "Missing required fields in JSON")
-
-                success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
-                if success:
-                    return json.dumps({"status": "success", "message": "Service last_update updated"})
-                else:
-                    print(f"Update failed for serviceID {updated_service.get('serviceID')}")
-                    raise cherrypy.HTTPError(404, "The Service ID does not exist")
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-
-        # Endpoint: /updateDevice
-        elif uri[0] == 'updateDevice':
-            body = cherrypy.request.body.read()
-            try:
-                updated_device = json.loads(body)
-                check_if_is_a_device(updated_device)
-
-                success = self.db.update_device(updated_device)
-                if success:
-                    return json.dumps({"status": "success", "message": "Device updated"})
-                else:
-                    raise cherrypy.HTTPError(404, "The Device ID does not exist")
-
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-
-        # Endpoint: /updateUser
-        elif uri[0] == 'updateUser':
-            body = cherrypy.request.body.read()
-            try:
-                updated_user = json.loads(body)
-                if 'username' not in updated_user or 'telegram_chat_id' not in updated_user:
-                    raise cherrypy.HTTPError(400, "Missing required fields in JSON")
-
-                success = self.db.update_user(updated_user)
-                if success:
-                    return json.dumps({"status": "success", "message": "User updated"})
-                else:
-                    raise cherrypy.HTTPError(404, "The User ID does not exist")
-
-            except json.JSONDecodeError:
-                raise cherrypy.HTTPError(400, "Invalid JSON format")
-
-        else:
+        handlers = {
+            "updateService": self._put_update_service,
+            "updateServiceLastUpdate": self._put_update_service_last_update,
+            "updateDevice": self._put_update_device,
+            "updateUser": self._put_update_user,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler()
+
+    def _put_update_service(self):
+        updated_service = self._load_json_body()
+        check_if_is_a_service(updated_service)
+
+        success = self.db.update_service(updated_service)
+        if success:
+            return json.dumps({"status": "success", "message": "Service updated"})
+        print(f"Update failed for serviceID {updated_service.get('serviceID')}")
+        raise cherrypy.HTTPError(404, "The Service ID does not exist")
+
+    def _put_update_service_last_update(self):
+        updated_service = self._load_json_body()
+        require_fields(updated_service, ['serviceID', 'last_update'])
+
+        success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
+        if success:
+            return json.dumps({"status": "success", "message": "Service last_update updated"})
+        print(f"Update failed for serviceID {updated_service.get('serviceID')}")
+        raise cherrypy.HTTPError(404, "The Service ID does not exist")
+
+    def _put_update_device(self):
+        updated_device = self._load_json_body()
+        check_if_is_a_device(updated_device)
+
+        success = self.db.update_device(updated_device)
+        if success:
+            return json.dumps({"status": "success", "message": "Device updated"})
+        raise cherrypy.HTTPError(404, "The Device ID does not exist")
+
+    def _put_update_user(self):
+        updated_user = self._load_json_body()
+        require_fields(updated_user, ['username', 'telegram_chat_id'])
+
+        success = self.db.update_user(updated_user)
+        if success:
+            return json.dumps({"status": "success", "message": "User updated"})
+        raise cherrypy.HTTPError(404, "The User ID does not exist")
 
     # --------------------------------------------------------
     # DELETE METHOD - Remove resources
@@ -218,87 +191,113 @@ class Catalog:
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
-        # Endpoint: /removeService
-        if uri[0] == "removeService":
-            service_id = params.get('serviceID')
-            if not service_id:
-                raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
-
-            success = self.db.delete_service(service_id)
-            if success:
-                return json.dumps({"status": "success", "message": "Service Deleted"})
-            else:
-                raise cherrypy.HTTPError(404, "Service not found")
-
-        # Endpoint: /removeDevice
-        elif uri[0] == "removeDevice":
-            device_id = params.get('deviceID')
-            if not device_id:
-                raise cherrypy.HTTPError(400, "Missing 'deviceID' parameter")
-
-            success = self.db.delete_device(device_id)
-            if success:
-                return json.dumps({"status": "success", "message": "Device Deleted"})
-            else:
-                raise cherrypy.HTTPError(404, "Device not found")
-
-        # Endpoint: /removeUser
-        elif uri[0] == "removeUser":
-            username = params.get('username')
-            if not username:
-                raise cherrypy.HTTPError(400, "Missing 'username' parameter")
-
-            success = self.db.delete_user(username)
-            if success:
-                return json.dumps({"status": "success", "message": "User Deleted"})
-            else:
-                raise cherrypy.HTTPError(404, "User not found")
-
-        else:
+        handlers = {
+            "removeService": self._delete_remove_service,
+            "removeDevice": self._delete_remove_device,
+            "removeUser": self._delete_remove_user,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler(params)
+
+    def _delete_remove_service(self, params):
+        service_id = params.get('serviceID')
+        if not service_id:
+            raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
+
+        success = self.db.delete_service(service_id)
+        if success:
+            return json.dumps({"status": "success", "message": "Service Deleted"})
+        raise cherrypy.HTTPError(404, "Service not found")
+
+    def _delete_remove_device(self, params):
+        device_id = params.get('deviceID')
+        if not device_id:
+            raise cherrypy.HTTPError(400, "Missing 'deviceID' parameter")
+
+        success = self.db.delete_device(device_id)
+        if success:
+            return json.dumps({"status": "success", "message": "Device Deleted"})
+        raise cherrypy.HTTPError(404, "Device not found")
+
+    def _delete_remove_user(self, params):
+        username = params.get('username')
+        if not username:
+            raise cherrypy.HTTPError(400, "Missing 'username' parameter")
+
+        success = self.db.delete_user(username)
+        if success:
+            return json.dumps({"status": "success", "message": "User Deleted"})
+        raise cherrypy.HTTPError(404, "User not found")
+
+    def _get_database_endpoint(self):
+        try:
+            endpoint = self.db.get_endpoint_server_database()
+            if endpoint:
+                return json.dumps({"status": "success", "endpoint": endpoint})
+            raise cherrypy.HTTPError(404, "Database endpoint not found")
+        except Exception as e:
+            print(f"Error retrieving database endpoint: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+
+    def _get_check_room(self, params):
+        bedroom_id = params.get('bedroom_id')
+        password = params.get('password')
+        if not bedroom_id or not password:
+            raise cherrypy.HTTPError(400, "Missing 'bedroom_id' or 'password' parameter")
+        try:
+            can_join = self.db.check_join_bedroom(bedroom_id, password)
+            print(can_join)
+            if not can_join:
+                raise cherrypy.HTTPError(404, "Bedroom not found")
+            return json.dumps({"status": "success", "can_join": can_join})
+        except Exception as e:
+            print(f"Error checking join bedroom: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+
+    def _get_check_username(self, params):
+        username = params.get('username')
+        if not username:
+            raise cherrypy.HTTPError(400, "Missing 'username' parameter")
+        try:
+            exists = self.db.check_user_exists(username)
+            print(exists)
+            return json.dumps({"status": "success", "exists": exists})
+        except Exception as e:
+            print(f"Error checking username: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+
+    def _get_bedroom_from_chat_id(self, params):
+        telegram_chat_id = params.get('telegram_chat_id')
+        if not telegram_chat_id:
+            raise cherrypy.HTTPError(400, "Missing 'telegram_chat_id' parameter")
+        try:
+            bedroom_id = self.db.get_bedroom_from_chat_id(telegram_chat_id)
+            if bedroom_id is not None:
+                return json.dumps({"status": "success", "bedroom_id": bedroom_id})
+            raise cherrypy.HTTPError(404, "Bedroom not found for the given chat ID")
+        except Exception as e:
+            print(f"Error retrieving bedroom from chat ID: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, or Users."""
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
-        # Endpoint: /getServices
-        if uri[0] == "getDatabaseEndpoint":
-            try:
-                endpoint = self.db.get_endpoint_server_database()
-                if endpoint:
-                    return json.dumps({"status": "success", "endpoint": endpoint})
-                else:
-                    raise cherrypy.HTTPError(404, "Database endpoint not found")
-            except Exception as e:
-                print(f"Error retrieving database endpoint: {e}")
-                raise cherrypy.HTTPError(500, "Internal Server Error")
-        elif uri[0] == "checkRoom":
-            bedroom_id = params.get('bedroom_id')
-            password = params.get('password')
-            if not bedroom_id or not password:
-                raise cherrypy.HTTPError(400, "Missing 'bedroom_id' or 'password' parameter")
-            try:
-                can_join = self.db.check_join_bedroom(bedroom_id, password)
-                print(can_join)
-                if not can_join :
-                    raise cherrypy.HTTPError(404, "Bedroom not found")
-                return json.dumps({"status": "success", "can_join": can_join})
-            except Exception as e:
-                print(f"Error checking join bedroom: {e}")
-                raise cherrypy.HTTPError(500, "Internal Server Error")
-        elif uri[0] == "checkUsername":
-            username = params.get('username')
-            if not username:
-                raise cherrypy.HTTPError(400, "Missing 'username' parameter")
-            try:
-                exists = self.db.check_user_exists(username)
-                print(exists)
-                return json.dumps({"status": "success", "exists": exists})
-            except Exception as e:
-                print(f"Error checking username: {e}")
-                raise cherrypy.HTTPError(500, "Internal Server Error")
-        else:
+        handlers = {
+            "getDatabaseEndpoint": self._get_database_endpoint,
+            "checkRoom": self._get_check_room,
+            "checkUsername": self._get_check_username,
+            "getBedroomFromChatID": self._get_bedroom_from_chat_id,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
+        if uri[0] == "getDatabaseEndpoint":
+            return handler()
+        return handler(params)
 
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""
