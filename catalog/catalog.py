@@ -231,6 +231,25 @@ class Catalog:
             return json.dumps({"status": "success", "message": "User Deleted"})
         raise cherrypy.HTTPError(404, "User not found")
 
+    # --------------------------------------------------------
+    # GET METHOD - Remove resources
+    # --------------------------------------------------------
+    def GET(self, *uri, **params):
+        """Handle GET requests to retrieve information about Services, Devices, or Users."""
+        if not uri:
+            raise cherrypy.HTTPError(400, "Endpoint not specified")
+
+        handlers = {
+            "getDatabaseEndpoint": self._get_database_endpoint,
+            "checkRoom": self._get_check_room,
+            "checkUsername": self._get_check_username,
+            "getUserSession": self._get_usersession_from_chat_id,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
+            raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler(params)
+
     def _get_database_endpoint(self):
         try:
             endpoint = self.db.get_endpoint_server_database()
@@ -281,23 +300,6 @@ class Catalog:
             print(f"Error retrieving user session: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
-    def GET(self, *uri, **params):
-        """Handle GET requests to retrieve information about Services, Devices, or Users."""
-        if not uri:
-            raise cherrypy.HTTPError(400, "Endpoint not specified")
-
-        handlers = {
-            "getDatabaseEndpoint": self._get_database_endpoint,
-            "checkRoom": self._get_check_room,
-            "checkUsername": self._get_check_username,
-            "getUserSession": self._get_usersession_from_chat_id,
-        }
-        handler = handlers.get(uri[0])
-        if not handler:
-            raise cherrypy.HTTPError(404, "Endpoint not found")
-        if uri[0] == "getDatabaseEndpoint":
-            return handler()
-        return handler(params)
 
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""
