@@ -53,15 +53,34 @@ class TelegramBot:
         curr_state = state_info.get("state")
         self._dispatch_state(chat_ID, curr_state, message)
 
-    def _handle_start(self, chat_ID):
-        if chat_ID not in self.chatIDs:
-            self.chatIDs.append(chat_ID)
-        self.bot.sendMessage(chat_ID, text="Welcome to BetterSleep! Use /help to see available commands.")
-        self._handel_restore_user_session(chat_ID)
-        if self.user_states.get(chat_ID, {}).get("state") != "registered":
-            self.send_room_options(chat_ID)
-        else:
-            self.send_registered_user_options(chat_ID)
+    def send_room_options(self, chat_ID):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Create a room", callback_data="create_room")],
+            [InlineKeyboardButton(text="🚪 Join a room", callback_data="join_room")]
+        ])
+        self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
+
+    def send_registered_user_options(self, chat_ID):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📊 View room data", callback_data="view_data")],
+            [InlineKeyboardButton(text="⚙️ Manage room settings", callback_data="manage_settings")]
+        ])
+        self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
+
+    def on_callback_query(self, msg):
+        query_ID, from_ID, query_data = telepot.glance(msg, flavor='callback_query')
+        self.bot.answerCallbackQuery(query_ID)
+
+        if query_data == "create_room":
+            self.bot.sendMessage(from_ID, text="You chose to create a room. Please enter the name of the room:")
+            self.user_states[from_ID] = {"state": "waiting_room_name"}
+        elif query_data == "join_room":
+            self.bot.sendMessage(from_ID, text="You chose to join a room. Please enter the ID of the bedroom:")
+            self.user_states[from_ID] = {"state": "waiting_join_bedroom_id"}
+        elif query_data == "view_data":
+            self.bot.sendMessage(from_ID, text="This feature is not implemented yet.")
+        elif query_data == "manage_settings":
+            self.bot.sendMessage(from_ID, text="This feature is not implemented yet.")
 
     def _send_help(self, chat_ID):
         self.bot.sendMessage(chat_ID,
@@ -81,7 +100,23 @@ class TelegramBot:
             handler(chat_ID, message)
 
 
+    def _handle_start(self, chat_ID):
+        """
+        Handle the /start command. If the user is new, send a welcome message and show room options.
+        """
+        if chat_ID not in self.chatIDs:
+            self.chatIDs.append(chat_ID)
+        self.bot.sendMessage(chat_ID, text="Welcome to BetterSleep! Use /help to see available commands.")
+        self._handel_restore_user_session(chat_ID)
+        if self.user_states.get(chat_ID, {}).get("state") != "registered":
+            self.send_room_options(chat_ID)
+        else:
+            self.send_registered_user_options(chat_ID)
+
     def _handle_registered_user(self, chat_ID, message):
+        """
+        Handle messages from registered users. This can be extended to provide more functionality based on user input.
+        """
         username = self.user_states[chat_ID].get("username", "User")
         bedroom_id = self.user_states[chat_ID].get("bedroom_id", "N/A")
         # se e giorno invia Good morning, altrimenti Good evening
@@ -89,11 +124,20 @@ class TelegramBot:
 
 
     def _handle_waiting_room_name(self, chat_ID, message):
+        """
+        Handle the state where the user is expected to provide a room name for creating a new bedroom.
+        Store the room name and transition to the next state to ask for the password.
+        """
+
         self.user_states[chat_ID]["room_name"] = message
         self.user_states[chat_ID]["state"] = "waiting_room_password"
         self.bot.sendMessage(chat_ID, f"Room '{message}' set. Now enter the password:")
 
     def _handel_restore_user_session(self, chat_ID):
+        """
+        Attempt to restore a user's session by checking if their Telegram chat ID is associated with an existing user in the Catalog.
+        If a session is found, update the user's state to "registered" and welcome them back
+        """
         try:
             res = requests.get(f"{self.catalog_url}/getUserSession", params={"telegram_chat_id": chat_ID})
             if res.status_code == 200:
@@ -113,6 +157,9 @@ class TelegramBot:
             self.bot.sendMessage(chat_ID, "Connection error with Catalog. Unable to restore session.")
 
     def _handle_waiting_room_password(self, chat_ID, message):
+        """
+        Handle the state where the user is expected to provide a password for the new bedroom.
+        """
         room_name = self.user_states[chat_ID]["room_name"]
         room_id = self._create_bedroom(chat_ID, room_name, message)
         if room_id:
@@ -124,11 +171,18 @@ class TelegramBot:
             self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
 
     def _handle_waiting_join_bedroom_id(self, chat_ID, message):
+        """
+        Handle the state where the user is expected to provide the ID of the bedroom they want to join.
+         Store the bedroom ID and transition to the next state to ask for the password.
+        """
         self.user_states[chat_ID]["bedroom_id"] = message
         self.user_states[chat_ID]["state"] = "waiting_join_password"
         self.bot.sendMessage(chat_ID, "Enter the password for this room:")
 
     def _handle_waiting_join_password(self, chat_ID, message):
+        """
+        Handle the state where the user is expected to provide the password for the bedroom they want to join.
+        """
         room_id = self.user_states[chat_ID]["bedroom_id"]
         if self._check_room(chat_ID, room_id, message):
             self.bot.sendMessage(chat_ID, f"Successfully joined room {room_id}!")
@@ -141,6 +195,10 @@ class TelegramBot:
             self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
 
     def _handle_registing_user(self, chat_ID, message):
+        """
+        Handle the state where the user is expected to provide a username to register in the bedroom.
+        Check if the username already exists, and if not, register the user in the Catalog and
+        """
         bedroom_id = self.user_states[chat_ID].get("bedroom_id")
         print(bedroom_id)
         username = message
@@ -160,6 +218,9 @@ class TelegramBot:
             }
 
     def _create_bedroom(self, chat_ID, room_name, password):
+        """
+        Create a new bedroom in the Catalog with the given room name and password.
+        """
         bedroom = {
             "room_name": room_name,
             "password": password
@@ -177,6 +238,9 @@ class TelegramBot:
         return None
 
     def _check_room(self, chat_ID, room_id, password):
+        """
+        Check if the provided bedroom ID and password are correct by querying the Catalog.
+        """
         try:
             res = requests.get(f"{self.catalog_url}/checkRoom",
                                params={"bedroom_id": room_id, "password": password})
@@ -188,6 +252,9 @@ class TelegramBot:
         return False
 
     def _check_username_exists(self, chat_ID, username):
+        """
+        Check if the provided username already exists in the Catalog by querying the /checkUsername endpoint.
+        """
         try:
             res = requests.get(f"{self.catalog_url}/checkUsername",
                                params={"username": username})
@@ -200,6 +267,9 @@ class TelegramBot:
         return False
 
     def _add_user(self, chat_ID, username, bedroom_id):
+        """
+        Add a new user to the Catalog with the provided username, Telegram chat ID, and bedroom ID.
+        """
         user = {
             "username": username,
             "telegram_chat_id": chat_ID,
@@ -219,29 +289,6 @@ class TelegramBot:
             self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
         return False
 
-    def send_room_options(self, chat_ID):
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Create a room", callback_data="create_room")],
-            [InlineKeyboardButton(text="🚪 Join a room", callback_data="join_room")]
-        ])
-        self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
-    def send_registered_user_options(self, chat_ID):
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📊 View room data", callback_data="view_data")],
-            [InlineKeyboardButton(text="⚙️ Manage room settings", callback_data="manage_settings")]
-        ])
-        self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
-    def on_callback_query(self, msg):
-        query_ID, from_ID, query_data = telepot.glance(msg, flavor='callback_query')
-        self.bot.answerCallbackQuery(query_ID)
-
-        if query_data == "create_room":
-            self.bot.sendMessage(from_ID, text="You chose to create a room. Please enter the name of the room:")
-            self.user_states[from_ID] = {"state": "waiting_room_name"}
-
-        elif query_data == "join_room":
-            self.bot.sendMessage(from_ID, text="You chose to join a room. Please enter the ID of the bedroom:")
-            self.user_states[from_ID] = {"state": "waiting_join_bedroom_id"}
 
     def register_service(self):
         service = {
