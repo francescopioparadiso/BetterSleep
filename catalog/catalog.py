@@ -268,17 +268,17 @@ class Catalog:
             print(f"Error checking username: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
-    def _get_bedroom_from_chat_id(self, params):
+    def _get_usersession_from_chat_id(self, params):
         telegram_chat_id = params.get('telegram_chat_id')
         if not telegram_chat_id:
             raise cherrypy.HTTPError(400, "Missing 'telegram_chat_id' parameter")
         try:
-            bedroom_id = self.db.get_bedroom_from_chat_id(telegram_chat_id)
-            if bedroom_id is not None:
-                return json.dumps({"status": "success", "bedroom_id": bedroom_id})
-            raise cherrypy.HTTPError(404, "Bedroom not found for the given chat ID")
+            usersession=self.db.getUserSession(telegram_chat_id)
+            if usersession:
+                return json.dumps({"status": "success", "username": usersession[0], "bedroom_id": usersession[1]})
+            raise cherrypy.HTTPError(404, "User session not found")
         except Exception as e:
-            print(f"Error retrieving bedroom from chat ID: {e}")
+            print(f"Error retrieving user session: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def GET(self, *uri, **params):
@@ -290,7 +290,7 @@ class Catalog:
             "getDatabaseEndpoint": self._get_database_endpoint,
             "checkRoom": self._get_check_room,
             "checkUsername": self._get_check_username,
-            "getBedroomFromChatID": self._get_bedroom_from_chat_id,
+            "getUserSession": self._get_usersession_from_chat_id,
         }
         handler = handlers.get(uri[0])
         if not handler:

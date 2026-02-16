@@ -35,3 +35,6 @@ GET http://localhost:8080/getDatabaseEndpoint
 
 ###
 GET http://localhost:8080/checkUsername?username=antontino54
+
+###
+GET http://localhost:8080/getUserSession?telegram_chat_id=417168004

@@ -142,6 +142,10 @@ class PostgresDB:
         query = "SELECT  endpoint FROM services WHERE type = 'DatabaseAdapter' LIMIT 1"
         return self._execute(query, fetch=True, single=True)
 
+    def getUserSession(self, chat_id):
+        query = "SELECT username, bedroom_id FROM users WHERE telegram_chat_id = %s"
+        return self._execute(query, (chat_id,), fetch=True, single=True)
+
     def check_join_bedroom(self, room_id, password):
         query = "SELECT 1 FROM bedrooms WHERE bedroom_id = %s AND password = %s"
         result = self._execute(query, (room_id, password), fetch=True, single=True)
