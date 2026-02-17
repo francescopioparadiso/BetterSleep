@@ -9,6 +9,31 @@ from requests import HTTPError
 
 from time_series.time_series_db import TimeSeriesDB
 
+def require_fields(payload, required_fields):
+    if not all(field in payload for field in required_fields):
+        raise cherrypy.HTTPError(400, "Missing required fields in JSON")
+
+def _load_json_body():
+    body = cherrypy.request.body.read()
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        raise cherrypy.HTTPError(400, "Invalid JSON format")
+
+def checkSenML(newmeasurament):
+    required_top = ["bn", "e"]
+    required_event = ["n", "u", "t", "v"]
+
+    if not all(k in newmeasurament for k in required_top):
+        raise cherrypy.HTTPError(400, "Missing bn or e")
+
+    if not isinstance(newmeasurament["e"], list) or len(newmeasurament["e"]) == 0:
+        raise cherrypy.HTTPError(400, "Field 'e' must be a non-empty list")
+
+    if not all(all(field in event for field in required_event)
+               for event in newmeasurament["e"]):
+        raise cherrypy.HTTPError(400, "Missing required fields inside 'e'")
+
 
 class TimeSeriesDBAdapter:
     exposed = True
@@ -25,12 +50,34 @@ class TimeSeriesDBAdapter:
             print("Critical error: Unable to connect to the database.")
             print("Service will be stopped.")
             self.stop_background_loop()
+    # --------------------------------------------------------
+    # POST METHOD - Add new resources
+    # --------------------------------------------------------
+    def POST(self, *uri, **params):
+        """Handle POST requests to add new Services, Devices, or Users."""
+        if not uri:
+            raise cherrypy.HTTPError(400, "Endpoint not specified")
 
+        handlers = {
+            "addMeasurement": self._post_add_measurement,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
+            raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler()
+
+    def _post_add_measurement(self):
+        newmeasurament = _load_json_body()
+        # newmesurament is in senML
+        checkSenML(newmeasurament)
+        success = self.db.insert_data("mesurament",newmeasurament)
+        if success:
+            return json.dumps({"status": "success", "message": "Mesurament Added"})
+        raise cherrypy.HTTPError(409, "Problem with the addition of Mesurament")
 
     def GET(self, *uri, **params):
         pass
-    def POST(self, *uri, **params):
-        pass
+
     def PUT(self, *uri, **params):
         pass
     def DELETE(self, *uri, **params):
