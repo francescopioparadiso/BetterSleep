@@ -40,10 +40,17 @@ class TelegramBot:
 
         load_dotenv()
         self.token = os.getenv("TELEGRAM_TOKEN")
-        self.bot = telepot.Bot(self.token)
+        if not self.token:
+            logger.error("TELEGRAM_TOKEN not found in environment variables")
+            raise ValueError("TELEGRAM_TOKEN environment variable is required")
+
+        try:
+            self.bot = telepot.Bot(self.token)
+        except Exception as e:
+            logger.error(f"Failed to initialize Telegram bot: {e}")
+            raise
         self.chatIDs = []
         self.user_states = {}
-
         MessageLoop(self.bot, {'chat': self.on_chat_message, 'callback_query': self.on_callback_query}).run_as_thread()
         self.register_service()
 
@@ -59,7 +66,7 @@ class TelegramBot:
             return
 
         if message == "/help":
-            self._send_help(chat_ID)
+            self._handle_help(chat_ID)
             return
 
         state_info = self.user_states.get(chat_ID)
@@ -69,6 +76,9 @@ class TelegramBot:
         curr_state = state_info.get("state")
         self._dispatch_state(chat_ID, curr_state, message)
 
+########################################################################
+#   Methods to send different options to the user based on their state
+########################################################################
     def send_room_options(self, chat_ID):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📝 Create a room", callback_data="create_room")],
@@ -80,6 +90,14 @@ class TelegramBot:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 View room data", callback_data="view_data")],
             [InlineKeyboardButton(text="⚙️ Manage room settings", callback_data="manage_settings")]
+        ])
+        self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
+
+    def send_room_settings_options(self, chat_ID):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔒 Change room password", callback_data="change_password")],
+             [InlineKeyboardButton(text="🗑️ Delete room", callback_data="delete_room")],
+             [InlineKeyboardButton(text="⬅️ Back to main menu", callback_data="main_menu")]
         ])
         self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
 
@@ -96,11 +114,16 @@ class TelegramBot:
         elif query_data == "view_data":
             self.bot.sendMessage(from_ID, text="This feature is not implemented yet.")
         elif query_data == "manage_settings":
-            self.bot.sendMessage(from_ID, text="This feature is not implemented yet.")
+            self.send_room_settings_options(from_ID)
+        elif query_data == "delete_room":
+            self._delete_room(from_ID)
 
-    def _send_help(self, chat_ID):
-        self.bot.sendMessage(chat_ID,
-                             text="Available commands:\n/start - Start the bot\n/help - Show this help message")
+
+
+
+    def _delete_room(self, chat_ID):
+        #!TODO Implement this
+        pass
 
     def _dispatch_state(self, chat_ID, curr_state, message):
         handlers = {
@@ -108,14 +131,16 @@ class TelegramBot:
             "waiting_room_password": self._handle_waiting_room_password,
             "waiting_join_bedroom_id": self._handle_waiting_join_bedroom_id,
             "waiting_join_password": self._handle_waiting_join_password,
-            "registing_user": self._handle_registing_user,
+            "registering_user": self._handle_registering_user,
             "registered": self._handle_registered_user
         }
         handler = handlers.get(curr_state)
         if handler:
             handler(chat_ID, message)
 
-
+########################################################################
+#   Handlers for different user states and commands
+########################################################################
     def _handle_start(self, chat_ID):
         """
         Handle the /start command. If the user is new, send a welcome message and show room options.
@@ -123,12 +148,14 @@ class TelegramBot:
         if chat_ID not in self.chatIDs:
             self.chatIDs.append(chat_ID)
         self.bot.sendMessage(chat_ID, text="Welcome to BetterSleep! Use /help to see available commands.")
-        self._handel_restore_user_session(chat_ID)
+        self._handle_restore_user_session(chat_ID)
         if self.user_states.get(chat_ID, {}).get("state") != "registered":
             self.send_room_options(chat_ID)
         else:
             self.send_registered_user_options(chat_ID)
-
+    def _handle_help(self, chat_ID):
+        self.bot.sendMessage(chat_ID,
+                             text="Available commands:\n/start - Start the bot\n/help - Show this help message")
     def _handle_registered_user(self, chat_ID, message):
         """
         Handle messages from registered users. This can be extended to provide more functionality based on user input.
@@ -149,7 +176,7 @@ class TelegramBot:
         self.user_states[chat_ID]["state"] = "waiting_room_password"
         self.bot.sendMessage(chat_ID, f"Room '{message}' set. Now enter the password:")
 
-    def _handel_restore_user_session(self, chat_ID):
+    def _handle_restore_user_session(self, chat_ID):
         """
         Attempt to restore a user's session by checking if their Telegram chat ID is associated with an existing user in the Catalog.
         If a session is found, update the user's state to "registered" and welcome them back
@@ -179,9 +206,6 @@ class TelegramBot:
         except requests.exceptions.ConnectionError as e:
             logger.error(f"Connection error with Catalog: {e}")
             self.bot.sendMessage(chat_ID, "Connection error with Catalog. Unable to restore session.")
-        except (ValueError, KeyError) as e:
-            logger.error(f"Error parsing response from Catalog: {e}")
-            self.bot.sendMessage(chat_ID, "Error processing catalog response.")
         except Exception as e:
             logger.error(f"Unexpected error restoring user session: {e}")
             self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
@@ -195,7 +219,7 @@ class TelegramBot:
         room_id = self._create_bedroom(chat_ID, room_name, password_hash)
         if room_id:
             self.user_states[chat_ID] = {
-                "state": "registing_user",
+                "state": "registering_user",
                 "bedroom_id": room_id
             }
             print(f"User {chat_ID} registered in room {room_id}")
@@ -218,14 +242,14 @@ class TelegramBot:
         if self._check_room(chat_ID, room_id, message):
             self.bot.sendMessage(chat_ID, f"Successfully joined room {room_id}!")
             self.user_states[chat_ID] = {
-                "state": "registing_user",
+                "state": "registering_user",
                 "bedroom_id": room_id
             }
             self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
         else:
             self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
 
-    def _handle_registing_user(self, chat_ID, message):
+    def _handle_registering_user(self, chat_ID, message):
         """
         Handle the state where the user is expected to provide a username to register in the bedroom.
         Check if the username already exists, and if not, register the user in the Catalog and
@@ -248,117 +272,66 @@ class TelegramBot:
                 "username": username
             }
 
-    def _create_bedroom(self, chat_ID, room_name, password):
-        """
-        Create a new bedroom in the Catalog with the given room name and password.
-        """
-        bedroom = {
-            "room_name": room_name,
-            "password": password
-        }
+########################################################################
+#   Helper methods to interact with the Catalog
+########################################################################
+    def _request_catalog(self, method, endpoint, chat_ID, **kwargs):
+        """Generic helper to call Catalog API with error handling."""
         try:
-            res = requests.post(f"{self.catalog_url}/addBedroom", json=bedroom, timeout=5)
+            if method.lower() == "get":
+                res = requests.get(f"{self.catalog_url}/{endpoint}", timeout=5, **kwargs)
+            elif method.lower() == "post":
+                res = requests.post(f"{self.catalog_url}/{endpoint}", timeout=5, **kwargs)
+            else:
+                raise ValueError("Unsupported HTTP method")
             res.raise_for_status()
+            return res.json()
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout {method} {endpoint} for user {chat_ID}")
+            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error {method} {endpoint}: {e}")
+            if e.response.status_code == 409:
+                self.bot.sendMessage(chat_ID, "Conflict: resource already exists or registered")
+            else:
+                self.bot.sendMessage(chat_ID, "Access denied or request failed.")
+        except Exception as e:
+            logger.error(f"Unexpected error {method} {endpoint}: {e}")
+            self.bot.sendMessage(chat_ID, "Unexpected error occurred.")
+        return None
 
-            data = res.json()
+    def _create_bedroom(self, chat_ID, room_name, password):
+        bedroom = {"room_name": room_name, "password": password}
+        data = self._request_catalog("post", "addBedroom", chat_ID, json=bedroom)
+        if data:
             room_id = data.get("bedroom_id")
             self.bot.sendMessage(chat_ID, f"Successfully created room '{room_name}' with ID {room_id}!")
             return room_id
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout creating bedroom for user {chat_ID}")
-            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog. Failed to create room.")
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error creating bedroom: {e}")
-            self.bot.sendMessage(chat_ID, "Access denied: room creation failed.")
-        
-        except (ValueError, KeyError) as e:
-            logger.error(f"Error parsing catalog response: {e}")
-            self.bot.sendMessage(chat_ID, "Error processing catalog response.")
-        except Exception as e:
-            logger.error(f"Unexpected error creating bedroom: {e}")
-            self.bot.sendMessage(chat_ID, "Unexpected error creating bedroom.")
         return None
 
     def _check_room(self, chat_ID, room_id, password):
-        """
-        Check if the provided bedroom ID and password are correct by querying the Catalog.
-        """
-        try:
-            res = requests.get(f"{self.catalog_url}/checkRoom",
-                               params={"bedroom_id": room_id, "password": password},
-                               timeout=5)
-            res.raise_for_status()
-            return True
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout checking room {room_id} for user {chat_ID}")
-            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error checking room: {e}")
-            self.bot.sendMessage(chat_ID, "Access denied: wrong ID or password.")
-        except Exception as e:
-            logger.error(f"Unexpected error checking room: {e}")
-            self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
-        return False
+        params = {"bedroom_id": room_id, "password": password}
+        data = self._request_catalog("get", "checkRoom", chat_ID, params=params)
+        return data is not None
 
     def _check_username_exists(self, chat_ID, username):
-        """
-        Check if the provided username already exists in the Catalog by querying the /checkUsername endpoint.
-        """
-        try:
-            res = requests.get(f"{self.catalog_url}/checkUsername",
-                               params={"username": username},
-                               timeout=5)
-            res.raise_for_status()
-
-            if res.json().get("exists"):
-                self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another one.")
-                return True
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout checking username {username} for user {chat_ID}")
-            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
-            return True
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error checking username: {e}")
-            self.bot.sendMessage(chat_ID, "Error checking username availability.")
-            return True
-        except Exception as e:
-            logger.error(f"Unexpected error checking username: {e}")
-            self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
+        data = self._request_catalog("get", "checkUsername", chat_ID, params={"username": username})
+        if data and data.get("exists"):
+            self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another one.")
             return True
         return False
 
     def _add_user(self, chat_ID, username, bedroom_id):
-        """
-        Add a new user to the Catalog with the provided username, Telegram chat ID, and bedroom ID.
-        """
-        user = {
-            "username": username,
-            "telegram_chat_id": chat_ID,
-            "bedroom_id": bedroom_id
-        }
-        try:
-            res = requests.post(f"{self.catalog_url}/addUser", json=user, timeout=5)
-            res.raise_for_status()
-
+        user = {"username": username, "telegram_chat_id": chat_ID, "bedroom_id": bedroom_id}
+        data = self._request_catalog("post", "addUser", chat_ID, json=user)
+        if data is not None:
             self.bot.sendMessage(chat_ID, f"Successfully registered as '{username}' in room {bedroom_id}!")
             return True
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout registering user {username}")
-            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 409:
-                logger.warning(f"User {username} already exists or already registered")
-                self.bot.sendMessage(chat_ID, "Error: You are already registered in a room")
-                self.user_states[chat_ID] = {"state": "registered", "bedroom_id": None, "username": None}
-                return True
-            logger.error(f"HTTP error adding user: {e}")
-            self.bot.sendMessage(chat_ID, "Error registering user.")
-        except Exception as e:
-            logger.error(f"Unexpected error adding user: {e}")
-            self.bot.sendMessage(chat_ID, "Unexpected error during registration.")
         return False
 
-
+#####################################################################
+#   Registering of the service in the Catalog and background loop to update last_update
+#####################################################################
     def register_service(self):
         service = {
             "serviceID": self.service_info['serviceID'],
