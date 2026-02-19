@@ -27,8 +27,7 @@ Content-Type: application/json
 
 {
   "username": "User 004",
-  "telegram_chat_id": "123456785",
-  "bedroom_id": "2"
+  "telegram_chat_id": "123456785"
 }
 
 ###

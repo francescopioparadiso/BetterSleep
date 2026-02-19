@@ -100,6 +100,7 @@ class Catalog:
         return handler()
 
     def _post_add_service(self):
+        """Add a new service to the catalog."""
         new_service = self._load_json_body()
         check_if_is_a_service(new_service)
 
@@ -109,6 +110,7 @@ class Catalog:
         raise cherrypy.HTTPError(409, "The Service ID already exists")
 
     def _post_add_device(self):
+        """Add a new device to the catalog."""
         new_device = self._load_json_body()
         check_if_is_a_device(new_device)
 
@@ -118,10 +120,9 @@ class Catalog:
         raise cherrypy.HTTPError(409, "The Device ID already exists")
 
     def _post_add_user(self):
+        """Add a new user to the catalog."""
         new_user = self._load_json_body()
-        require_fields(new_user, ['username', 'telegram_chat_id', 'bedroom_id'])
-        if self.db.room_exists(new_user['bedroom_id']) is False:
-            raise cherrypy.HTTPError(400, "The specified bedroom_id does not exist")
+        require_fields(new_user, ['username', 'telegram_chat_id'])
 
         success = self.db.insert_user(new_user)
         if success:
@@ -129,12 +130,13 @@ class Catalog:
         raise cherrypy.HTTPError(409, "The User ID already exists")
 
     def _post_add_bedroom(self):
+        """Add a new bedroom to the catalog."""
         new_bedroom = self._load_json_body()
         require_fields(new_bedroom, ['room_name', 'password'])
 
-        beed_room_id = self.db.insert_bedroom(new_bedroom)
-        if beed_room_id:
-            return json.dumps({"status": "success", "message": "Bedroom Added", "bedroom_id": beed_room_id})
+        bedroom_id = self.db.insert_bedroom(new_bedroom)
+        if bedroom_id:
+            return json.dumps({"status": "success", "message": "Bedroom Added", "bedroom_id": bedroom_id})
         raise cherrypy.HTTPError(409, "Failed to create bedroom")
 
     # --------------------------------------------------------
@@ -149,7 +151,7 @@ class Catalog:
             "updateService": self._put_update_service,
             "updateServiceLastUpdate": self._put_update_service_last_update,
             "updateDevice": self._put_update_device,
-            "updateUser": self._put_update_user,
+            "associateUserToBedroom": self._put_update_user,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -157,6 +159,7 @@ class Catalog:
         return handler()
 
     def _put_update_service(self):
+        """Update an existing service in the catalog."""
         updated_service = self._load_json_body()
         check_if_is_a_service(updated_service)
 
@@ -167,6 +170,7 @@ class Catalog:
         raise cherrypy.HTTPError(404, "The Service ID does not exist")
 
     def _put_update_service_last_update(self):
+        """Update the last_update timestamp of a service."""
         updated_service = self._load_json_body()
         require_fields(updated_service, ['serviceID', 'last_update'])
 
@@ -177,6 +181,7 @@ class Catalog:
         raise cherrypy.HTTPError(404, "The Service ID does not exist")
 
     def _put_update_device(self):
+        """Update an existing device in the catalog."""
         updated_device = self._load_json_body()
         check_if_is_a_device(updated_device)
 
@@ -186,8 +191,9 @@ class Catalog:
         raise cherrypy.HTTPError(404, "The Device ID does not exist")
 
     def _put_update_user(self):
+        """Update an existing user's association with a bedroom."""
         updated_user = self._load_json_body()
-        require_fields(updated_user, ['username', 'telegram_chat_id'])
+        require_fields(updated_user, ['username', 'telegram_chat_id', 'bedroom_id'])
 
         success = self.db.update_user(updated_user)
         if success:
@@ -198,7 +204,7 @@ class Catalog:
     # DELETE METHOD - Remove resources
     # --------------------------------------------------------
     def DELETE(self, *uri, **params):
-        """Handle DELETE requests to remove Services, Devices, or Users."""
+        """Handle DELETE requests to remove Services, Devices, Users, or Bedrooms."""
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
@@ -206,6 +212,7 @@ class Catalog:
             "removeService": self._delete_remove_service,
             "removeDevice": self._delete_remove_device,
             "removeUser": self._delete_remove_user,
+            "removeRoom": self._delete_remove_room,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -213,6 +220,7 @@ class Catalog:
         return handler(params)
 
     def _delete_remove_service(self, params):
+        """Delete a service by serviceID."""
         service_id = params.get('serviceID')
         if not service_id:
             raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
@@ -222,7 +230,19 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Service Deleted"})
         raise cherrypy.HTTPError(404, "Service not found")
 
+    def _delete_remove_room(self, params):
+        """Delete a bedroom by bedroom_id."""
+        bedroom_id = params.get('bedroom_id')
+        if not bedroom_id:
+            raise cherrypy.HTTPError(400, "Missing 'bedroom_id' parameter")
+
+        success = self.db.delete_bedroom(bedroom_id)
+        if success:
+            return json.dumps({"status": "success", "message": "Bedroom Deleted"})
+        raise cherrypy.HTTPError(404, "Bedroom not found")
+
     def _delete_remove_device(self, params):
+        """Delete a device by deviceID."""
         device_id = params.get('deviceID')
         if not device_id:
             raise cherrypy.HTTPError(400, "Missing 'deviceID' parameter")
@@ -233,6 +253,7 @@ class Catalog:
         raise cherrypy.HTTPError(404, "Device not found")
 
     def _delete_remove_user(self, params):
+        """Delete a user by username."""
         username = params.get('username')
         if not username:
             raise cherrypy.HTTPError(400, "Missing 'username' parameter")
@@ -243,10 +264,10 @@ class Catalog:
         raise cherrypy.HTTPError(404, "User not found")
 
     # --------------------------------------------------------
-    # GET METHOD - Remove resources
+    # GET METHOD - Retrieve resources
     # --------------------------------------------------------
     def GET(self, *uri, **params):
-        """Handle GET requests to retrieve information about Services, Devices, or Users."""
+        """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
@@ -254,7 +275,7 @@ class Catalog:
             "getDatabaseEndpoint": self._get_database_endpoint,
             "checkRoom": self._get_check_room,
             "checkUsername": self._get_check_username,
-            "getUserSession": self._get_usersession_from_chat_id,
+            "getUserSession": self._get_user_session_from_chat_id,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -262,6 +283,7 @@ class Catalog:
         return handler(params)
 
     def _get_database_endpoint(self, params):
+        """Get the endpoint of the database server."""
         try:
             endpoint = self.db.get_endpoint_server_database()
             if endpoint:
@@ -275,6 +297,7 @@ class Catalog:
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_check_room(self, params):
+        """Check if a bedroom exists and password is correct."""
         bedroom_id = params.get('bedroom_id')
         password_hash = params.get('password')
 
@@ -293,6 +316,7 @@ class Catalog:
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_check_username(self, params):
+        """Check if a username exists in the database."""
         username = params.get('username')
         if not username:
             raise cherrypy.HTTPError(400, "Missing 'username' parameter")
@@ -303,7 +327,8 @@ class Catalog:
             logger.error(f"Error checking username: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
-    def _get_usersession_from_chat_id(self, params):
+    def _get_user_session_from_chat_id(self, params):
+        """Retrieve user session (username and bedroom_id) by telegram_chat_id."""
         telegram_chat_id = params.get('telegram_chat_id')
         if not telegram_chat_id:
             raise cherrypy.HTTPError(400, "Missing 'telegram_chat_id' parameter")

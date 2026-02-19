@@ -79,21 +79,24 @@ class TelegramBot:
 ########################################################################
 #   Methods to send different options to the user based on their state
 ########################################################################
-    def send_room_options(self, chat_ID):
+    def _send_room_options(self, chat_ID):
+        """Send keyboard options to create or join a room."""
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📝 Create a room", callback_data="create_room")],
             [InlineKeyboardButton(text="🚪 Join a room", callback_data="join_room")]
         ])
         self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
 
-    def send_registered_user_options(self, chat_ID):
+    def _send_registered_user_options(self, chat_ID):
+        """Send keyboard options for registered users."""
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 View room data", callback_data="view_data")],
             [InlineKeyboardButton(text="⚙️ Manage room settings", callback_data="manage_settings")]
         ])
         self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
 
-    def send_room_settings_options(self, chat_ID):
+    def _send_room_settings_options(self, chat_ID):
+        """Send keyboard options for room settings management."""
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔒 Change room password", callback_data="change_password")],
              [InlineKeyboardButton(text="🗑️ Delete room", callback_data="delete_room")],
@@ -102,36 +105,38 @@ class TelegramBot:
         self.bot.sendMessage(chat_ID, text="What would you like to do?", reply_markup=keyboard)
 
     def on_callback_query(self, msg):
+        """Handle callback queries from inline keyboards."""
         query_ID, from_ID, query_data = telepot.glance(msg, flavor='callback_query')
         self.bot.answerCallbackQuery(query_ID)
 
         if query_data == "create_room":
             self.bot.sendMessage(from_ID, text="You chose to create a room. Please enter the name of the room:")
-            self.user_states[from_ID] = {"state": "waiting_room_name"}
+            self.user_states[from_ID] = {"state": "waiting_room_name", "username": self.user_states[from_ID].get("username")}
         elif query_data == "join_room":
             self.bot.sendMessage(from_ID, text="You chose to join a room. Please enter the ID of the bedroom:")
-            self.user_states[from_ID] = {"state": "waiting_join_bedroom_id"}
+            self.user_states[from_ID] = {"state": "waiting_join_bedroom_id", "username": self.user_states[from_ID].get("username")}
         elif query_data == "view_data":
             self.bot.sendMessage(from_ID, text="This feature is not implemented yet.")
         elif query_data == "manage_settings":
-            self.send_room_settings_options(from_ID)
+            self._send_room_settings_options(from_ID)
         elif query_data == "delete_room":
-            self._delete_room(from_ID)
+            self.bot.sendMessage(from_ID, text="Are you sure you want to delete the room? This action cannot be undone. Type 'yes' to confirm.")
+            self.user_states[from_ID]["state"] = "waiting_delete_confirmation"
 
 
 
 
-    def _delete_room(self, chat_ID):
-        #!TODO Implement this
-        pass
+
 
     def _dispatch_state(self, chat_ID, curr_state, message):
+        """Dispatch user message to appropriate handler based on current state."""
         handlers = {
+            "waiting_username": self._handle_waiting_username,
             "waiting_room_name": self._handle_waiting_room_name,
             "waiting_room_password": self._handle_waiting_room_password,
             "waiting_join_bedroom_id": self._handle_waiting_join_bedroom_id,
             "waiting_join_password": self._handle_waiting_join_password,
-            "registering_user": self._handle_registering_user,
+            "waiting_delete_confirmation": self._handle_delete_room,
             "registered": self._handle_registered_user
         }
         handler = handlers.get(curr_state)
@@ -143,19 +148,47 @@ class TelegramBot:
 ########################################################################
     def _handle_start(self, chat_ID):
         """
-        Handle the /start command. If the user is new, send a welcome message and show room options.
+        Handle the /start command. If the user is new, ask for username first.
+        If user exists, restore session and show options.
         """
         if chat_ID not in self.chatIDs:
             self.chatIDs.append(chat_ID)
+
         self.bot.sendMessage(chat_ID, text="Welcome to BetterSleep! Use /help to see available commands.")
         self._handle_restore_user_session(chat_ID)
-        if self.user_states.get(chat_ID, {}).get("state") != "registered":
-            self.send_room_options(chat_ID)
+
+        current_state = self.user_states.get(chat_ID, {}).get("state")
+
+        if current_state == "registered":
+            self._send_registered_user_options(chat_ID)
         else:
-            self.send_registered_user_options(chat_ID)
+            # New user - ask for username first
+            self.bot.sendMessage(chat_ID, text="Please enter your username to get started:")
+            self.user_states[chat_ID] = {"state": "waiting_username"}
     def _handle_help(self, chat_ID):
+        """Display available commands to the user."""
         self.bot.sendMessage(chat_ID,
                              text="Available commands:\n/start - Start the bot\n/help - Show this help message")
+
+    def _handle_waiting_username(self, chat_ID, message):
+        """
+        Handle the state where the user is expected to provide a username.
+        This is the first step in the registration flow.
+        Check if username exists, and if not, store it and ask user to choose a room.
+        """
+        username = message.strip()
+
+        if self._check_username_exists(chat_ID, username):
+            self.bot.sendMessage(chat_ID, "Please choose a different username:")
+            return
+
+        # Store username in state
+        self.user_states[chat_ID]["username"] = username
+        self.bot.sendMessage(chat_ID, f"Great! Username '{username}' is available.")
+
+        # Now ask user to choose between creating or joining a room
+        self._send_room_options(chat_ID)
+
     def _handle_registered_user(self, chat_ID, message):
         """
         Handle messages from registered users. This can be extended to provide more functionality based on user input.
@@ -171,7 +204,6 @@ class TelegramBot:
         Handle the state where the user is expected to provide a room name for creating a new bedroom.
         Store the room name and transition to the next state to ask for the password.
         """
-
         self.user_states[chat_ID]["room_name"] = message
         self.user_states[chat_ID]["state"] = "waiting_room_password"
         self.bot.sendMessage(chat_ID, f"Room '{message}' set. Now enter the password:")
@@ -213,22 +245,40 @@ class TelegramBot:
     def _handle_waiting_room_password(self, chat_ID, message):
         """
         Handle the state where the user is expected to provide a password for the new bedroom.
+        Create the room and then register the user with the stored username.
         """
-        room_name = self.user_states[chat_ID]["room_name"]
+        room_name = self.user_states[chat_ID].get("room_name")
+        username = self.user_states[chat_ID].get("username")
+
+        if not username:
+            logger.error(f"Username not found in state for chat_ID {chat_ID}")
+            self.bot.sendMessage(chat_ID, "Error: username not found. Please start over with /start")
+            return
+
         password_hash = hash_password(message)
         room_id = self._create_bedroom(chat_ID, room_name, password_hash)
+
         if room_id:
-            self.user_states[chat_ID] = {
-                "state": "registering_user",
-                "bedroom_id": room_id
-            }
-            print(f"User {chat_ID} registered in room {room_id}")
-            self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
+            # Register user with the stored username and new room
+            if self._add_user(chat_ID, username, room_id):
+                if 6 <= datetime.now().hour < 18:
+                    greeting = "Good morning"
+                else:
+                    greeting = "Good evening"
+
+                self.bot.sendMessage(chat_ID,
+                                     f"{greeting}, {username} from room {room_id}! You are now registered.")
+                self.user_states[chat_ID] = {
+                    "state": "registered",
+                    "bedroom_id": room_id,
+                    "username": username
+                }
+                self._send_registered_user_options(chat_ID)
 
     def _handle_waiting_join_bedroom_id(self, chat_ID, message):
         """
         Handle the state where the user is expected to provide the ID of the bedroom they want to join.
-         Store the bedroom ID and transition to the next state to ask for the password.
+        Store the bedroom ID and transition to the next state to ask for the password.
         """
         self.user_states[chat_ID]["bedroom_id"] = message
         self.user_states[chat_ID]["state"] = "waiting_join_password"
@@ -237,40 +287,53 @@ class TelegramBot:
     def _handle_waiting_join_password(self, chat_ID, message):
         """
         Handle the state where the user is expected to provide the password for the bedroom they want to join.
+        If password is correct, register the user with the stored username.
         """
-        room_id = self.user_states[chat_ID]["bedroom_id"]
-        if self._check_room(chat_ID, room_id, message):
-            self.bot.sendMessage(chat_ID, f"Successfully joined room {room_id}!")
-            self.user_states[chat_ID] = {
-                "state": "registering_user",
-                "bedroom_id": room_id
-            }
-            self.bot.sendMessage(chat_ID, "Now enter your username to register in the room:")
-        else:
-            self.user_states[chat_ID] = {"state": "waiting_join_bedroom_id"}
+        room_id = self.user_states[chat_ID].get("bedroom_id")
+        username = self.user_states[chat_ID].get("username")
 
-    def _handle_registering_user(self, chat_ID, message):
-        """
-        Handle the state where the user is expected to provide a username to register in the bedroom.
-        Check if the username already exists, and if not, register the user in the Catalog and
-        """
-        bedroom_id = self.user_states[chat_ID].get("bedroom_id")
-        print(bedroom_id)
-        username = message
-        if self._check_username_exists(chat_ID, username):
+        if not username:
+            logger.error(f"Username not found in state for chat_ID {chat_ID}")
+            self.bot.sendMessage(chat_ID, "Error: username not found. Please start over with /start")
             return
-        if self._add_user(chat_ID, username, bedroom_id):
-            if 6 <= datetime.now().hour < 18:
-                greeting = "Good morning"
-            else:
-                greeting = "Good evening"
-            self.bot.sendMessage(chat_ID,
-                                 f"{greeting}, {username} from room {bedroom_id}! You can use the following commands:")
-            self.user_states[chat_ID] = {
-                "state": "registered",
-                "bedroom_id": bedroom_id,
-                "username": username
-            }
+
+        if self._check_room(chat_ID, room_id, message):
+            # Register user with the stored username and joined room
+            if self._add_user(chat_ID, username, room_id):
+                if 6 <= datetime.now().hour < 18:
+                    greeting = "Good morning"
+                else:
+                    greeting = "Good evening"
+
+                self.bot.sendMessage(chat_ID,
+                                     f"{greeting}, {username}! You have successfully joined room {room_id}.")
+                self.user_states[chat_ID] = {
+                    "state": "registered",
+                    "bedroom_id": room_id,
+                    "username": username
+                }
+                self._send_registered_user_options(chat_ID)
+        else:
+            self.bot.sendMessage(chat_ID, "Incorrect password or room not found. Please try again.")
+            self.user_states[chat_ID]["state"] = "waiting_join_bedroom_id"
+            self.bot.sendMessage(chat_ID, "Please enter the ID of the bedroom:")
+
+    def _handle_delete_room(self, chat_ID, message):
+        """
+        Handle the state where the user is expected to confirm the deletion of the room.
+        If the user confirms, delete the room from the Catalog and reset the user's state.
+        """
+        if message.lower() == "yes":
+            bedroom_id = self.user_states[chat_ID].get("bedroom_id")
+            self._remove_bedroom(bedroom_id)
+            self.bot.sendMessage(chat_ID, f"Room {bedroom_id} deleted. You can create a new room or join an existing one.")
+            # Reset to waiting for room choice
+            username = self.user_states[chat_ID].get("username")
+            self.user_states[chat_ID] = {"state": "waiting_username", "username": username}
+            self._send_room_options(chat_ID)
+        else:
+            self.bot.sendMessage(chat_ID, "Room deletion cancelled.")
+            self._send_registered_user_options(chat_ID)
 
 ########################################################################
 #   Helper methods to interact with the Catalog
@@ -301,6 +364,7 @@ class TelegramBot:
         return None
 
     def _create_bedroom(self, chat_ID, room_name, password):
+        """Create a new bedroom in the Catalog."""
         bedroom = {"room_name": room_name, "password": password}
         data = self._request_catalog("post", "addBedroom", chat_ID, json=bedroom)
         if data:
@@ -309,12 +373,29 @@ class TelegramBot:
             return room_id
         return None
 
+    def _remove_bedroom(self, bedroom_id):
+        """Remove a bedroom from the Catalog."""
+        try:
+            res = requests.delete(
+                f"{self.catalog_url}/removeRoom",
+                params={"bedroom_id": bedroom_id},
+                timeout=5
+            )
+            res.raise_for_status()
+            logger.info(f"Successfully removed bedroom {bedroom_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error removing bedroom {bedroom_id}: {e}")
+            return False
+
     def _check_room(self, chat_ID, room_id, password):
+        """Check if a room exists and password is correct."""
         params = {"bedroom_id": room_id, "password": password}
         data = self._request_catalog("get", "checkRoom", chat_ID, params=params)
         return data is not None
 
     def _check_username_exists(self, chat_ID, username):
+        """Check if a username already exists in the Catalog."""
         data = self._request_catalog("get", "checkUsername", chat_ID, params={"username": username})
         if data and data.get("exists"):
             self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another one.")
@@ -322,12 +403,10 @@ class TelegramBot:
         return False
 
     def _add_user(self, chat_ID, username, bedroom_id):
+        """Add a new user to the Catalog."""
         user = {"username": username, "telegram_chat_id": chat_ID, "bedroom_id": bedroom_id}
         data = self._request_catalog("post", "addUser", chat_ID, json=user)
-        if data is not None:
-            self.bot.sendMessage(chat_ID, f"Successfully registered as '{username}' in room {bedroom_id}!")
-            return True
-        return False
+        return data is not None
 
 #####################################################################
 #   Registering of the service in the Catalog and background loop to update last_update
