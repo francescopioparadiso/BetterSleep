@@ -3,10 +3,11 @@ POST http://localhost:8080/addService
 Content-Type: application/json
 
 {
-  "serviceID": "Time Shift 001",
-  "REST_endpoint": "",
-  "MQTT_topic": "",
-  "timestamp": "2020-03-30 12:58"
+  "serviceID": "1",
+  "name": "Time Shift 001",
+  "endpoint": "http://localhost:8080/timeShift",
+  "type": "Time Shift",
+  "last_update": "2024-06-01T12:00:00Z"
 }
 ###
 DELETE http://localhost:8080/removeService?serviceID=Time Shift 001
@@ -38,3 +39,5 @@ GET http://localhost:8080/checkUsername?username=antontino54
 
 ###
 GET http://localhost:8080/getUserSession?telegram_chat_id=417168004
+###
+GET http://localhost:8080/checkRoom/?bedroom_id=8&password=2

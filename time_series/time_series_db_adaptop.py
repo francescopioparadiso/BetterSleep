@@ -1,13 +1,19 @@
 import json
+import sys
 import time
 import threading
+import logging
 from datetime import datetime
 
 import cherrypy
 import requests
-from requests import HTTPError
+from requests import HTTPError, Timeout, ConnectionError
 
 from time_series.time_series_db import TimeSeriesDB
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
 
 def require_fields(payload, required_fields):
     if not all(field in payload for field in required_fields):
@@ -17,7 +23,8 @@ def _load_json_body():
     body = cherrypy.request.body.read()
     try:
         return json.loads(body)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON format in request body: {e}")
         raise cherrypy.HTTPError(400, "Invalid JSON format")
 
 def checkSenML(newmeasurament):
@@ -44,12 +51,15 @@ class TimeSeriesDBAdapter:
         self.remove_interval = conf.get('removeInterval', 10)
         self._stop_event = threading.Event()
         self._worker = None
-        self.db = TimeSeriesDB(conf)
-        self.register_service()
-        if not self.db.health_check():
-            print("Critical error: Unable to connect to the database.")
-            print("Service will be stopped.")
-            self.stop_background_loop()
+        try:
+            self.db = TimeSeriesDB(conf)
+            self.register_service()
+            if not self.db.health_check():
+                logger.critical("Unable to connect to the database.")
+                self.stop_background_loop()
+        except Exception as e:
+            logger.error(f"Error initializing TimeSeriesDBAdapter: {e}")
+            raise
     # --------------------------------------------------------
     # POST METHOD - Add new resources
     # --------------------------------------------------------
@@ -97,14 +107,17 @@ class TimeSeriesDBAdapter:
         try:
             response = requests.post(f'{self.catalog_url}/addService', json=service, timeout=5)
             response.raise_for_status()
-            print('Successfully registered with Catalog')
+            logger.info('Successfully registered with Catalog')
+        except Timeout:
+            logger.error("Timeout registering service with Catalog")
         except HTTPError as e:
-            print(f"HTTP error during registration: {e}")
+            logger.error(f"HTTP error during registration: {e}")
             if e.response is not None:
-                print("Status code:", e.response.status_code)
-                print("Server message:", e.response.text)
+                logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
+        except ConnectionError as e:
+            logger.error(f"Connection error with Catalog during registration: {e}")
         except Exception as e:
-            print(f'Registration failed: {e}')
+            logger.error(f'Registration failed: {e}')
 
     def update_service(self):
         """
@@ -113,7 +126,7 @@ class TimeSeriesDBAdapter:
         """
         # Only update if the database is still connected
         if not self.db.health_check():
-            print('Database connection lost, not updating service')
+            logger.warning('Database connection lost, not updating service')
             return
 
         service = {
@@ -123,14 +136,17 @@ class TimeSeriesDBAdapter:
         try:
             response = requests.put(f'{self.catalog_url}/updateServiceLastUpdate', json=service, timeout=5)
             response.raise_for_status()
-            print('Successfully updated with Catalog')
+            logger.debug('Successfully updated with Catalog')
+        except Timeout:
+            logger.warning("Timeout updating service with Catalog")
         except HTTPError as e:
-            print(f"HTTP error during update: {e}")
+            logger.error(f"HTTP error during update: {e}")
             if e.response is not None:
-                print("Status code:", e.response.status_code)
-                print("Server message:", e.response.text)
+                logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
+        except ConnectionError as e:
+            logger.error(f"Connection error with Catalog during update: {e}")
         except Exception as e:
-            print(f'Update failed: {e}')
+            logger.error(f'Update failed: {e}')
 
 
     def unregister_service(self):
@@ -145,14 +161,17 @@ class TimeSeriesDBAdapter:
                 timeout=5
             )
             response.raise_for_status()
-            print('Service unregistered from Catalog')
+            logger.info('Service unregistered from Catalog')
+        except Timeout:
+            logger.error("Timeout unregistering service from Catalog")
         except HTTPError as e:
-            print(f"HTTP error during unregistration: {e}")
+            logger.error(f"HTTP error during unregistration: {e}")
             if e.response is not None:
-                print("Status code:", e.response.status_code)
-                print("Server message:", e.response.text)
+                logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
+        except ConnectionError as e:
+            logger.error(f"Connection error with Catalog during unregistration: {e}")
         except Exception as e:
-            print(f'Unregistration failed: {e}')
+            logger.error(f'Unregistration failed: {e}')
 
     def start_background_loop(self):
         """Start the background loop for periodic updates."""
@@ -163,7 +182,7 @@ class TimeSeriesDBAdapter:
             while not self._stop_event.is_set():
                 time.sleep(self.remove_interval)
                 if not self._stop_event.is_set():
-                    print(f"Updating service info at {datetime.now()}...")
+                    logger.debug(f"Updating service info at {datetime.now()}...")
                     self.update_service()
 
         self._worker = threading.Thread(target=_loop, daemon=True)
@@ -185,7 +204,7 @@ def json_error_page(status, message, traceback, version):
     # Status arriva come "404 Not Found" → prendiamo solo il numero
     try:
         status_code = int(status.split(" ")[0])
-    except Exception:
+    except (ValueError, IndexError):
         status_code = 500
 
     return json.dumps({
@@ -195,24 +214,41 @@ def json_error_page(status, message, traceback, version):
 
 if __name__ == "__main__":
     # Standard CherryPy startup sequence
-    with open("conf.json", "r") as f:
-        full_conf = json.load(f)
+    try:
+        with open("conf.json", "r") as f:
+            full_conf = json.load(f)
+    except FileNotFoundError:
+        logger.error("Configuration file 'conf.json' not found")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in 'conf.json': {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error reading configuration file: {e}")
+        sys.exit(1)
 
     # Configure the dispatcher to use GET/POST/PUT/DELETE methods
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
-    time_series_db_adapter = TimeSeriesDBAdapter(full_conf)
-    cherrypy.tree.mount(time_series_db_adapter, '/', conf)
-    cherrypy.config.update({
-        'server.socket_host': full_conf['serviceInfo']['host'],
-        'server.socket_port': full_conf['serviceInfo']['port'],
-        'error_page.default': json_error_page
+    try:
+        time_series_db_adapter = TimeSeriesDBAdapter(full_conf)
+        cherrypy.tree.mount(time_series_db_adapter, '/', conf)
+        cherrypy.config.update({
+            'server.socket_host': full_conf['serviceInfo']['host'],
+            'server.socket_port': full_conf['serviceInfo']['port'],
+            'error_page.default': json_error_page
 
-    })
+        })
 
-    cherrypy.engine.subscribe('start', time_series_db_adapter.start_background_loop)
-    cherrypy.engine.subscribe('stop', time_series_db_adapter.stop_background_loop)
-    cherrypy.engine.subscribe('stop', time_series_db_adapter.unregister_service)
+        cherrypy.engine.subscribe('start', time_series_db_adapter.start_background_loop)
+        cherrypy.engine.subscribe('stop', time_series_db_adapter.stop_background_loop)
+        cherrypy.engine.subscribe('stop', time_series_db_adapter.unregister_service)
 
-    cherrypy.engine.start()
-    cherrypy.engine.block()
+        cherrypy.engine.start()
+        cherrypy.engine.block()
+    except KeyError as e:
+        logger.error(f"Missing configuration key: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error starting service: {e}")
+        sys.exit(1)

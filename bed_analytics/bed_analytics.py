@@ -1,11 +1,16 @@
 import json
+import sys
 import time
 import threading
+import logging
 from datetime import datetime
 
 import cherrypy
 import requests
-from requests import HTTPError
+from requests import HTTPError, Timeout, ConnectionError
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class BedAnalytics:
@@ -32,34 +37,38 @@ class BedAnalytics:
         try:
             response = requests.post(f'{self.catalog_url}/addService', json=service, timeout=5)
             response.raise_for_status()
-            print('Successfully registered with Catalog')
+            logger.info('Successfully registered with Catalog')
+        except Timeout:
+            logger.error("Timeout registering service with Catalog")
         except HTTPError as e:
-            print(f"HTTP error during registration: {e}")
+            logger.error(f"HTTP error during registration: {e}")
             if e.response is not None:
-                print("Status code:", e.response.status_code)
-                print("Server message:", e.response.text)
+                logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
+        except ConnectionError as e:
+            logger.error(f"Connection error with Catalog during registration: {e}")
         except Exception as e:
-            print(f'Registration failed: {e}')
+            logger.error(f'Registration failed: {e}')
 
     def update_service(self):
         """Logic to update this service's info to the Catalog."""
         service = {
             "serviceID": self.service_info['serviceID'],
-"last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         try:
-            # Note: Changed 'body' to 'json' to handle serialization automatically
             response = requests.put(f'{self.catalog_url}/updateServiceLastUpdate', json=service, timeout=5)
             response.raise_for_status()
-            print('Successfully updated with Catalog')
+            logger.debug('Successfully updated with Catalog')
+        except Timeout:
+            logger.warning("Timeout updating service with Catalog")
         except HTTPError as e:
-            print(f"HTTP error during update: {e}")
-
+            logger.error(f"HTTP error during update: {e}")
             if e.response is not None:
-                print("Status code:", e.response.status_code)
-                print("Server message:", e.response.text)
+                logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
+        except ConnectionError as e:
+            logger.error(f"Connection error with Catalog during update: {e}")
         except Exception as e:
-            print(f'Update failed: {e}')
+            logger.error(f'Update failed: {e}')
 
     def unregister_service(self):
         """Logic to unregister this service from the Catalog."""
@@ -70,14 +79,17 @@ class BedAnalytics:
                 timeout=5
             )
             response.raise_for_status()
-            print('Service unregistered from Catalog')
+            logger.info('Service unregistered from Catalog')
+        except Timeout:
+            logger.error("Timeout unregistering service from Catalog")
         except HTTPError as e:
-            print(f"HTTP error during unregistration: {e}")
+            logger.error(f"HTTP error during unregistration: {e}")
             if e.response is not None:
-                print("Status code:", e.response.status_code)
-                print("Server message:", e.response.text)
+                logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
+        except ConnectionError as e:
+            logger.error(f"Connection error with Catalog during unregistration: {e}")
         except Exception as e:
-            print(f'Unregister failed: {e}')
+            logger.error(f'Unregister failed: {e}')
 
     def start_background_loop(self):
         """Start the background loop for periodic updates."""
@@ -108,7 +120,7 @@ def json_error_page(status, message, traceback, version):
     # Status arriva come "404 Not Found" → prendiamo solo il numero
     try:
         status_code = int(status.split(" ")[0])
-    except Exception:
+    except (ValueError, IndexError):
         status_code = 500
 
     return json.dumps({
@@ -118,24 +130,41 @@ def json_error_page(status, message, traceback, version):
 
 if __name__ == "__main__":
     # Standard CherryPy startup sequence
-    with open("conf.json", "r") as f:
-        full_conf = json.load(f)
+    try:
+        with open("conf.json", "r") as f:
+            full_conf = json.load(f)
+    except FileNotFoundError:
+        logger.error("Configuration file 'conf.json' not found")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in 'conf.json': {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error reading configuration file: {e}")
+        sys.exit(1)
 
     # Configure the dispatcher to use GET/POST/PUT/DELETE methods
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
-    bed_analytics = BedAnalytics(full_conf)
-    cherrypy.tree.mount(bed_analytics, '/', conf)
-    cherrypy.config.update({
-        'server.socket_host': full_conf['serviceInfo']['host'],
-        'server.socket_port': full_conf['serviceInfo']['port'],
-        'error_page.default': json_error_page
+    try:
+        bed_analytics = BedAnalytics(full_conf)
+        cherrypy.tree.mount(bed_analytics, '/', conf)
+        cherrypy.config.update({
+            'server.socket_host': full_conf['serviceInfo']['host'],
+            'server.socket_port': full_conf['serviceInfo']['port'],
+            'error_page.default': json_error_page
 
-    })
+        })
 
-    cherrypy.engine.subscribe('start', bed_analytics.start_background_loop)
-    cherrypy.engine.subscribe('stop', bed_analytics.stop_background_loop)
-    cherrypy.engine.subscribe('stop', bed_analytics.unregister_service)
+        cherrypy.engine.subscribe('start', bed_analytics.start_background_loop)
+        cherrypy.engine.subscribe('stop', bed_analytics.stop_background_loop)
+        cherrypy.engine.subscribe('stop', bed_analytics.unregister_service)
 
-    cherrypy.engine.start()
-    cherrypy.engine.block()
+        cherrypy.engine.start()
+        cherrypy.engine.block()
+    except KeyError as e:
+        logger.error(f"Missing configuration key: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error starting service: {e}")
+        sys.exit(1)

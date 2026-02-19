@@ -1,5 +1,12 @@
 import sys
+import logging
+
+import bcrypt
 import psycopg2
+from psycopg2 import DatabaseError, IntegrityError, OperationalError
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class PostgresDB:
@@ -7,12 +14,20 @@ class PostgresDB:
         self.db_conf = db_conf
         # Quick connection test
         if not self._execute("SELECT 1"):
-            print("Critical error: Unable to connect to the database.")
+            logger.critical("Unable to connect to the database.")
             sys.exit(1)
-        print("PostgreSQL connection established successfully.")
+        logger.info("PostgreSQL connection established successfully.")
 
     def connect(self):
-        return psycopg2.connect(**self.db_conf)
+        """Establish a connection to the PostgreSQL database."""
+        try:
+            return psycopg2.connect(**self.db_conf)
+        except OperationalError as e:
+            logger.error(f"Failed to connect to PostgreSQL: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during database connection: {e}")
+            raise
 
     def _execute(self, query, params=None, fetch=False, single=False):
         """
@@ -35,37 +50,49 @@ class PostgresDB:
                     # For INSERT, UPDATE, DELETE: return True if at least one row was affected
                     return cur.rowcount > 0
 
+        except IntegrityError as e:
+            logger.error(f"Database integrity error (likely duplicate key): {e}")
+            return None if fetch else False
+        except OperationalError as e:
+            logger.error(f"Database operational error: {e}")
+            return None if fetch else False
+        except DatabaseError as e:
+            logger.error(f"Database error: {e}")
+            return None if fetch else False
         except Exception as e:
-            print(f"Database Error: {e}")
+            logger.error(f"Unexpected error during database operation: {e}")
             return None if fetch else False
         finally:
             if conn:
-                conn.close()
+                try:
+                    conn.close()
+                except Exception as e:
+                    logger.warning(f"Error closing database connection: {e}")
 
     # --- CRUD SERVICES ---
     def insert_service(self, s):
         query = """
                 INSERT INTO services (service_id, name, endpoint, timestamp, type)
-                VALUES (%s, %s, %s, %s, %s) \
+                VALUES (%s, %s, %s, %s, %s)
                 """
         return self._execute(query, (s['serviceID'], s['name'], s['endpoint'], s['last_update'], s['type']))
 
     def update_service(self, s):
         query = """
                 UPDATE services
-                SET name=%s, \
-                    endpoint=%s, \
-                    timestamp=%s, \
+                SET name=%s,
+                    endpoint=%s,
+                    timestamp=%s,
                     type=%s
-                WHERE service_id = %s \
+                WHERE service_id = %s
                 """
         return self._execute(query, (s['name'], s['endpoint'], s['last_update'], s['type'], s['serviceID']))
 
-    def update_service_last_update(self,service_id, last_update):
+    def update_service_last_update(self, service_id, last_update):
         query = """
                 UPDATE services
-                SET timestamp=%s
-                WHERE service_id = %s \
+                SET timestamp=%s 
+                WHERE service_id = %s
                 """
         return self._execute(query, (last_update, service_id))
     def delete_service(self, service_id):
@@ -73,9 +100,8 @@ class PostgresDB:
 
     def delete_stale_services(self, seconds):
         query = """
-                DELETE \
-                FROM services
-                WHERE timestamp < (NOW() - make_interval(secs => %s)) OR timestamp IS NULL \
+                DELETE FROM services
+                WHERE timestamp < (NOW() - make_interval(secs => %s)) OR timestamp IS NULL
                 """
         return self._execute(query, (seconds,))
 
@@ -83,17 +109,17 @@ class PostgresDB:
     def insert_device(self, d):
         query = """
                 INSERT INTO devices (device_id, device_name, measure_types, bedroom_id)
-                VALUES (%s, %s, %s, %s) \
+                VALUES (%s, %s, %s, %s)
                 """
         return self._execute(query, (d['deviceID'], d['deviceName'], d['measureTypes'], d['bedroomID']))
 
     def update_device(self, d):
         query = """
                 UPDATE devices
-                SET device_name=%s, \
-                    measure_types=%s, \
+                SET device_name=%s,
+                    measure_types=%s,
                     bedroom_id=%s
-                WHERE device_id = %s \
+                WHERE device_id = %s
                 """
         return self._execute(query, (d['deviceName'], d['measureTypes'], d['bedroomID'], d['deviceID']))
 
@@ -107,12 +133,12 @@ class PostgresDB:
 
     def check_user_exists(self, username):
         username = username.strip()  # rimuove spazi iniziali/finali
-        print(f"Checking username: '{username}'")
+        logger.debug(f"Checking username: '{username}'")
 
         query = "SELECT 1 FROM users WHERE username = %s"
         result = self._execute(query, (username,), fetch=True, single=True)
 
-        print(f"Query result: {result}")
+        logger.debug(f"Query result: {result}")
 
         return result is not None
 
@@ -125,7 +151,7 @@ class PostgresDB:
         query = """
                 INSERT INTO bedrooms (room_name, password)
                 VALUES (%s, %s)
-                RETURNING bedroom_id \
+                RETURNING bedroom_id
                 """
         # _execute deve restituire la riga con RETURNING
         result = self._execute(query, (b['room_name'], b['password']), fetch=True, single=True)
@@ -147,6 +173,14 @@ class PostgresDB:
         return self._execute(query, (chat_id,), fetch=True, single=True)
 
     def check_join_bedroom(self, room_id, password):
-        query = "SELECT 1 FROM bedrooms WHERE bedroom_id = %s AND password = %s"
-        result = self._execute(query, (room_id, password), fetch=True, single=True)
-        return result is not None
+        query = "SELECT password FROM bedrooms WHERE bedroom_id = %s"
+        result = self._execute(query, (room_id,), fetch=True, single=True)
+        if not result:
+            return False
+
+        try:
+            stored_hash = result[0].encode("utf-8")
+            return bcrypt.checkpw(password.encode("utf-8"), stored_hash)
+        except Exception as e:
+            logger.error(f"Unexpected error during password check: {e}")
+            return False

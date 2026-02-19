@@ -2,6 +2,7 @@ import json
 import os
 import time
 import threading
+import logging
 from datetime import datetime
 
 import cherrypy
@@ -10,6 +11,21 @@ import requests
 import telepot
 from telepot.loop import MessageLoop
 from telepot.namedtuple import InlineKeyboardButton, InlineKeyboardMarkup
+import bcrypt
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+def hash_password(password):
+    """Hash a password using bcrypt."""
+    try:
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+        return hashed
+    except Exception as e:
+        logger.error(f"Error hashing password: {e}")
+        raise
 
 
 class TelegramBot:
@@ -139,29 +155,44 @@ class TelegramBot:
         If a session is found, update the user's state to "registered" and welcome them back
         """
         try:
-            res = requests.get(f"{self.catalog_url}/getUserSession", params={"telegram_chat_id": chat_ID})
-            if res.status_code == 200:
-                data = res.json()
-                username = data.get("username")
-                bedroom_id = data.get("bedroom_id")
-                self.user_states[chat_ID] = {
-                    "state": "registered",
-                    "bedroom_id": bedroom_id,
-                    "username": username
-                }
-                self.bot.sendMessage(chat_ID, f"Welcome back, {username} from room {bedroom_id}!")
+            res = requests.get(f"{self.catalog_url}/getUserSession", params={"telegram_chat_id": chat_ID}, timeout=5)
+            res.raise_for_status()
+
+            data = res.json()
+            username = data.get("username")
+            bedroom_id = data.get("bedroom_id")
+            self.user_states[chat_ID] = {
+                "state": "registered",
+                "bedroom_id": bedroom_id,
+                "username": username
+            }
+            self.bot.sendMessage(chat_ID, f"Welcome back, {username} from room {bedroom_id}!")
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout while restoring user session for chat_ID {chat_ID}")
+            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog. Please try again.")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.debug(f"No existing session found for chat_ID {chat_ID}")
             else:
-                username = ""
-                bedroom_id = ""
-        except requests.exceptions.RequestException:
+                logger.error(f"HTTP error while restoring session: {e}")
+                self.bot.sendMessage(chat_ID, "Error connecting to Catalog. Please try again.")
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error with Catalog: {e}")
             self.bot.sendMessage(chat_ID, "Connection error with Catalog. Unable to restore session.")
+        except (ValueError, KeyError) as e:
+            logger.error(f"Error parsing response from Catalog: {e}")
+            self.bot.sendMessage(chat_ID, "Error processing catalog response.")
+        except Exception as e:
+            logger.error(f"Unexpected error restoring user session: {e}")
+            self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
 
     def _handle_waiting_room_password(self, chat_ID, message):
         """
         Handle the state where the user is expected to provide a password for the new bedroom.
         """
         room_name = self.user_states[chat_ID]["room_name"]
-        room_id = self._create_bedroom(chat_ID, room_name, message)
+        password_hash = hash_password(message)
+        room_id = self._create_bedroom(chat_ID, room_name, password_hash)
         if room_id:
             self.user_states[chat_ID] = {
                 "state": "registing_user",
@@ -226,15 +257,26 @@ class TelegramBot:
             "password": password
         }
         try:
-            res = requests.post(f"{self.catalog_url}/addBedroom", json=bedroom)
-            if res.status_code == 200:
-                data = res.json()
-                room_id = data.get("bedroom_id")
-                self.bot.sendMessage(chat_ID, f"Successfully created room '{room_name}' with ID {room_id}!")
-                return room_id
+            res = requests.post(f"{self.catalog_url}/addBedroom", json=bedroom, timeout=5)
+            res.raise_for_status()
+
+            data = res.json()
+            room_id = data.get("bedroom_id")
+            self.bot.sendMessage(chat_ID, f"Successfully created room '{room_name}' with ID {room_id}!")
+            return room_id
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout creating bedroom for user {chat_ID}")
+            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog. Failed to create room.")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error creating bedroom: {e}")
             self.bot.sendMessage(chat_ID, "Access denied: room creation failed.")
-        except requests.exceptions.RequestException:
-            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+        
+        except (ValueError, KeyError) as e:
+            logger.error(f"Error parsing catalog response: {e}")
+            self.bot.sendMessage(chat_ID, "Error processing catalog response.")
+        except Exception as e:
+            logger.error(f"Unexpected error creating bedroom: {e}")
+            self.bot.sendMessage(chat_ID, "Unexpected error creating bedroom.")
         return None
 
     def _check_room(self, chat_ID, room_id, password):
@@ -243,12 +285,19 @@ class TelegramBot:
         """
         try:
             res = requests.get(f"{self.catalog_url}/checkRoom",
-                               params={"bedroom_id": room_id, "password": password})
-            if res.status_code == 200:
-                return True
+                               params={"bedroom_id": room_id, "password": password},
+                               timeout=5)
+            res.raise_for_status()
+            return True
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout checking room {room_id} for user {chat_ID}")
+            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error checking room: {e}")
             self.bot.sendMessage(chat_ID, "Access denied: wrong ID or password.")
-        except requests.exceptions.RequestException:
-            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+        except Exception as e:
+            logger.error(f"Unexpected error checking room: {e}")
+            self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
         return False
 
     def _check_username_exists(self, chat_ID, username):
@@ -257,12 +306,24 @@ class TelegramBot:
         """
         try:
             res = requests.get(f"{self.catalog_url}/checkUsername",
-                               params={"username": username})
-            if res.status_code == 200 and res.json().get("exists"):
+                               params={"username": username},
+                               timeout=5)
+            res.raise_for_status()
+
+            if res.json().get("exists"):
                 self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another one.")
                 return True
-        except requests.exceptions.RequestException:
-            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout checking username {username} for user {chat_ID}")
+            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
+            return True
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error checking username: {e}")
+            self.bot.sendMessage(chat_ID, "Error checking username availability.")
+            return True
+        except Exception as e:
+            logger.error(f"Unexpected error checking username: {e}")
+            self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
             return True
         return False
 
@@ -276,17 +337,25 @@ class TelegramBot:
             "bedroom_id": bedroom_id
         }
         try:
-            res = requests.post(f"{self.catalog_url}/addUser", json=user)
-            if res.status_code == 200:
-                self.bot.sendMessage(chat_ID, f"Successfully registered as '{username}' in room {bedroom_id}!")
+            res = requests.post(f"{self.catalog_url}/addUser", json=user, timeout=5)
+            res.raise_for_status()
+
+            self.bot.sendMessage(chat_ID, f"Successfully registered as '{username}' in room {bedroom_id}!")
+            return True
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout registering user {username}")
+            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 409:
+                logger.warning(f"User {username} already exists or already registered")
+                self.bot.sendMessage(chat_ID, "Error: You are already registered in a room")
+                self.user_states[chat_ID] = {"state": "registered", "bedroom_id": None, "username": None}
                 return True
-            if res.status_code == 409:
-                self.bot.sendMessage(chat_ID, "Error You are already registered in a room")
-                #!TODO need to find the way to get the username and room_id of the user to update the state
-                self.user_states [chat_ID] = {"state": "registered", "bedroom_id": None, "username": None}
-                return True
-        except requests.exceptions.RequestException:
-            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
+            logger.error(f"HTTP error adding user: {e}")
+            self.bot.sendMessage(chat_ID, "Error registering user.")
+        except Exception as e:
+            logger.error(f"Unexpected error adding user: {e}")
+            self.bot.sendMessage(chat_ID, "Unexpected error during registration.")
         return False
 
 
@@ -301,8 +370,13 @@ class TelegramBot:
         try:
             response = requests.post(f'{self.catalog_url}/addService', json=service, timeout=5)
             response.raise_for_status()
+            logger.info('Successfully registered with Catalog')
+        except requests.exceptions.Timeout:
+            logger.error('Timeout registering service with Catalog')
+        except requests.exceptions.HTTPError as e:
+            logger.error(f'HTTP error registering service: {e}')
         except Exception as e:
-            print(f'Registration failed: {e}')
+            logger.error(f'Registration failed: {e}')
 
     def update_service(self):
         service = {
@@ -312,8 +386,13 @@ class TelegramBot:
         try:
             response = requests.put(f'{self.catalog_url}/updateServiceLastUpdate', json=service, timeout=5)
             response.raise_for_status()
+            logger.debug('Successfully updated service with Catalog')
+        except requests.exceptions.Timeout:
+            logger.warning('Timeout updating service with Catalog')
+        except requests.exceptions.HTTPError as e:
+            logger.error(f'HTTP error updating service: {e}')
         except Exception as e:
-            print(f'Update failed: {e}')
+            logger.error(f'Update failed: {e}')
 
     def unregister_service(self):
         try:
@@ -323,8 +402,13 @@ class TelegramBot:
                 timeout=5
             )
             response.raise_for_status()
+            logger.info('Successfully unregistered service from Catalog')
+        except requests.exceptions.Timeout:
+            logger.error('Timeout unregistering service from Catalog')
+        except requests.exceptions.HTTPError as e:
+            logger.error(f'HTTP error unregistering service: {e}')
         except Exception as e:
-            print(f'Unregister failed: {e}')
+            logger.error(f'Unregister failed: {e}')
 
     def start_background_loop(self):
         if self._worker is not None:

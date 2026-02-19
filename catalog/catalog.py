@@ -1,9 +1,13 @@
 import json
 import sys
+import logging
 import cherrypy
 import threading
 import time
 from postgres_db import PostgresDB
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -12,7 +16,7 @@ from postgres_db import PostgresDB
 
 def check_if_is_a_service(new_service):
     """Validate that the service contains all required fields."""
-    required_fields = ['serviceID','name','type','endpoint']
+    required_fields = ['serviceID','name','type','endpoint','last_update']
     require_fields(new_service, required_fields)
 
 
@@ -45,10 +49,13 @@ class Catalog:
 
         def _loop():
             while not self._stop_event.is_set():
-                print("Running cleanup loop...")
-                deleted = self.db.delete_stale_services(self.service_ttl_s)
-                if deleted > 0:
-                    print(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
+                try:
+                    logger.debug("Running cleanup loop...")
+                    deleted = self.db.delete_stale_services(self.service_ttl_s)
+                    if deleted > 0:
+                        logger.info(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
+                except Exception as e:
+                    logger.error(f"Error during cleanup loop: {e}")
                 time.sleep(self.cleanup_interval_s)
 
         self._worker = threading.Thread(target=_loop, daemon=True)
@@ -64,8 +71,12 @@ class Catalog:
         body = cherrypy.request.body.read()
         try:
             return json.loads(body)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON format in request body: {e}")
             raise cherrypy.HTTPError(400, "Invalid JSON format")
+        except Exception as e:
+            logger.error(f"Unexpected error parsing request body: {e}")
+            raise cherrypy.HTTPError(400, "Error parsing request body")
 
 
 
@@ -152,7 +163,7 @@ class Catalog:
         success = self.db.update_service(updated_service)
         if success:
             return json.dumps({"status": "success", "message": "Service updated"})
-        print(f"Update failed for serviceID {updated_service.get('serviceID')}")
+        logger.warning(f"Update failed for serviceID {updated_service.get('serviceID')}")
         raise cherrypy.HTTPError(404, "The Service ID does not exist")
 
     def _put_update_service_last_update(self):
@@ -162,7 +173,7 @@ class Catalog:
         success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
         if success:
             return json.dumps({"status": "success", "message": "Service last_update updated"})
-        print(f"Update failed for serviceID {updated_service.get('serviceID')}")
+        logger.warning(f"Update failed for serviceID {updated_service.get('serviceID')}")
         raise cherrypy.HTTPError(404, "The Service ID does not exist")
 
     def _put_update_device(self):
@@ -250,29 +261,35 @@ class Catalog:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
 
-    def _get_database_endpoint(self):
+    def _get_database_endpoint(self, params):
         try:
             endpoint = self.db.get_endpoint_server_database()
             if endpoint:
                 return json.dumps({"status": "success", "endpoint": endpoint})
+            logger.warning("Database endpoint not found")
             raise cherrypy.HTTPError(404, "Database endpoint not found")
+        except cherrypy.HTTPError:
+            raise
         except Exception as e:
-            print(f"Error retrieving database endpoint: {e}")
+            logger.error(f"Error retrieving database endpoint: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_check_room(self, params):
         bedroom_id = params.get('bedroom_id')
-        password = params.get('password')
-        if not bedroom_id or not password:
+        password_hash = params.get('password')
+
+        if not bedroom_id or not password_hash:
             raise cherrypy.HTTPError(400, "Missing 'bedroom_id' or 'password' parameter")
         try:
-            can_join = self.db.check_join_bedroom(bedroom_id, password)
-            print(can_join)
+            can_join = self.db.check_join_bedroom(bedroom_id, password_hash)
             if not can_join:
-                raise cherrypy.HTTPError(404, "Bedroom not found")
+                logger.warning(f"Failed bedroom access attempt for room {bedroom_id}")
+                raise cherrypy.HTTPError(404, "Bedroom not found or incorrect password")
             return json.dumps({"status": "success", "can_join": can_join})
+        except cherrypy.HTTPError:
+            raise
         except Exception as e:
-            print(f"Error checking join bedroom: {e}")
+            logger.error(f"Error checking join bedroom: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_check_username(self, params):
@@ -281,10 +298,9 @@ class Catalog:
             raise cherrypy.HTTPError(400, "Missing 'username' parameter")
         try:
             exists = self.db.check_user_exists(username)
-            print(exists)
             return json.dumps({"status": "success", "exists": exists})
         except Exception as e:
-            print(f"Error checking username: {e}")
+            logger.error(f"Error checking username: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_usersession_from_chat_id(self, params):
@@ -292,23 +308,25 @@ class Catalog:
         if not telegram_chat_id:
             raise cherrypy.HTTPError(400, "Missing 'telegram_chat_id' parameter")
         try:
-            usersession=self.db.getUserSession(telegram_chat_id)
+            usersession = self.db.getUserSession(telegram_chat_id)
             if usersession:
                 return json.dumps({"status": "success", "username": usersession[0], "bedroom_id": usersession[1]})
-            raise cherrypy.HTTPError(404, "User session not found")
+            else:
+                logger.debug(f"No session found for chat_id {telegram_chat_id}")
+                raise cherrypy.HTTPError(404, "User session not found")
+        except cherrypy.HTTPError:
+            raise
         except Exception as e:
-            print(f"Error retrieving user session: {e}")
+            logger.error(f"Error retrieving user session: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
 
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""
     cherrypy.response.headers["Content-Type"] = "application/json"
-
-    # Status arriva come "404 Not Found" → prendiamo solo il numero
     try:
         status_code = int(status.split(" ")[0])
-    except Exception:
+    except (ValueError, IndexError):
         status_code = 500
 
     return json.dumps({
@@ -334,29 +352,48 @@ if __name__ == "__main__":
             cleanup_conf = full_conf.get('service_cleanup', {})
             cleanup_interval_s = cleanup_conf.get('interval_seconds', 30)
             service_ttl_s = cleanup_conf.get('ttl_seconds', 60)
+    except FileNotFoundError:
+        logger.error("Configuration file 'conf.json' not found")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in 'conf.json': {e}")
+        sys.exit(1)
+    except KeyError as e:
+        logger.error(f"Missing required configuration key: {e}")
+        sys.exit(1)
     except Exception as e:
-        print(f"Error reading conf.json: {e}")
+        logger.error(f"Error reading conf.json: {e}")
         sys.exit(1)
 
     # Initialize the Database Adaptor
-    my_db_adaptor = PostgresDB(db_conf)
+    try:
+        my_db_adaptor = PostgresDB(db_conf)
+    except Exception as e:
+        logger.error(f"Failed to initialize database connection: {e}")
+        sys.exit(1)
 
     # Mount the Catalog REST Service
-    catalog = Catalog(my_db_adaptor, cleanup_interval_s, service_ttl_s)
-    cherrypy.tree.mount(catalog, '/', conf)
+    try:
+        catalog = Catalog(my_db_adaptor, cleanup_interval_s, service_ttl_s)
+        cherrypy.tree.mount(catalog, '/', conf)
 
-    # Configure Server Settings
-    cherrypy.config.update({
-        'server.socket_port': server_conf['port'],
-        'server.socket_host': server_conf['host'],
-        'error_page.default': json_error_page
+        # Configure Server Settings
+        cherrypy.config.update({
+            'server.socket_port': server_conf['port'],
+            'server.socket_host': server_conf['host'],
+            'error_page.default': json_error_page
 
-    })
+        })
 
-
-    # Start the Web Server
-    print(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
-    cherrypy.engine.subscribe('start', catalog.start_cleanup_loop)
-    cherrypy.engine.subscribe('stop', catalog.stop_cleanup_loop)
-    cherrypy.engine.start()
-    cherrypy.engine.block()
+        # Start the Web Server
+        logger.info(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
+        cherrypy.engine.subscribe('start', catalog.start_cleanup_loop)
+        cherrypy.engine.subscribe('stop', catalog.stop_cleanup_loop)
+        cherrypy.engine.start()
+        cherrypy.engine.block()
+    except KeyError as e:
+        logger.error(f"Missing server configuration key: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error starting service: {e}")
+        sys.exit(1)
