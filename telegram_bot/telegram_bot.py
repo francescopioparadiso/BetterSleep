@@ -67,6 +67,7 @@ class TelegramBot:
             return
 
         state = self.user_states.get(chat_ID, {}).get("state")
+        #get the current state of the user and dispatch to the appropriate handler
         if state:
             self._dispatch_state(chat_ID, state, text)
 
@@ -84,51 +85,77 @@ class TelegramBot:
         handler = handlers.get(state)
         if handler:
             handler(chat_ID, message)
-
+    # --- callback query routing ---
+    def _ensure_user_state(self, chat_ID):
+        if chat_ID not in self.user_states:
+            self.user_states[chat_ID] = {
+                "state": None,
+                "username": None,
+                "has_username": False,
+                "registered": False
+            }
     def on_callback_query(self, msg):
         query_ID, from_ID, query_data = telepot.glance(msg, flavor='callback_query')
         self.bot.answerCallbackQuery(query_ID)
 
-        if from_ID not in self.user_states:
-            self.user_states[from_ID] = {
-                "state": None, "username": None,
-                "has_username": False, "registered": False
-            }
+        self._ensure_user_state(from_ID)
 
-        username = self.user_states[from_ID].get("username")
+        handlers = {
+            "create_room": self._cb_create_room,
+            "join_room": self._cb_join_room,
+            "view_data": self._cb_view_data,
+            "manage_settings": self._cb_manage_settings,
+            "delete_room": self._cb_delete_room,
+            "leave_room": self._cb_leave_room,
+            "share_room": self._cb_share_room,
+            "view_sensor_data": self._cb_view_sensor_data,
+            "main_menu": self._cb_main_menu,
+        }
 
-        if query_data == "create_room":
-            self.bot.sendMessage(from_ID, "You chose to create a room. Please enter the room name:")
-            self._set_state(from_ID, "waiting_room_name", username=username)
+        handler = handlers.get(query_data)
 
-        elif query_data == "join_room":
-            self.bot.sendMessage(from_ID, "You chose to join a room. Please enter the bedroom ID:")
-            self._set_state(from_ID, "waiting_join_bedroom_id", username=username)
-
-        elif query_data == "view_data":
-            self.bot.sendMessage(from_ID, "This feature is not implemented yet.")
-
-        elif query_data == "manage_settings":
-            self._send_room_settings_options(from_ID)
-
-        elif query_data == "delete_room":
-            self.bot.sendMessage(from_ID, "Are you sure you want to delete the room? This action cannot be undone. Type 'yes' to confirm.")
-            self.user_states[from_ID]["state"] = "waiting_delete_confirmation"
-
-        elif query_data == "leave_room":
-            self.bot.sendMessage(from_ID, "Are you sure you want to leave the room? Type 'yes' to confirm.")
-            self.user_states[from_ID]["state"] = "waiting_leave_confirmation"
-        elif query_data == "share_room":
-            self.bot.sendMessage(from_ID, f"Share this room ID with your friends: {self.user_states[from_ID].get('bedroom_id')}")
-            self.bot.sendMessage(from_ID, "You need to share the room ID and password together for others to join.")
-
-        elif query_data == "main_menu":
-            self._send_registered_user_options(from_ID)
-
+        if handler:
+            handler(from_ID)
         else:
             self.bot.sendMessage(from_ID, "Unknown option or feature not implemented yet.")
 
-    # --- keyboards ---
+    def _cb_create_room(self, chat_ID):
+        username = self.user_states[chat_ID].get("username")
+        self.bot.sendMessage(chat_ID, "You chose to create a room. Please enter the room name:")
+        self._set_state(chat_ID, "waiting_room_name", username=username)
+
+    def _cb_join_room(self, chat_ID):
+        username = self.user_states[chat_ID].get("username")
+        self.bot.sendMessage(chat_ID, "You chose to join a room. Please enter the bedroom ID:")
+        self._set_state(chat_ID, "waiting_join_bedroom_id", username=username)
+
+    def _cb_view_data(self, chat_ID):
+        self._send_room_data_options(chat_ID)
+
+    def _cb_manage_settings(self, chat_ID):
+        self._send_room_settings_options(chat_ID)
+
+    def _cb_delete_room(self, chat_ID):
+        self.bot.sendMessage(chat_ID,
+                             "Are you sure you want to delete the room? Type 'yes' to confirm.")
+        self.user_states[chat_ID]["state"] = "waiting_delete_confirmation"
+
+    def _cb_leave_room(self, chat_ID):
+        self.bot.sendMessage(chat_ID,
+                             "Are you sure you want to leave the room? Type 'yes' to confirm.")
+        self.user_states[chat_ID]["state"] = "waiting_leave_confirmation"
+
+    def _cb_share_room(self, chat_ID):
+        room_id = self.user_states[chat_ID].get("bedroom_id")
+        self.bot.sendMessage(chat_ID, f"Share this room ID: {room_id}")
+        self.bot.sendMessage(chat_ID,
+                             "You need to share the room ID and password together.")
+
+    def _cb_view_sensor_data(self, chat_ID):
+        self.bot.sendMessage(chat_ID, "Sensor data feature not implemented yet.")
+    def _cb_main_menu(self, chat_ID):
+        self._send_registered_user_options(chat_ID)
+    # --- keyboards options ---
 
     def _send_room_options(self, chat_ID):
         existing = self.user_states.get(chat_ID, {})
@@ -160,6 +187,13 @@ class TelegramBot:
         ])
         self.bot.sendMessage(chat_ID, "What would you like to do?", reply_markup=keyboard)
 
+    def _send_room_data_options(self, chat_ID):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📈View sensor data", callback_data="view_sensor_data")],
+            [InlineKeyboardButton(text="📉View sleep quality", callback_data="view_sleep_quality")],
+            [InlineKeyboardButton(text="⬅️ Back to main menu",   callback_data="main_menu")],
+        ])
+        self.bot.sendMessage(chat_ID, "What data would you like to view?", reply_markup=keyboard)
     # --- state handlers ---
 
     def _handle_start(self, chat_ID):
@@ -281,6 +315,7 @@ class TelegramBot:
                         bedroom_id=room_id, username=username,
                         has_username=True, registered=True)
         self._send_registered_user_options(chat_ID)
+
 
     # --- catalog HTTP calls ---
 
@@ -404,6 +439,7 @@ class TelegramBot:
             logger.info('Registered with Catalog')
         except Exception as e:
             logger.error(f'Registration failed: {e}')
+            self.stop_background_loop()
 
     def update_service(self):
         service = {
@@ -442,6 +478,7 @@ class TelegramBot:
         if self._worker:
             self._worker.join(timeout=2)
             self._worker = None
+
 
 
 if __name__ == "__main__":
