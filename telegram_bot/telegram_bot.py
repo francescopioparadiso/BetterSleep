@@ -88,11 +88,11 @@ class TelegramBot:
     # --- callback query routing ---
     def _ensure_user_state(self, chat_ID):
         if chat_ID not in self.user_states:
+            # store only the meaningful state fields; remove redundant booleans
             self.user_states[chat_ID] = {
                 "state": None,
                 "username": None,
-                "has_username": False,
-                "registered": False
+                "bedroom_id": None,
             }
     def on_callback_query(self, msg):
         query_ID, from_ID, query_data = telepot.glance(msg, flavor='callback_query')
@@ -159,8 +159,7 @@ class TelegramBot:
 
     def _send_room_options(self, chat_ID):
         existing = self.user_states.get(chat_ID, {})
-        existing.setdefault("has_username", bool(existing.get("username")))
-        existing.setdefault("registered", False)
+        # no need for separate booleans; rely on presence of username/bedroom_id
         existing["state"] = "waiting_room_choice"
         self.user_states[chat_ID] = existing
 
@@ -221,7 +220,8 @@ class TelegramBot:
             self.bot.sendMessage(chat_ID, "Please choose a different username:")
             return
 
-        self._set_state(chat_ID, "waiting_room_choice", username=username, has_username=True, registered=False)
+        # mark the username directly; no separate boolean needed
+        self._set_state(chat_ID, "waiting_room_choice", username=username)
         self.bot.sendMessage(chat_ID, f"Great! Username '{username}' is available.")
         self._send_room_options(chat_ID)
 
@@ -300,8 +300,9 @@ class TelegramBot:
 
     def _reset_to_room_choice(self, chat_ID):
         username = self.user_states[chat_ID].get("username")
+        # rely on username presence instead of a separate boolean
         self._set_state(chat_ID, "waiting_room_choice",
-                        username=username, has_username=bool(username), registered=False)
+                        username=username)
         self._send_room_options(chat_ID)
 
     def _finalize_registration(self, chat_ID, username, room_id, joined=False):
@@ -311,9 +312,9 @@ class TelegramBot:
         else:
             self.bot.sendMessage(chat_ID, f"{greeting}, {username}! You are now registered in room {room_id}.")
 
+        # store username and bedroom_id; no separate booleans
         self._set_state(chat_ID, "registered",
-                        bedroom_id=room_id, username=username,
-                        has_username=True, registered=True)
+                        bedroom_id=room_id, username=username)
         self._send_registered_user_options(chat_ID)
 
 
@@ -403,13 +404,13 @@ class TelegramBot:
             bedroom_id = data.get("bedroom_id")
 
             if username and bedroom_id:
+                # set username and bedroom_id; no extra booleans
                 self._set_state(chat_ID, "registered",
-                                bedroom_id=bedroom_id, username=username,
-                                has_username=True, registered=True)
+                                bedroom_id=bedroom_id, username=username)
                 self.bot.sendMessage(chat_ID, f"Welcome back, {username} from room {bedroom_id}!")
             elif username:
                 self._set_state(chat_ID, "waiting_room_choice",
-                                username=username, has_username=True, registered=False)
+                                username=username)
                 self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You don't have a room yet.")
 
         except requests.exceptions.Timeout:
