@@ -152,6 +152,7 @@ class Catalog:
             "updateServiceLastUpdate": self._put_update_service_last_update,
             "updateDevice": self._put_update_device,
             "associateUserToBedroom": self._put_update_user,
+            "leaveBedroom": self._put_leave_bedroom,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -193,13 +194,21 @@ class Catalog:
     def _put_update_user(self):
         """Update an existing user's association with a bedroom."""
         updated_user = self._load_json_body()
-        require_fields(updated_user, ['username', 'telegram_chat_id', 'bedroom_id'])
+        require_fields(updated_user, [ 'telegram_chat_id', 'bedroom_id'])
 
-        success = self.db.update_user(updated_user)
+        success = self.db.associete_user_to_bedroom(updated_user)
         if success:
             return json.dumps({"status": "success", "message": "User updated"})
         raise cherrypy.HTTPError(404, "The User ID does not exist")
+    def _put_leave_bedroom(self):
+        """Update an existing user's association with a bedroom."""
+        updated_user = self._load_json_body()
+        require_fields(updated_user, ['telegram_chat_id'])
 
+        success = self.db.dissociete_user_from_bedroom(updated_user)
+        if success:
+            return json.dumps({"status": "success", "message": "User left bedroom"})
+        raise cherrypy.HTTPError(404, "The User ID does not exist")
     # --------------------------------------------------------
     # DELETE METHOD - Remove resources
     # --------------------------------------------------------

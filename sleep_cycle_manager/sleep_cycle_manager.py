@@ -37,14 +37,6 @@ class SleepCycleManager:
       response = requests.post(f'{self.catalog_url}/addService', json=service, timeout=5)
       response.raise_for_status()
       logger.info('Successfully registered with Catalog')
-    except Timeout:
-      logger.error("Timeout registering service with Catalog")
-    except HTTPError as e:
-      logger.error(f"HTTP error during registration: {e}")
-      if e.response is not None:
-        logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
-    except ConnectionError as e:
-      logger.error(f"Connection error with Catalog during registration: {e}")
     except Exception as e:
       logger.error(f'Registration failed: {e}')
 
@@ -58,14 +50,6 @@ class SleepCycleManager:
       response = requests.put(f'{self.catalog_url}/updateServiceLastUpdate', json=service, timeout=5)
       response.raise_for_status()
       logger.debug('Successfully updated with Catalog')
-    except Timeout:
-      logger.warning("Timeout updating service with Catalog")
-    except HTTPError as e:
-      logger.error(f"HTTP error during update: {e}")
-      if e.response is not None:
-        logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
-    except ConnectionError as e:
-      logger.error(f"Connection error with Catalog during update: {e}")
     except Exception as e:
       logger.error(f'Update failed: {e}')
 
@@ -79,14 +63,6 @@ class SleepCycleManager:
       )
       response.raise_for_status()
       logger.info('Service unregistered from Catalog')
-    except Timeout:
-      logger.error("Timeout unregistering service from Catalog")
-    except HTTPError as e:
-      logger.error(f"HTTP error during unregistration: {e}")
-      if e.response is not None:
-        logger.error(f"Status code: {e.response.status_code}, Message: {e.response.text}")
-    except ConnectionError as e:
-      logger.error(f"Connection error with Catalog during unregistration: {e}")
     except Exception as e:
       logger.error(f'Unregister failed: {e}')
 

@@ -153,11 +153,14 @@ class PostgresDB:
 
         return result is not None
 
-    def update_user(self, u):
+    def associete_user_to_bedroom(self, u):
         """Update an existing user in the database."""
-        query = "UPDATE users SET telegram_chat_id = %s WHERE username = %s"
-        return self._execute(query, (u['telegram_chat_id'], u['username']))
-
+        query = "UPDATE users SET bedroom_id = %s WHERE telegram_chat_id = %s"
+        return self._execute(query, (u['bedroom_id'], u['telegram_chat_id']))
+    def dissociete_user_from_bedroom(self, u):
+        """Update an existing user in the database."""
+        query = "UPDATE users SET bedroom_id = NULL WHERE telegram_chat_id = %s"
+        return self._execute(query, (u['telegram_chat_id'],))
     def delete_user(self, username):
         """Delete a user by username."""
         return self._execute("DELETE FROM users WHERE username = %s", (username,))
