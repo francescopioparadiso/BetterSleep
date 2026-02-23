@@ -13,7 +13,7 @@ class PostgresDB:
     def __init__(self, db_conf):
         self.db_conf = db_conf
         # Quick connection test
-        if not self._execute("SELECT 1"):
+        if not self._execute_query("SELECT 1"):
             logger.critical("Unable to connect to the database.")
             sys.exit(1)
         logger.info("PostgreSQL connection established successfully.")
@@ -29,7 +29,7 @@ class PostgresDB:
             logger.error(f"Unexpected error during database connection: {e}")
             raise
 
-    def _execute(self, query, params=None, fetch=False, single=False):
+    def _execute_query(self, query, params=None, fetch=False, single=False):
         """
         Universal method to handle DB operations.
         - If fetch=True: returns data (list of tuples or a single tuple).
@@ -76,32 +76,29 @@ class PostgresDB:
                 INSERT INTO services (service_id, name, endpoint, timestamp, type)
                 VALUES (%s, %s, %s, %s, %s)
                 """
-        return self._execute(query, (s['serviceID'], s['name'], s['endpoint'], s['last_update'], s['type']))
+        return self._execute_query(query, (s['serviceID'], s['name'], s['endpoint'], s['last_update'], s['type']))
 
     def update_service(self, s):
         """Update an existing service in the database."""
         query = """
                 UPDATE services
-                SET name=%s,
-                    endpoint=%s,
-                    timestamp=%s,
-                    type=%s
+                SET name= %s, endpoint= %s, timestamp= %s, type= %s
                 WHERE service_id = %s
                 """
-        return self._execute(query, (s['name'], s['endpoint'], s['last_update'], s['type'], s['serviceID']))
+        return self._execute_query(query, (s['name'], s['endpoint'], s['last_update'], s['type'], s['serviceID']))
 
     def update_service_last_update(self, service_id, last_update):
         """Update only the timestamp of a service."""
         query = """
                 UPDATE services
-                SET timestamp=%s 
+                SET timestamp= %s 
                 WHERE service_id = %s
                 """
-        return self._execute(query, (last_update, service_id))
+        return self._execute_query(query, (last_update, service_id))
 
     def delete_service(self, service_id):
         """Delete a service by its ID."""
-        return self._execute("DELETE FROM services WHERE service_id = %s", (service_id,))
+        return self._execute_query("DELETE FROM services WHERE service_id = %s", (service_id,))
 
     def delete_stale_services(self, seconds):
         """Delete services that haven't been updated within the specified seconds."""
@@ -109,7 +106,7 @@ class PostgresDB:
                 DELETE FROM services
                 WHERE timestamp < (NOW() - make_interval(secs => %s)) OR timestamp IS NULL
                 """
-        return self._execute(query, (seconds,))
+        return self._execute_query(query, (seconds,))
 
     # --- CRUD DEVICES ---
     def insert_device(self, d):
@@ -118,28 +115,28 @@ class PostgresDB:
                 INSERT INTO devices (device_id, device_name, measure_types, bedroom_id)
                 VALUES (%s, %s, %s, %s)
                 """
-        return self._execute(query, (d['deviceID'], d['device_name'], d['measure_types'], d['bedroom_id']))
+        return self._execute_query(query, (d['deviceID'], d['device_name'], d['measure_types'], d['bedroom_id']))
 
     def update_device(self, d):
         """Update an existing device in the database."""
         query = """
                 UPDATE devices
-                SET device_name=%s,
-                    measure_types=%s,
-                    bedroom_id=%s
+                SET device_name= %s,
+                    measure_types= %s,
+                    bedroom_id= %s
                 WHERE device_id = %s
                 """
-        return self._execute(query, (d['device_name'], d['measure_types'], d['bedroom_id'], d['deviceID']))
+        return self._execute_query(query, (d['device_name'], d['measure_types'], d['bedroom_id'], d['deviceID']))
 
     def delete_device(self, device_id):
         """Delete a device by its ID."""
-        return self._execute("DELETE FROM devices WHERE device_id = %s", (device_id,))
+        return self._execute_query("DELETE FROM devices WHERE device_id = %s", (device_id,))
 
     # --- CRUD USERS ---
     def insert_user(self, u):
         """Insert a new user into the database."""
         query = "INSERT INTO users (username, telegram_chat_id, bedroom_id) VALUES (%s, %s, %s)"
-        return self._execute(query, (u['username'], u['telegram_chat_id'], u.get('bedroom_id')))
+        return self._execute_query(query, (u['username'], u['telegram_chat_id'], u.get('bedroom_id')))
 
     def check_user_exists(self, username):
         """Check if a user exists in the database by username."""
@@ -147,7 +144,7 @@ class PostgresDB:
         logger.debug(f"Checking username: '{username}'")
 
         query = "SELECT 1 FROM users WHERE username = %s"
-        result = self._execute(query, (username,), fetch=True, single=True)
+        result = self._execute_query(query, (username,), fetch=True, single=True)
 
         logger.debug(f"Query result: {result}")
 
@@ -156,14 +153,14 @@ class PostgresDB:
     def associete_user_to_bedroom(self, u):
         """Update an existing user in the database."""
         query = "UPDATE users SET bedroom_id = %s WHERE telegram_chat_id = %s"
-        return self._execute(query, (u['bedroom_id'], u['telegram_chat_id']))
+        return self._execute_query(query, (u['bedroom_id'], u['telegram_chat_id']))
     def dissociete_user_from_bedroom(self, u):
         """Update an existing user in the database."""
         query = "UPDATE users SET bedroom_id = NULL WHERE telegram_chat_id = %s"
-        return self._execute(query, (u['telegram_chat_id'],))
+        return self._execute_query(query, (u['telegram_chat_id'],))
     def delete_user(self, username):
         """Delete a user by username."""
-        return self._execute("DELETE FROM users WHERE username = %s", (username,))
+        return self._execute_query("DELETE FROM users WHERE username = %s", (username,))
 
     # --- BEDROOMS & CHECKS ---
     def insert_bedroom(self, b):
@@ -174,35 +171,35 @@ class PostgresDB:
                 RETURNING bedroom_id
                 """
         # _execute deve restituire la riga con RETURNING
-        result = self._execute(query, (b['room_name'], b['password']), fetch=True, single=True)
+        result = self._execute_query(query, (b['room_name'], b['password']), fetch=True, single=True)
         # result dovrebbe essere qualcosa come [(id,)]
         return result[0] if result else None
 
     def delete_bedroom(self, room_id):
         """Delete a bedroom by its ID."""
-        return self._execute("DELETE FROM bedrooms WHERE bedroom_id = %s", (room_id,))
+        return self._execute_query("DELETE FROM bedrooms WHERE bedroom_id = %s", (room_id,))
 
     def room_exists(self, room_id):
         """Check if a bedroom exists by its ID."""
         query = "SELECT 1 FROM bedrooms WHERE bedroom_id = %s"
         # Returns True if a record is found, False otherwise
-        result = self._execute(query, (room_id,), fetch=True, single=True)
+        result = self._execute_query(query, (room_id,), fetch=True, single=True)
         return result is not None
 
     def get_endpoint_server_database(self):
         """Get the endpoint of the database service from the catalog."""
         query = "SELECT endpoint FROM services WHERE type = 'DatabaseAdapter' LIMIT 1"
-        return self._execute(query, fetch=True, single=True)
+        return self._execute_query(query, fetch=True, single=True)
 
     def getUserSession(self, chat_id):
         """Get user session (username and bedroom_id) by Telegram chat ID."""
         query = "SELECT username, bedroom_id FROM users WHERE telegram_chat_id = %s"
-        return self._execute(query, (chat_id,), fetch=True, single=True)
+        return self._execute_query(query, (chat_id,), fetch=True, single=True)
 
     def check_join_bedroom(self, room_id, password):
         """Check if a user can join a bedroom with the provided password."""
         query = "SELECT password FROM bedrooms WHERE bedroom_id = %s"
-        result = self._execute(query, (room_id,), fetch=True, single=True)
+        result = self._execute_query(query, (room_id,), fetch=True, single=True)
         if not result:
             return False
 
