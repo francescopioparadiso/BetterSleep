@@ -181,25 +181,7 @@ class TelegramBot:
         # callback wrapper to show devices without ids
         self._show_devices(chat_ID)
 
-    def _show_devices(self, chat_ID):
-        """Fetch and show devices for the given user's bedroom without ids."""
-        bedroom_id = self.user_states.get(chat_ID, {}).get("bedroom_id")
-        if not bedroom_id:
-            self.bot.sendMessage(chat_ID, "You are not associated with a room.")
-            return
 
-        res = self.catalog.get("getDevices", params={"bedroom_id": bedroom_id})
-        if not res or res.get("status") != "success":
-            self.bot.sendMessage(chat_ID, "Could not retrieve devices or no devices found.")
-            return
-
-        devices = res.get("devices", [])
-        if not devices:
-            self.bot.sendMessage(chat_ID, "No devices found in your room.")
-            return
-
-        msg = _format_devices_message(devices, include_id=False, numbered=False, header="Devices in your room:")
-        self.bot.sendMessage(chat_ID, msg)
 
     def _cb_delete_room(self, chat_ID):
         self.bot.sendMessage(chat_ID,
@@ -398,25 +380,7 @@ class TelegramBot:
         self._reset_to_room_choice(chat_ID)
 
 
-    def _begin_remove_device(self, chat_ID):
-        # fetch devices for this user's bedroom and present numbered list
-        bedroom_id = self.user_states.get(chat_ID, {}).get("bedroom_id")
-        if not bedroom_id:
-            self.bot.sendMessage(chat_ID, "You are not associated with a room.")
-            return
-        res = self.catalog.get("getDevices", params={"bedroom_id": bedroom_id})
-        if not res or res.get("status") != "success":
-            self.bot.sendMessage(chat_ID, "Could not retrieve devices or no devices found.")
-            return
-        devices = res.get("devices", [])
-        if not devices:
-            self.bot.sendMessage(chat_ID, "No devices found in your room.")
-            return
-        # store list and show numbered options
-        self.user_states[chat_ID]["devices_list"] = devices
-        msg = _format_devices_message(devices, include_id=True, numbered=True, header="Select the device to remove (send the number):")
-        self.bot.sendMessage(chat_ID, msg)
-        self._set_state(chat_ID, "waiting_remove_device_choice")
+
 
     def _handle_waiting_remove_device_choice(self, chat_ID, message):
         choice = message.strip()
@@ -498,9 +462,19 @@ class TelegramBot:
 
     def _reset_to_room_choice(self, chat_ID):
         username = self.user_states[chat_ID].get("username")
-        # rely on username presence instead of a separate boolean
         self._set_state(chat_ID, "waiting_room_choice",
                         username=username)
+
+    def _begin_remove_device(self, chat_ID):
+        devices, error = self.get_devices_for_user(chat_ID)
+        if error:
+            self.bot.sendMessage(chat_ID, error)
+            return
+        # store list and show numbered options
+        self.user_states[chat_ID]["devices_list"] = devices
+        msg = _format_devices_message(devices, include_id=True, numbered=True, header="Select the device to remove (send the number):")
+        self.bot.sendMessage(chat_ID, msg)
+        self._set_state(chat_ID, "waiting_remove_device_choice")
 
     def _finalize_registration(self, chat_ID, username, room_id, joined=False):
         greeting = "Good morning" if 6 <= datetime.now().hour < 18 else "Good evening"
@@ -514,7 +488,30 @@ class TelegramBot:
                         bedroom_id=room_id, username=username)
         self._send_registered_user_options(chat_ID)
 
+    def get_devices_for_user(self, chat_ID):
+        """Fetch devices for the given user's bedroom."""
+        bedroom_id = self.user_states.get(chat_ID, {}).get("bedroom_id")
+        if not bedroom_id:
+            return None, "You are not associated with a room."
 
+        res = self.catalog.get("getDevices", params={"bedroom_id": bedroom_id})
+        if not res or res.get("status") != "success":
+            return None, "Could not retrieve devices or no devices found."
+
+        devices = res.get("devices", [])
+        if not devices:
+            return None, "No devices found in your room."
+
+        return devices, None
+
+    def _show_devices(self, chat_ID):
+        """Fetch and show devices for the given user's bedroom without ids."""
+        devices, error = self.get_devices_for_user(chat_ID)
+        if error:
+            self.bot.sendMessage(chat_ID, error)
+            return
+        msg = _format_devices_message(devices, include_id=False, numbered=False, header="Devices in your room:")
+        self.bot.sendMessage(chat_ID, msg)
     # --- catalog HTTP calls ---
 
     def _create_bedroom(self, chat_ID, room_name, bedtime=None, wakeup=None, desired_temperature=None):
