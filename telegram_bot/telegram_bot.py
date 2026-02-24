@@ -1,7 +1,5 @@
 import json
 import os
-import time
-import threading
 import logging
 from datetime import datetime
 
@@ -14,6 +12,34 @@ from telepot.namedtuple import InlineKeyboardButton, InlineKeyboardMarkup
 from catalog_client import CatalogClient
 
 logger = logging.getLogger(__name__)
+
+
+def _format_devices_message(devices, include_id=False, numbered=False, header=None):
+    """Return a message string listing devices.
+
+    - include_id: append the device id in parentheses
+    - numbered: prefix lines with a numeric index
+    - header: optional header string to prepend
+    """
+    if not devices:
+        return "No devices found."
+
+    lines = []
+    if header:
+        lines.append(header)
+
+    for i, d in enumerate(devices):
+        device_name = d.get('device_name', 'Unnamed device')
+        device_type = d.get('device_type')
+        emoji = "💡" if device_type == "light" else ("🌡️" if device_type == "heater" else "❄️")
+        line = f"{emoji} {device_name}"
+        if include_id:
+            line += f" (id: {d.get('device_id')})"
+        if numbered:
+            line = f"{i}: {line}"
+        lines.append(line)
+
+    return "\n".join(lines)
 
 
 class TelegramBot:
@@ -117,6 +143,7 @@ class TelegramBot:
             "view_sleep_quality": self._cb_view_sleep_quality,
             "main_menu": self._cb_main_menu,
             "remove_device": self.cb_remove_device,
+            "list_devices": self._cb_list_devices,
             "add_device" : self._send_type_of_device_options,
             "add_device_light": lambda cid: self.cb_add_device(cid, type="light"),
             "add_device_heater": lambda cid: self.cb_add_device(cid, type="heater"),
@@ -149,6 +176,30 @@ class TelegramBot:
     def _cb_manage_devices(self, chat_ID):
         # Entry point for device management
         self._send_device_management_options(chat_ID)
+
+    def _cb_list_devices(self, chat_ID):
+        # callback wrapper to show devices without ids
+        self._show_devices(chat_ID)
+
+    def _show_devices(self, chat_ID):
+        """Fetch and show devices for the given user's bedroom without ids."""
+        bedroom_id = self.user_states.get(chat_ID, {}).get("bedroom_id")
+        if not bedroom_id:
+            self.bot.sendMessage(chat_ID, "You are not associated with a room.")
+            return
+
+        res = self.catalog.get("getDevices", params={"bedroom_id": bedroom_id})
+        if not res or res.get("status") != "success":
+            self.bot.sendMessage(chat_ID, "Could not retrieve devices or no devices found.")
+            return
+
+        devices = res.get("devices", [])
+        if not devices:
+            self.bot.sendMessage(chat_ID, "No devices found in your room.")
+            return
+
+        msg = _format_devices_message(devices, include_id=False, numbered=False, header="Devices in your room:")
+        self.bot.sendMessage(chat_ID, msg)
 
     def _cb_delete_room(self, chat_ID):
         self.bot.sendMessage(chat_ID,
@@ -184,6 +235,7 @@ class TelegramBot:
 
     def _send_device_management_options(self, chat_ID):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 List devices", callback_data="list_devices")],
             [InlineKeyboardButton(text="➕ Add device", callback_data="add_device")],
             [InlineKeyboardButton(text="🗑️ Remove device", callback_data="remove_device")],
             [InlineKeyboardButton(text="⬅️ Back to main menu", callback_data="main_menu")],
@@ -362,10 +414,8 @@ class TelegramBot:
             return
         # store list and show numbered options
         self.user_states[chat_ID]["devices_list"] = devices
-        msg_lines = ["Select the device to remove (send the number):"]
-        for i, d in enumerate(devices):
-            msg_lines.append(f"{i}: {d.get('device_id')} ({d.get('device_name')})")
-        self.bot.sendMessage(chat_ID, "\n".join(msg_lines))
+        msg = _format_devices_message(devices, include_id=True, numbered=True, header="Select the device to remove (send the number):")
+        self.bot.sendMessage(chat_ID, msg)
         self._set_state(chat_ID, "waiting_remove_device_choice")
 
     def _handle_waiting_remove_device_choice(self, chat_ID, message):
