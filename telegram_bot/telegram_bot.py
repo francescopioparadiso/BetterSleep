@@ -7,10 +7,11 @@ from datetime import datetime
 
 import cherrypy
 from dotenv import load_dotenv
-import requests
 import telepot
 from telepot.loop import MessageLoop
 from telepot.namedtuple import InlineKeyboardButton, InlineKeyboardMarkup
+
+from catalog_client import CatalogClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,10 @@ class TelegramBot:
 
     def __init__(self, conf):
         self.catalog_url = conf['catalogURL']
+        # catalog client
         self.service_info = conf['serviceInfo']
         self.remove_interval = conf.get('removeInterval', 10)
-        self._stop_event = threading.Event()
-        self._worker = None
+        self.catalog = CatalogClient(self.catalog_url,self.service_info, remove_interval=self.remove_interval)
         self.chatIDs = []
         self.user_states = {}
 
@@ -38,7 +39,12 @@ class TelegramBot:
             'callback_query': self.on_callback_query
         }).run_as_thread()
 
-        self.register_service()
+        # start catalog heartbeat (register + periodic update)
+        try:
+            self.catalog.register_service()
+
+        except Exception as e:
+            logger.error(f'Failed to start catalog heartbeat: {e}')
 
     # --- message routing ---
 
@@ -346,7 +352,7 @@ class TelegramBot:
         if not bedroom_id:
             self.bot.sendMessage(chat_ID, "You are not associated with a room.")
             return
-        res = self._request_catalog("get", "getDevices", chat_ID, params={"bedroom_id": bedroom_id})
+        res = self.catalog.get("getDevices", params={"bedroom_id": bedroom_id})
         if not res or res.get("status") != "success":
             self.bot.sendMessage(chat_ID, "Could not retrieve devices or no devices found.")
             return
@@ -375,15 +381,12 @@ class TelegramBot:
         device = devices[idx]
         device_id = device.get('device_id')
         # call catalog delete
-        try:
-            res = requests.delete(f"{self.catalog_url}/removeDevice", params={"deviceID": device_id}, timeout=5)
-            if res.status_code == 200:
-                self.bot.sendMessage(chat_ID, f"✅ Device {device_id} removed.")
-            else:
-                self.bot.sendMessage(chat_ID, f"❌ Failed to remove device {device_id}.")
-        except Exception as e:
-            logger.error(f"Error calling removeDevice: {e}")
-            self.bot.sendMessage(chat_ID, "❌ Error removing device. Try again later.")
+        res = self.catalog.delete("removeDevice", params={"deviceID": device_id})
+        if res is not None:
+            # assume success response is JSON with status or simply accepted
+            self.bot.sendMessage(chat_ID, f"✅ Device {device_id} removed.")
+        else:
+            self.bot.sendMessage(chat_ID, f"❌ Failed to remove device {device_id}.")
         # cleanup state
         self.user_states[chat_ID].pop("devices_list", None)
         self._reset_to_room_choice(chat_ID)
@@ -417,7 +420,7 @@ class TelegramBot:
         }
 
         self.bot.sendMessage(chat_ID, f"🔧 Creating {pending_type} device named '{name}'...")
-        res = self._request_catalog("post", "addDevice", chat_ID, json=payload)
+        res = self.catalog.post("addDevice", json=payload)
         if res and res.get("status") == "success":
             device_id = res.get("device_id") or res.get("id") or "(unknown)"
             self.bot.sendMessage(chat_ID, f"✅ Device created: {name} (id: {device_id})")
@@ -464,24 +467,6 @@ class TelegramBot:
 
     # --- catalog HTTP calls ---
 
-    def _request_catalog(self, method, endpoint, chat_ID, **kwargs):
-        try:
-            call = getattr(requests, method.lower())
-            res = call(f"{self.catalog_url}/{endpoint}", timeout=5, **kwargs)
-            res.raise_for_status()
-            return res.json()
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout {method} {endpoint} for user {chat_ID}")
-            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog.")
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error {method} {endpoint}: {e}")
-            if e.response.status_code == 409:
-                self.bot.sendMessage(chat_ID, "Conflict: resource already exists.")
-        except Exception as e:
-            logger.error(f"Unexpected error {method} {endpoint}: {e}")
-            self.bot.sendMessage(chat_ID, "Unexpected error occurred.")
-        return None
-
     def _create_bedroom(self, chat_ID, room_name, bedtime=None, wakeup=None, desired_temperature=None):
         # create room; include bedtime/wakeup/desired_temperature if provided
         payload = {
@@ -491,8 +476,7 @@ class TelegramBot:
             "wakeup": wakeup or "07:00:00",
             "desired_temperature": desired_temperature if desired_temperature is not None else 22.0,
         }
-        data = self._request_catalog("post", "addBedroom", chat_ID,
-                                     json=payload)
+        data = self.catalog.post("addBedroom", json=payload)
         if data:
             room_id = data.get("bedroom_id")
             self.bot.sendMessage(chat_ID, f"✅ Room '{room_name}' created — ID: {room_id}")
@@ -500,18 +484,14 @@ class TelegramBot:
         return None
 
     def _remove_bedroom(self, bedroom_id):
-        try:
-            res = requests.delete(f"{self.catalog_url}/removeRoom",
-                                  params={"bedroom_id": bedroom_id}, timeout=5)
-            res.raise_for_status()
+        res = self.catalog.delete("removeRoom", params={"bedroom_id": bedroom_id})
+        if res is not None:
             return True
-        except Exception as e:
-            logger.error(f"Error removing bedroom {bedroom_id}: {e}")
-            return False
+        logger.error(f"Error removing bedroom {bedroom_id}: catalog returned error")
+        return False
 
     def _check_username_exists(self, chat_ID, username):
-        data = self._request_catalog("get", "checkUsername", chat_ID,
-                                     params={"username": username})
+        data = self.catalog.get("checkUsername", params={"username": username})
         if data and data.get("exists"):
             self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another.")
             return True
@@ -519,21 +499,20 @@ class TelegramBot:
 
     def _add_user(self, chat_ID, username, bedroom_id):
         # Simplify: always call addUser to register the user with the bedroom_id (if provided)
-        data = self._request_catalog("post", "addUser", chat_ID,
-                                     json={"username": username, "telegram_chat_id": chat_ID, "bedroom_id": bedroom_id})
+        data = self.catalog.post("addUser", json={"username": username, "telegram_chat_id": chat_ID, "bedroom_id": bedroom_id})
         return data is not None
 
     def _get_user_session(self, chat_ID):
-        return self._request_catalog("get", "getUserSession", chat_ID,
-                                     params={"telegram_chat_id": chat_ID})
+        return self.catalog.get("getUserSession", params={"telegram_chat_id": chat_ID})
 
     def _handle_restore_user_session(self, chat_ID):
         try:
-            res = requests.get(f"{self.catalog_url}/getUserSession",
-                               params={"telegram_chat_id": chat_ID}, timeout=5)
-            res.raise_for_status()
-            data = res.json()
-            username   = data.get("username")
+            data = self.catalog.get("getUserSession", params={"telegram_chat_id": chat_ID})
+            if not data:
+                # catalog returned error or no session
+                return
+
+            username = data.get("username")
             bedroom_id = data.get("bedroom_id")
 
             if username and bedroom_id:
@@ -546,72 +525,10 @@ class TelegramBot:
                 self._set_state(chat_ID, "waiting_room_name", username=username)
                 self.bot.sendMessage(chat_ID, f"Welcome back, {username}! Let's create your room. What's the room name? Send 'skip' to use a default name.")
 
-        except requests.exceptions.Timeout:
-            self.bot.sendMessage(chat_ID, "Connection timeout with Catalog. Please try again.")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code != 404:
-                self.bot.sendMessage(chat_ID, "Error connecting to Catalog. Please try again.")
-        except requests.exceptions.ConnectionError:
-            self.bot.sendMessage(chat_ID, "Connection error with Catalog.")
         except Exception as e:
             logger.error(f"Unexpected error restoring session: {e}")
             self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
 
-    # --- service registration ---
-
-    def register_service(self):
-        service = {
-            "serviceID":   self.service_info['serviceID'],
-            "name":        self.service_info['name'],
-            "endpoint":    f"http://{self.service_info['host']}:{self.service_info['port']}",
-            "type":        self.service_info.get('type', 'TelegramBot'),
-            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        try:
-            res = requests.post(f'{self.catalog_url}/addService', json=service, timeout=5)
-            res.raise_for_status()
-            logger.info('Registered with Catalog')
-        except Exception as e:
-            logger.error(f'Registration failed: {e}')
-            self.stop_background_loop()
-
-    def update_service(self):
-        service = {
-            "serviceID":   self.service_info['serviceID'],
-            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        try:
-            res = requests.put(f'{self.catalog_url}/updateServiceLastUpdate', json=service, timeout=5)
-            res.raise_for_status()
-        except Exception as e:
-            logger.warning(f'Update failed: {e}')
-
-    def unregister_service(self):
-        try:
-            res = requests.delete(f'{self.catalog_url}/removeService',
-                                  params={'serviceID': self.service_info['serviceID']}, timeout=5)
-            res.raise_for_status()
-            logger.info('Unregistered from Catalog')
-        except Exception as e:
-            logger.error(f'Unregister failed: {e}')
-
-    def start_background_loop(self):
-        if self._worker is not None:
-            return
-
-        def _loop():
-            while not self._stop_event.is_set():
-                time.sleep(self.remove_interval)
-                self.update_service()
-
-        self._worker = threading.Thread(target=_loop, daemon=True)
-        self._worker.start()
-
-    def stop_background_loop(self):
-        self._stop_event.set()
-        if self._worker:
-            self._worker.join(timeout=2)
-            self._worker = None
 
 
 
@@ -628,9 +545,8 @@ if __name__ == "__main__":
         'server.socket_port': full_conf['serviceInfo']['port'],
     })
 
-    cherrypy.engine.subscribe('start', bot.start_background_loop)
-    cherrypy.engine.subscribe('stop',  bot.stop_background_loop)
-    cherrypy.engine.subscribe('stop',  bot.unregister_service)
+    cherrypy.engine.subscribe('start', bot.catalog.start_background_loop())
+    cherrypy.engine.subscribe('stop',  bot.catalog.stop_background_loop())
 
     cherrypy.engine.start()
     cherrypy.engine.block()
