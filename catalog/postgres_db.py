@@ -110,23 +110,28 @@ class PostgresDB:
 
     # --- CRUD DEVICES ---
     def insert_device(self, d):
-        """Insert a new device into the database."""
+        """Insert a new device into the database and return its generated ID."""
+        # devices table: device_id INT GENERATED ALWAYS AS IDENTITY,
+        # device_name VARCHAR, device_type VARCHAR, value INT, bedroom_id INT
         query = """
-                INSERT INTO devices (device_id, device_name, measure_types, bedroom_id)
+                INSERT INTO devices (device_name, device_type, value, bedroom_id)
                 VALUES (%s, %s, %s, %s)
+                RETURNING device_id
                 """
-        return self._execute_query(query, (d['deviceID'], d['device_name'], d['measure_types'], d['bedroom_id']))
+        result = self._execute_query(query, (d.get('device_name'), d.get('device_type'), d.get('value', 0), d.get('bedroom_id')), fetch=True, single=True)
+        return result[0] if result else None
 
     def update_device(self, d):
         """Update an existing device in the database."""
         query = """
                 UPDATE devices
-                SET device_name= %s,
-                    measure_types= %s,
-                    bedroom_id= %s
+                SET device_name = %s,
+                    device_type = %s,
+                    value = %s,
+                    bedroom_id = %s
                 WHERE device_id = %s
                 """
-        return self._execute_query(query, (d['device_name'], d['measure_types'], d['bedroom_id'], d['deviceID']))
+        return self._execute_query(query, (d.get('device_name'), d.get('device_type'), d.get('value', 0), d.get('bedroom_id'), d.get('device_id')))
 
     def delete_device(self, device_id):
         """Delete a device by its ID."""
@@ -151,9 +156,57 @@ class PostgresDB:
         return result is not None
 
     def associete_user_to_bedroom(self, u):
-        """Update an existing user in the database."""
-        query = "UPDATE users SET bedroom_id = %s WHERE telegram_chat_id = %s"
-        return self._execute_query(query, (u['bedroom_id'], u['telegram_chat_id']))
+        """
+        Associate a user to a bedroom enforcing a strict one-to-one relationship:
+        - The user must exist and have bedroom_id IS NULL (no current room)
+        - The target bedroom must exist and must not be already associated to another user
+        The operation is performed atomically within a single transaction using FOR UPDATE locks.
+        Returns True on success, False otherwise.
+        """
+        conn = None
+        try:
+            conn = self.connect()
+            with conn:
+                with conn.cursor() as cur:
+                    # Lock the user row
+                    cur.execute("SELECT bedroom_id FROM users WHERE telegram_chat_id = %s FOR UPDATE", (u['telegram_chat_id'],))
+                    user_row = cur.fetchone()
+                    if user_row is None:
+                        logger.warning(f"associete_user_to_bedroom: user with chat_id {u['telegram_chat_id']} not found")
+                        return False
+
+                    current_bedroom = user_row[0]
+                    if current_bedroom is not None:
+                        logger.info(f"associete_user_to_bedroom: user {u['telegram_chat_id']} already has bedroom {current_bedroom}")
+                        return False
+
+                    # Ensure the bedroom exists
+                    cur.execute("SELECT 1 FROM bedrooms WHERE bedroom_id = %s", (u['bedroom_id'],))
+                    if cur.fetchone() is None:
+                        logger.info(f"associete_user_to_bedroom: bedroom {u['bedroom_id']} does not exist")
+                        return False
+
+                    # Check if any user already occupies the bedroom
+                    cur.execute("SELECT username FROM users WHERE bedroom_id = %s FOR UPDATE", (u['bedroom_id'],))
+                    occupant = cur.fetchone()
+                    if occupant is not None:
+                        logger.info(f"associete_user_to_bedroom: bedroom {u['bedroom_id']} already occupied by {occupant[0]}")
+                        return False
+
+                    # Perform the association
+                    cur.execute("UPDATE users SET bedroom_id = %s WHERE telegram_chat_id = %s", (u['bedroom_id'], u['telegram_chat_id']))
+                    return cur.rowcount > 0
+
+        except Exception as e:
+            logger.error(f"Error during associete_user_to_bedroom: {e}")
+            return False
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
     def dissociete_user_from_bedroom(self, u):
         """Update an existing user in the database."""
         query = "UPDATE users SET bedroom_id = NULL WHERE telegram_chat_id = %s"
@@ -165,13 +218,18 @@ class PostgresDB:
     # --- BEDROOMS & CHECKS ---
     def insert_bedroom(self, b):
         """Insert a new bedroom and return its ID."""
+        # Provide default values for Bedtime, Wakeup and Desired_Temperature
         query = """
-                INSERT INTO bedrooms (room_name, password)
-                VALUES (%s, %s)
+                INSERT INTO bedrooms (room_name, password, Bedtime, Wakeup, Desired_Temperature)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING bedroom_id
                 """
+        bedtime = b.get('bedtime', '22:00:00')
+        wakeup = b.get('wakeup', '07:00:00')
+        desired_temp = b.get('desired_temperature', 21.0)
+        password = b.get('password', '')
         # _execute deve restituire la riga con RETURNING
-        result = self._execute_query(query, (b['room_name'], b['password']), fetch=True, single=True)
+        result = self._execute_query(query, (b.get('room_name', 'Bedroom'), password, bedtime, wakeup, desired_temp), fetch=True, single=True)
         # result dovrebbe essere qualcosa come [(id,)]
         return result[0] if result else None
 
@@ -195,6 +253,12 @@ class PostgresDB:
         """Get user session (username and bedroom_id) by Telegram chat ID."""
         query = "SELECT username, bedroom_id FROM users WHERE telegram_chat_id = %s"
         return self._execute_query(query, (chat_id,), fetch=True, single=True)
+
+    def get_devices_by_bedroom(self, bedroom_id):
+        """Return a list of devices (device_id, device_name, measure_types) for a bedroom."""
+        query = "SELECT device_id, device_name, device_type, value FROM devices WHERE bedroom_id = %s ORDER BY device_id"
+        result = self._execute_query(query, (bedroom_id,), fetch=True, single=False)
+        return result if result else []
 
     def check_join_bedroom(self, room_id, password):
         """Check if a user can join a bedroom with the provided password."""
