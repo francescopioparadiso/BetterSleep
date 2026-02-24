@@ -11,18 +11,8 @@ import requests
 import telepot
 from telepot.loop import MessageLoop
 from telepot.namedtuple import InlineKeyboardButton, InlineKeyboardMarkup
-import bcrypt
 
 logger = logging.getLogger(__name__)
-
-
-def hash_password(password):
-    try:
-        salt = bcrypt.gensalt()
-        return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
-    except Exception as e:
-        logger.error(f"Error hashing password: {e}")
-        raise
 
 
 class TelegramBot:
@@ -57,6 +47,9 @@ class TelegramBot:
         if content_type != 'text':
             return
 
+        # ensure state exists for this chat
+        self._ensure_user_state(chat_ID)
+
         text = msg['text']
 
         if text == "/start":
@@ -74,10 +67,12 @@ class TelegramBot:
     def _dispatch_state(self, chat_ID, state, message):
         handlers = {
             "waiting_username":            self._handle_waiting_username,
-            "waiting_room_choice":         self._handle_waiting_room_choice,
             "waiting_room_name":           self._handle_waiting_room_name,
+            "waiting_room_bedtime":        self._handle_waiting_room_bedtime,
+            "waiting_room_wakeup":         self._handle_waiting_room_wakeup,
+            "waiting_room_temp":           self._handle_waiting_room_temp,
             "waiting_delete_confirmation": self._handle_delete_room,
-            "waiting_add_device_id":      self._handle_waiting_add_device_info,
+            "waiting_add_device_name":     self._handle_waiting_add_device_name,
             "waiting_remove_device_choice": self._handle_waiting_remove_device_choice,
         }
         handler = handlers.get(state)
@@ -91,6 +86,14 @@ class TelegramBot:
                 "state": None,
                 "username": None,
                 "bedroom_id": None,
+                # device flow helpers
+                "devices_list": None,
+                "pending_device_type": None,
+                # temporary room creation fields
+                "new_room_name": None,
+                "new_room_bedtime": None,
+                "new_room_wakeup": None,
+                "new_room_desired_temp": None,
             }
     def on_callback_query(self, msg):
         query_ID, from_ID, query_data = telepot.glance(msg, flavor='callback_query')
@@ -104,12 +107,14 @@ class TelegramBot:
             "manage_settings": self._cb_manage_settings,
             "manage_devices": self._cb_manage_devices,
             "delete_room": self._cb_delete_room,
-            # "leave_room": self._cb_leave_room,  # leave-room functionality removed
             "view_sensor_data": self._cb_view_sensor_data,
             "view_sleep_quality": self._cb_view_sleep_quality,
             "main_menu": self._cb_main_menu,
-            "add_device":  self.cb_add_device(from_ID),
-            "remove_device": self.cb_remove_device(from_ID),
+            "remove_device": self.cb_remove_device,
+            "add_device" : self._send_type_of_device_options,
+            "add_device_light": lambda cid: self.cb_add_device(cid, type="light"),
+            "add_device_heater": lambda cid: self.cb_add_device(cid, type="heater"),
+            "add_device_fan": lambda cid: self.cb_add_device(cid, type="fan"),
         }
 
         handler = handlers.get(query_data)
@@ -120,8 +125,12 @@ class TelegramBot:
             self.bot.sendMessage(from_ID, "Unknown option or feature not implemented yet.")
 
     def _cb_create_room(self, chat_ID):
+        # begin manual room creation: ask for room name first
         username = self.user_states[chat_ID].get("username")
-        self.bot.sendMessage(chat_ID, "📝 You chose to create a room. Please enter the room name:")
+        if not username:
+            self.bot.sendMessage(chat_ID, "You need a username before creating a room. Please use /start to register.")
+            return
+        self.bot.sendMessage(chat_ID, "📝 Creating a new room — what's the room name? (e.g. 'Bedroom')")
         self._set_state(chat_ID, "waiting_room_name", username=username)
 
     def _cb_view_data(self, chat_ID):
@@ -149,13 +158,22 @@ class TelegramBot:
     def _cb_main_menu(self, chat_ID):
         self._send_registered_user_options(chat_ID)
 
-    def cb_add_device(self, chat_ID):
-        self.bot.sendMessage(chat_ID, "Add device feature not implemented yet")
+    def cb_add_device(self, chat_ID,type=None):
+        # store the chosen device type in the user's temporary state and ask only for the name
+        if type not in ("light", "heater", "fan"):
+            self.bot.sendMessage(chat_ID, "Unsupported device type. Please choose one of the available types.")
+            return
+        self.user_states[chat_ID]["pending_device_type"] = type
+        self.bot.sendMessage(chat_ID, f"➕ Great! What's the name for the {type} device? 🏷️")
+        self._set_state(chat_ID, "waiting_add_device_name")
+
+
+
 
     def cb_remove_device(self, chat_ID):
-        self.bot.sendMessage(chat_ID, "Remove device feature not implemented yet")
+        # start the numbered remove flow
+        self._begin_remove_device(chat_ID)
 
-    # --- keyboards options ---
 
 
     def _send_device_management_options(self, chat_ID):
@@ -165,6 +183,15 @@ class TelegramBot:
             [InlineKeyboardButton(text="⬅️ Back to main menu", callback_data="main_menu")],
         ])
         self.bot.sendMessage(chat_ID, "Device management options:", reply_markup=keyboard)
+
+    def _send_type_of_device_options(self, chat_ID):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💡 Light", callback_data="add_device_light")],
+            [InlineKeyboardButton(text="🌡️ Heater", callback_data="add_device_heater")],
+            [InlineKeyboardButton(text="❄️ Fan", callback_data="add_device_fan")],
+            [InlineKeyboardButton(text="⬅️ Back to device management", callback_data="manage_devices")],
+        ])
+        self.bot.sendMessage(chat_ID, "Select the type of device to add:", reply_markup=keyboard)
     def _send_registered_user_options(self, chat_ID):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 View room data",       callback_data="view_data")],
@@ -196,14 +223,19 @@ class TelegramBot:
         self._handle_restore_user_session(chat_ID)
         state = self.user_states.get(chat_ID, {}).get("state")
 
+        # If the restore set a state (e.g. waiting_room_name) we should not overwrite it.
         if state == "registered":
             self._send_registered_user_options(chat_ID)
-        elif state == "waiting_room_choice":
-            self._send_room_options(chat_ID)
-        else:
-            self.bot.sendMessage(chat_ID, "Welcome to BetterSleep! Use /help to see available commands.")
-            self.bot.sendMessage(chat_ID, "To get started, please choose a username:")
-            self.user_states[chat_ID] = {"state": "waiting_username", "username": None}
+            return
+
+        if state:
+            # there's already a pending state (e.g. waiting_room_name) set during restore; do nothing
+            return
+
+        # fresh user: prompt to choose username
+        self.bot.sendMessage(chat_ID, "Welcome to BetterSleep! Use /help to see available commands.")
+        self.bot.sendMessage(chat_ID, "To get started, please choose a username:")
+        self._set_state(chat_ID, "waiting_username", username=None)
 
     def _handle_help(self, chat_ID):
         self.bot.sendMessage(chat_ID, "🤖 Available commands:\n/start - Start the bot\n/help - Show this help message")
@@ -214,21 +246,10 @@ class TelegramBot:
             self.bot.sendMessage(chat_ID, "Please choose a different username:")
             return
 
-        # Auto-create a personal room (no password) when user picks a username; make bot messages friendlier with emojis. Keep create-room option as manual alternative.
-        room_name = f"{username}'s room"
-        self.bot.sendMessage(chat_ID, f"🎉 Great choice, {username}! Creating your personal room now...")
-        room_id = self._create_bedroom(chat_ID, room_name, '')
-        if room_id and self._add_user(chat_ID, username, room_id):
-            self._finalize_registration(chat_ID, username, room_id)
-        else:
-            # fallback to asking what they'd like to do
-            self.bot.sendMessage(chat_ID, f"Couldn't create your room automatically. You can create one manually or try again.")
-            self._set_state(chat_ID, "waiting_room_choice", username=username)
-            self._send_room_options(chat_ID)
-
-    def _handle_waiting_room_choice(self, chat_ID, message):
-        # user typed instead of pressing a button, just show the menu again
-        self._send_room_options(chat_ID)
+        # Start interactive room creation: ask for the room name first, then bedtime/wakeup/temperature.
+        # Store username and move to the `waiting_room_name` state so the bot will ask for bedtime/wakeup/temp afterwards.
+        self._set_state(chat_ID, "waiting_room_name", username=username)
+        self.bot.sendMessage(chat_ID, f"🎉 Great choice, {username}! Let's set up your personal room. What's the room name? Send 'skip' to use the default name.")
 
     def _handle_waiting_room_name(self, chat_ID, message):
         room_name = message.strip()
@@ -237,15 +258,75 @@ class TelegramBot:
             self.bot.sendMessage(chat_ID, "Something went wrong, please start over with /start")
             return
 
-        # create room immediately without password
-        self.bot.sendMessage(chat_ID, f"🔨 Creating room '{room_name}' for you...")
-        room_id = self._create_bedroom(chat_ID, room_name, '')
+        # allow the user to type 'skip' to use a default room name
+        if room_name.lower() == 'skip' or room_name == '':
+            room_name = f"{username}'s room"
+
+        # store the room name and ask for bedtime
+        self.user_states[chat_ID]["new_room_name"] = room_name
+        self.bot.sendMessage(chat_ID, "🕰️ What is the bedtime for this room? Please reply in HH:MM (24h) format, e.g. 23:00")
+        self._set_state(chat_ID, "waiting_room_bedtime")
+
+    def _handle_waiting_room_bedtime(self, chat_ID, message):
+        text = message.strip()
+        # accept HH:MM or HH:MM:SS
+        for fmt in ("%H:%M", "%H:%M:%S"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                bedtime = dt.strftime("%H:%M:%S")
+                break
+            except Exception:
+                bedtime = None
+        if not bedtime:
+            self.bot.sendMessage(chat_ID, "Invalid time format. Please send bedtime in HH:MM (24h) format, e.g. 23:00")
+            return
+        self.user_states[chat_ID]["new_room_bedtime"] = bedtime
+        self.bot.sendMessage(chat_ID, "⏰ Now send the wakeup time in HH:MM (24h), e.g. 07:00")
+        self._set_state(chat_ID, "waiting_room_wakeup")
+
+    def _handle_waiting_room_wakeup(self, chat_ID, message):
+        text = message.strip()
+        for fmt in ("%H:%M", "%H:%M:%S"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                wakeup = dt.strftime("%H:%M:%S")
+                break
+            except Exception:
+                wakeup = None
+        if not wakeup:
+            self.bot.sendMessage(chat_ID, "Invalid time format. Please send wakeup in HH:MM (24h) format, e.g. 07:00")
+            return
+        self.user_states[chat_ID]["new_room_wakeup"] = wakeup
+        self.bot.sendMessage(chat_ID, "🌡️ Finally, what's the desired temperature? Send a number (e.g. 21.5)")
+        self._set_state(chat_ID, "waiting_room_temp")
+
+    def _handle_waiting_room_temp(self, chat_ID, message):
+        text = message.strip()
+        try:
+            temp = float(text)
+        except Exception:
+            self.bot.sendMessage(chat_ID, "Invalid temperature. Please send a number, e.g. 22 or 21.5")
+            return
+        # basic sanity range
+        if temp < 5 or temp > 35:
+            self.bot.sendMessage(chat_ID, "Please choose a temperature between 5 and 35 °C.")
+            return
+        self.user_states[chat_ID]["new_room_desired_temp"] = temp
+
+        # all collected — create the room
+        room_name = self.user_states[chat_ID].get("new_room_name")
+        bedtime = self.user_states[chat_ID].get("new_room_bedtime")
+        wakeup = self.user_states[chat_ID].get("new_room_wakeup")
+        desired_temp = self.user_states[chat_ID].get("new_room_desired_temp")
+
+        self.bot.sendMessage(chat_ID, f"🔨 Creating room '{room_name}' with bedtime {bedtime}, wakeup {wakeup} and desired temp {desired_temp}°C...")
+        room_id = self._create_bedroom(chat_ID, room_name, bedtime=bedtime, wakeup=wakeup, desired_temperature=desired_temp)
+        username = self.user_states[chat_ID].get("username")
         if room_id and self._add_user(chat_ID, username, room_id):
             self._finalize_registration(chat_ID, username, room_id)
         else:
             self.bot.sendMessage(chat_ID, "Couldn't create the room right now. Please try again later.")
             self._set_state(chat_ID, "waiting_room_choice", username=username)
-            self._send_room_options(chat_ID)
 
     def _handle_delete_room(self, chat_ID, message):
         if message.lower() != "yes":
@@ -258,32 +339,6 @@ class TelegramBot:
         self.bot.sendMessage(chat_ID, f"Room {bedroom_id} deleted.")
         self._reset_to_room_choice(chat_ID)
 
-    def _handle_waiting_add_device_info(self, chat_ID, message):
-        # Expect format: name[,type[,value]]
-        text = message.strip()
-        parts = [p.strip() for p in text.split(',')]
-        name = parts[0] if len(parts) > 0 else None
-        dtype = parts[1] if len(parts) > 1 else None
-        val = None
-        if len(parts) > 2:
-            try:
-                val = int(parts[2])
-            except Exception:
-                val = 0
-
-        username = self.user_states.get(chat_ID, {}).get("username")
-        bedroom_id = self.user_states.get(chat_ID, {}).get("bedroom_id")
-        if not username or not bedroom_id or not name:
-            self.bot.sendMessage(chat_ID, "You need to be registered in a room and provide a device name. Use /start to register.")
-            return
-
-        payload = {"device_name": name, "device_type": dtype or '', "value": val if val is not None else 0, "bedroom_id": bedroom_id}
-        data = self._request_catalog("post", "addDevice", chat_ID, json=payload)
-        if data and data.get('device_id'):
-            self.bot.sendMessage(chat_ID, f"✅ Device '{name}' added (id {data.get('device_id')}) to room {bedroom_id}.")
-        else:
-            self.bot.sendMessage(chat_ID, f"❌ Failed to add device '{name}'.")
-        self._reset_to_room_choice(chat_ID)
 
     def _begin_remove_device(self, chat_ID):
         # fetch devices for this user's bedroom and present numbered list
@@ -333,6 +388,53 @@ class TelegramBot:
         self.user_states[chat_ID].pop("devices_list", None)
         self._reset_to_room_choice(chat_ID)
 
+    def _handle_waiting_add_device_name(self, chat_ID, message):
+        name = message.strip()
+        if not name:
+            self.bot.sendMessage(chat_ID, "Please send a non-empty name for the device.")
+            return
+        if len(name) > 64:
+            self.bot.sendMessage(chat_ID, "Please choose a shorter name (max 64 characters).")
+            return
+
+        pending_type = self.user_states.get(chat_ID, {}).get("pending_device_type")
+        if not pending_type:
+            self.bot.sendMessage(chat_ID, "Device type not selected. Please start again from Manage devices.")
+            self._reset_to_room_choice(chat_ID)
+            return
+
+        bedroom_id = self.user_states.get(chat_ID, {}).get("bedroom_id")
+        if not bedroom_id:
+            self.bot.sendMessage(chat_ID, "You don't have a room associated. Please run /start to register or create a room first.")
+            self._reset_to_room_choice(chat_ID)
+            return
+
+        payload = {
+            "device_name": name,
+            "device_type": pending_type,
+            "bedroom_id": bedroom_id,
+            "value": 0
+        }
+
+        self.bot.sendMessage(chat_ID, f"🔧 Creating {pending_type} device named '{name}'...")
+        res = self._request_catalog("post", "addDevice", chat_ID, json=payload)
+        if res and res.get("status") == "success":
+            device_id = res.get("device_id") or res.get("id") or "(unknown)"
+            self.bot.sendMessage(chat_ID, f"✅ Device created: {name} (id: {device_id})")
+        else:
+            # try to show error message if available
+            err = res.get("error") if isinstance(res, dict) else None
+            if err:
+                self.bot.sendMessage(chat_ID, f"❌ Could not create device: {err}")
+            else:
+                self.bot.sendMessage(chat_ID, "❌ Could not create device. Please try again later.")
+
+        # cleanup pending fields and return to registered menu
+        self.user_states[chat_ID]["pending_device_type"] = None
+        self._set_state(chat_ID, "registered",
+                        bedroom_id=bedroom_id, username=self.user_states[chat_ID].get("username"))
+        self._send_registered_user_options(chat_ID)
+
     # --- small helpers ---
 
     def _set_state(self, chat_ID, state, **kwargs):
@@ -346,7 +448,6 @@ class TelegramBot:
         # rely on username presence instead of a separate boolean
         self._set_state(chat_ID, "waiting_room_choice",
                         username=username)
-        self._send_room_options(chat_ID)
 
     def _finalize_registration(self, chat_ID, username, room_id, joined=False):
         greeting = "Good morning" if 6 <= datetime.now().hour < 18 else "Good evening"
@@ -381,9 +482,17 @@ class TelegramBot:
             self.bot.sendMessage(chat_ID, "Unexpected error occurred.")
         return None
 
-    def _create_bedroom(self, chat_ID, room_name, password):
+    def _create_bedroom(self, chat_ID, room_name, bedtime=None, wakeup=None, desired_temperature=None):
+        # create room; include bedtime/wakeup/desired_temperature if provided
+        payload = {
+            "room_name": room_name,
+            # catalog/db expects these fields not null; if not provided use sensible defaults
+            "bedtime": bedtime or "23:00:00",
+            "wakeup": wakeup or "07:00:00",
+            "desired_temperature": desired_temperature if desired_temperature is not None else 22.0,
+        }
         data = self._request_catalog("post", "addBedroom", chat_ID,
-                                     json={"room_name": room_name, "password": password})
+                                     json=payload)
         if data:
             room_id = data.get("bedroom_id")
             self.bot.sendMessage(chat_ID, f"✅ Room '{room_name}' created — ID: {room_id}")
@@ -433,9 +542,9 @@ class TelegramBot:
                                 bedroom_id=bedroom_id, username=username)
                 self.bot.sendMessage(chat_ID, f"Welcome back, {username} from room {bedroom_id}!")
             elif username:
-                self._set_state(chat_ID, "waiting_room_choice",
-                                username=username)
-                self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You don't have a room yet.")
+                # username exists but no room: start interactive room creation
+                self._set_state(chat_ID, "waiting_room_name", username=username)
+                self.bot.sendMessage(chat_ID, f"Welcome back, {username}! Let's create your room. What's the room name? Send 'skip' to use a default name.")
 
         except requests.exceptions.Timeout:
             self.bot.sendMessage(chat_ID, "Connection timeout with Catalog. Please try again.")
@@ -525,3 +634,4 @@ if __name__ == "__main__":
 
     cherrypy.engine.start()
     cherrypy.engine.block()
+
