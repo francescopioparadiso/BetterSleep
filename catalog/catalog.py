@@ -94,6 +94,7 @@ class Catalog:
             "addDevice": self._post_add_device,
             "addUser": self._post_add_user,
             "addBedroom": self._post_add_bedroom,
+            "associateUserToBedroom": self._post_associate_user_to_bedroom,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -134,14 +135,42 @@ class Catalog:
     def _post_add_bedroom(self):
         """Add a new bedroom to the catalog."""
         new_bedroom = self._load_json_body()
-        # password is now optional; provide defaults if missing
+        # create bedroom without passwords — passwords removed from schema
         room_name = new_bedroom.get('room_name', 'Bedroom')
-        password = new_bedroom.get('password', '')
+        bedtime = new_bedroom.get('bedtime')
+        wakeup = new_bedroom.get('wakeup')
+        desired_temperature = new_bedroom.get('desired_temperature')
 
-        bedroom_id = self.db.insert_bedroom({'room_name': room_name, 'password': password})
+        bedroom_id = self.db.insert_bedroom({
+            'room_name': room_name,
+            'bedtime': bedtime,
+            'wakeup': wakeup,
+            'desired_temperature': desired_temperature,
+        })
         if bedroom_id:
             return json.dumps({"status": "success", "message": "Bedroom Added", "bedroom_id": bedroom_id})
         raise cherrypy.HTTPError(409, "Failed to create bedroom")
+
+    def _post_associate_user_to_bedroom(self):
+        """Associate an existing user (by telegram_chat_id) to an existing bedroom_id.
+
+        Expects JSON: {"telegram_chat_id": <id>, "bedroom_id": <id>}
+        Uses DB adaptor method `associete_user_to_bedroom` (atomic, enforces 0..1 constraint).
+        """
+        payload = self._load_json_body()
+        require_fields(payload, ['telegram_chat_id', 'bedroom_id'])
+
+        try:
+            success = self.db.associete_user_to_bedroom(payload)
+            if success:
+                return json.dumps({"status": "success", "message": "User associated to bedroom"})
+            else:
+                raise cherrypy.HTTPError(409, "Failed to associate user to bedroom")
+        except cherrypy.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"Error associating user to bedroom: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
 
     # --------------------------------------------------------
     # PUT METHOD - Update existing resources

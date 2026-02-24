@@ -142,12 +142,12 @@ class TelegramBot:
             "view_sensor_data": self._cb_view_sensor_data,
             "view_sleep_quality": self._cb_view_sleep_quality,
             "main_menu": self._cb_main_menu,
-            "remove_device": self.cb_remove_device,
+            "remove_device": self._cb_remove_device,
             "list_devices": self._cb_list_devices,
             "add_device" : self._send_type_of_device_options,
-            "add_device_light": lambda cid: self.cb_add_device(cid, type="light"),
-            "add_device_heater": lambda cid: self.cb_add_device(cid, type="heater"),
-            "add_device_fan": lambda cid: self.cb_add_device(cid, type="fan"),
+            "add_device_light": lambda chat_ID: self._cb_add_device(chat_ID, type="light"),
+            "add_device_heater": lambda chat_ID: self._cb_add_device(chat_ID, type="heater"),
+            "add_device_fan": lambda chat_ID: self._cb_add_device(chat_ID, type="fan"),
         }
 
         handler = handlers.get(query_data)
@@ -197,7 +197,7 @@ class TelegramBot:
     def _cb_main_menu(self, chat_ID):
         self._send_registered_user_options(chat_ID)
 
-    def cb_add_device(self, chat_ID,type=None):
+    def _cb_add_device(self, chat_ID, type=None):
         # store the chosen device type in the user's temporary state and ask only for the name
         if type not in ("light", "heater", "fan"):
             self.bot.sendMessage(chat_ID, "Unsupported device type. Please choose one of the available types.")
@@ -209,7 +209,7 @@ class TelegramBot:
 
 
 
-    def cb_remove_device(self, chat_ID):
+    def _cb_remove_device(self, chat_ID):
         # start the numbered remove flow
         self._begin_remove_device(chat_ID)
 
@@ -282,12 +282,20 @@ class TelegramBot:
 
     def _handle_waiting_username(self, chat_ID, message):
         username = message.strip()
+        # Check locally via catalog if username exists
         if self._check_username_exists(chat_ID, username):
             self.bot.sendMessage(chat_ID, "Please choose a different username:")
             return
 
-        # Start interactive room creation: ask for the room name first, then bedtime/wakeup/temperature.
-        # Store username and move to the `waiting_room_name` state so the bot will ask for bedtime/wakeup/temp afterwards.
+        # Create the user in the catalog first (no bedroom yet). This ensures the
+        # DB has the user row before creating & associating a bedroom.
+        payload = {"username": username, "telegram_chat_id": chat_ID, "bedroom_id": None}
+        res = self.catalog.post("addUser", json=payload)
+        if not res:
+            self.bot.sendMessage(chat_ID, "Could not create user at the moment. Please try again later.")
+            return
+
+        # store username and prompt for room creation
         self._set_state(chat_ID, "waiting_room_name", username=username)
         self.bot.sendMessage(chat_ID, f"🎉 Great choice, {username}! Let's set up your personal room. What's the room name? Send 'skip' to use the default name.")
 
@@ -362,11 +370,25 @@ class TelegramBot:
         self.bot.sendMessage(chat_ID, f"🔨 Creating room '{room_name}' with bedtime {bedtime}, wakeup {wakeup} and desired temp {desired_temp}°C...")
         room_id = self._create_bedroom(chat_ID, room_name, bedtime=bedtime, wakeup=wakeup, desired_temperature=desired_temp)
         username = self.user_states[chat_ID].get("username")
-        if room_id and self._add_user(chat_ID, username, room_id):
+        if not room_id:
+            self.bot.sendMessage(chat_ID, "Couldn't create the room right now. Let's try again. What's the room name? Send 'skip' to use the default name.")
+            self._set_state(chat_ID, "waiting_room_name", username=username)
+            return
+
+        # Associate the previously created user to the new bedroom atomically
+        assoc_payload = {"telegram_chat_id": chat_ID, "bedroom_id": room_id}
+        assoc_res = self.catalog.post("associateUserToBedroom", json=assoc_payload)
+        if assoc_res and assoc_res.get("status") == "success":
             self._finalize_registration(chat_ID, username, room_id)
         else:
-            self.bot.sendMessage(chat_ID, "Couldn't create the room right now. Please try again later.")
-            self._set_state(chat_ID, "waiting_room_choice", username=username)
+            # association failed - remove bedroom (best-effort) and ask to retry
+            self.bot.sendMessage(chat_ID, "Could not associate the room to your user. Please try again or contact support.")
+            # best-effort cleanup
+            try:
+                self.catalog.delete("removeRoom", params={"bedroom_id": room_id})
+            except Exception:
+                pass
+            self._set_state(chat_ID, "waiting_room_name", username=username)
 
     def _handle_delete_room(self, chat_ID, message):
         if message.lower() != "yes":
@@ -461,9 +483,21 @@ class TelegramBot:
         self.user_states[chat_ID] = entry
 
     def _reset_to_room_choice(self, chat_ID):
+
         username = self.user_states[chat_ID].get("username")
-        self._set_state(chat_ID, "waiting_room_choice",
-                        username=username)
+        bedroom_id = self.user_states[chat_ID].get("bedroom_id")
+        if username and bedroom_id:
+            # User fully registered with a bedroom
+            self._set_state(chat_ID, "registered", username=username, bedroom_id=bedroom_id)
+            self._send_registered_user_options(chat_ID)
+        elif username and not bedroom_id:
+            # User has username but no bedroom yet
+            self.bot.sendMessage(chat_ID, "You don't have a room associated yet. Let's create one!")
+            self.bot.sendMessage(chat_ID, "Choose a name for your room (e.g. 'Bedroom') or send 'skip' to use the default name.")
+            self._set_state(chat_ID, "waiting_room_name", username=username, bedroom_id=None)
+        else:
+             self._set_state(chat_ID, None)
+             self.bot.sendMessage(chat_ID, "Please use /start to begin.")
 
     def _begin_remove_device(self, chat_ID):
         devices, error = self.get_devices_for_user(chat_ID)
@@ -568,10 +602,13 @@ class TelegramBot:
                                 bedroom_id=bedroom_id, username=username)
                 self.bot.sendMessage(chat_ID, f"Welcome back, {username} from room {bedroom_id}!")
             elif username:
-                # username exists but no room: start interactive room creation
+                # username exists but no room: show options to create a room
+                self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You don't have a room yet.")
+                self.bot.sendMessage(chat_ID, "Let's create your personal room! Choose a name for your room (e.g. 'Bedroom') or send 'skip' to use the default name.")
                 self._set_state(chat_ID, "waiting_room_name", username=username)
-                self.bot.sendMessage(chat_ID, f"Welcome back, {username}! Let's create your room. What's the room name? Send 'skip' to use a default name.")
-
+            else:
+                # no meaningful session data; treat as new user
+                return
         except Exception as e:
             logger.error(f"Unexpected error restoring session: {e}")
             self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
