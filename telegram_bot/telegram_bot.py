@@ -171,6 +171,15 @@ class TelegramBot:
 
     def _cb_manage_settings(self, chat_ID):
         # Open settings menu (room settings + device management)
+        # attempt to refresh bedroom info; catalog can resolve bedroom from telegram_chat_id
+        self._get_bedroom_info(chat_ID, self.user_states[chat_ID].get("bedroom_id"))
+
+        self.bot.sendMessage(chat_ID, "⚙️ Room settings options:")
+
+        self.bot.sendMessage(chat_ID, f"Room name: {self.user_states[chat_ID].get('new_room_name') or 'N/A'}\n"
+                                        f"Bedtime: {self.user_states[chat_ID].get('bedtime') or 'N/A'}\n"
+                                        f"Wakeup: {self.user_states[chat_ID].get('wakeup') or 'N/A'}\n"
+                                        f"Desired temperature: {self.user_states[chat_ID].get('desired_temperature') or 'N/A'}°C")
         self._send_room_settings_options(chat_ID)
 
     def _cb_manage_devices(self, chat_ID):
@@ -491,10 +500,10 @@ class TelegramBot:
             self._set_state(chat_ID, "registered", username=username, bedroom_id=bedroom_id)
             self._send_registered_user_options(chat_ID)
         elif username and not bedroom_id:
-            # User has username but no bedroom yet
-            self.bot.sendMessage(chat_ID, "You don't have a room associated yet. Let's create one!")
-            self.bot.sendMessage(chat_ID, "Choose a name for your room (e.g. 'Bedroom') or send 'skip' to use the default name.")
-            self._set_state(chat_ID, "waiting_room_name", username=username, bedroom_id=None)
+            # User has username but no bedroom: show options to create a room
+            self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You don't have a room yet.")
+            self.bot.sendMessage(chat_ID, "Let's create your personal room! Choose a name for your room (e.g. 'Bedroom') or send 'skip' to use the default name.")
+            self._set_state(chat_ID, "waiting_room_name", username=username)
         else:
              self._set_state(chat_ID, None)
              self.bot.sendMessage(chat_ID, "Please use /start to begin.")
@@ -586,6 +595,36 @@ class TelegramBot:
     def _get_user_session(self, chat_ID):
         return self.catalog.get("getUserSession", params={"telegram_chat_id": chat_ID})
 
+    def _get_bedroom_info(self, chat_ID, bedroom_id=None):
+        """Fetch bedroom info from catalog. If bedroom_id is None, catalog will resolve it using telegram_chat_id."""
+        params = {"telegram_chat_id": chat_ID}
+        if bedroom_id:
+            params["bedroom_id"] = bedroom_id
+
+        bedroom_info = None
+        try:
+            bedroom_info = self.catalog.get("getBedroomInfo", params=params)
+        except Exception as e:
+            logger.error(f"Exception while fetching bedroom info: {e}")
+
+        # catalog now returns flat keys on success
+        if bedroom_info and bedroom_info.get("status") == "success":
+            # update local state with returned fields
+            self.user_states[chat_ID]["new_room_name"] = bedroom_info.get("room_name")
+            self.user_states[chat_ID]["bedtime"] = bedroom_info.get("bedtime")
+            self.user_states[chat_ID]["wakeup"] = bedroom_info.get("wakeup")
+            self.user_states[chat_ID]["desired_temperature"] = bedroom_info.get("desired_temperature")
+            # also store bedroom_id if present
+            if bedroom_info.get("bedroom_id"):
+                self.user_states[chat_ID]["bedroom_id"] = bedroom_info.get("bedroom_id")
+        else:
+            err = None
+            if isinstance(bedroom_info, dict):
+                err = bedroom_info.get('error')
+            logger.error(f"Error fetching bedroom info for bedroom_id {bedroom_id}: {err if err else 'No response or error'}")
+            # don't force the user to restart; just inform and allow creating a room if they want
+            self.bot.sendMessage(chat_ID, "Could not retrieve room information. Some details may be missing.")
+
     def _handle_restore_user_session(self, chat_ID):
         try:
             data = self.catalog.get("getUserSession", params={"telegram_chat_id": chat_ID})
@@ -612,7 +651,6 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Unexpected error restoring session: {e}")
             self.bot.sendMessage(chat_ID, "Unexpected error. Please try again.")
-
 
 
 

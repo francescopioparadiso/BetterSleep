@@ -155,13 +155,14 @@ class Catalog:
         """Associate an existing user (by telegram_chat_id) to an existing bedroom_id.
 
         Expects JSON: {"telegram_chat_id": <id>, "bedroom_id": <id>}
-        Uses DB adaptor method `associete_user_to_bedroom` (atomic, enforces 0..1 constraint).
+        Uses DB adaptor method `associate_user_to_bedroom` (atomic, enforces 0..1 constraint).
         """
         payload = self._load_json_body()
         require_fields(payload, ['telegram_chat_id', 'bedroom_id'])
 
         try:
-            success = self.db.associete_user_to_bedroom(payload)
+            # DB method renamed to English spelling
+            success = self.db.associate_user_to_bedroom(payload)
             if success:
                 return json.dumps({"status": "success", "message": "User associated to bedroom"})
             else:
@@ -300,6 +301,7 @@ class Catalog:
             "checkUsername": self._get_check_username,
             "getDevices": self._get_devices,
             "getUserSession": self._get_user_session_from_chat_id,
+            "getBedroomInfo": self.get_bedroom_info,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -330,6 +332,59 @@ class Catalog:
             return json.dumps({"status": "success", "exists": exists})
         except Exception as e:
             logger.error(f"Error checking username: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+    def get_bedroom_info(self, params):
+        """Get information about a bedroom.
+
+        Accepts either:
+        - bedroom_id and telegram_chat_id
+        - or only telegram_chat_id (in which case the user's associated bedroom is resolved)
+
+        Returns top-level keys: room_name, bedtime, wakeup, desired_temperature.
+        """
+        bedroom_id = params.get('bedroom_id')
+        chat_id = params.get('telegram_chat_id')
+
+        # If bedroom_id missing but telegram_chat_id provided, try to resolve from user's session
+        if not bedroom_id:
+            if not chat_id:
+                raise cherrypy.HTTPError(400, "Missing 'bedroom_id' or 'telegram_chat_id' parameter")
+            try:
+                usersession = self.db.getUserSession(chat_id)
+                if not usersession or not usersession[1]:
+                    # user exists but no bedroom associated
+                    raise cherrypy.HTTPError(404, "No bedroom associated to this user")
+                bedroom_id = usersession[1]
+            except cherrypy.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"Error resolving bedroom_id from chat_id {chat_id}: {e}")
+                raise cherrypy.HTTPError(500, "Internal Server Error")
+
+        try:
+            # check optional access: if chat_id provided, ensure the user is associated to the bedroom
+            if chat_id and not self.db.check_user_associated_to_bedroom(chat_id, bedroom_id):
+                raise cherrypy.HTTPError(403, "User not associated with this bedroom")
+
+            bedroom_info = self.db.get_bedroom_info(bedroom_id)
+            if bedroom_info:
+                # bedroom_info is a tuple (room_name, Bedtime, Wakeup, Desired_Temperature)
+                room_name, bedtime, wakeup, desired_temperature = bedroom_info
+                return json.dumps({
+                    "status": "success",
+                    "bedroom_id": bedroom_id,
+                    "room_name": room_name,
+                    "bedtime": str(bedtime),
+                    "wakeup": str(wakeup),
+                    "desired_temperature": desired_temperature
+                })
+
+            logger.warning(f"Bedroom {bedroom_id} not found")
+            raise cherrypy.HTTPError(404, "Bedroom not found")
+        except cherrypy.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"Error retrieving bedroom information: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_user_session_from_chat_id(self, params):

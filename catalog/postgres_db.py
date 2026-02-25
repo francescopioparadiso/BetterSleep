@@ -153,14 +153,19 @@ class PostgresDB:
         logger.debug(f"Query result: {result}")
 
         return result is not None
+    def check_user_associated_to_bedroom(self, chat_id,bedroom_id):
+        """Check if a user is associated with a specific bedroom."""
+        query = "SELECT 1 FROM users WHERE telegram_chat_id = %s AND bedroom_id = %s"
+        result = self._execute_query(query, (chat_id, bedroom_id), fetch=True, single=True)
+        return result is not None
 
-    def associete_user_to_bedroom(self, u):
-        """Update an existing user in the database."""
+    def associate_user_to_bedroom(self, u):
+        """Associate an existing user to a bedroom (set bedroom_id for a telegram_chat_id)."""
         query = "UPDATE users SET bedroom_id = %s WHERE telegram_chat_id = %s"
         return self._execute_query(query, (u['bedroom_id'], u['telegram_chat_id']))
 
-    def dissociete_user_from_bedroom(self, u):
-        """Update an existing user in the database."""
+    def dissociate_user_from_bedroom(self, u):
+        """Dissociate a user from any bedroom (set bedroom_id NULL for a telegram_chat_id)."""
         query = "UPDATE users SET bedroom_id = NULL WHERE telegram_chat_id = %s"
         return self._execute_query(query, (u['telegram_chat_id'],))
 
@@ -211,3 +216,8 @@ class PostgresDB:
         query = "SELECT device_id, device_name, device_type, value FROM devices WHERE bedroom_id = %s ORDER BY device_id"
         result = self._execute_query(query, (bedroom_id,), fetch=True, single=False)
         return result if result else []
+    def get_bedroom_info(self, bedroom_id):
+        """Return bedroom info (room_name, Bedtime, Wakeup, Desired_Temperature) by bedroom ID."""
+        query = "SELECT room_name, Bedtime, Wakeup, Desired_Temperature FROM bedrooms WHERE bedroom_id = %s"
+        result = self._execute_query(query, (bedroom_id,), fetch=True, single=True)
+        return result if result else None
