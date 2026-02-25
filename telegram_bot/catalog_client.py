@@ -61,6 +61,7 @@ class CatalogClient:
             logger.info('Successfully registered with Catalog')
         else:
             logger.error('Registration failed: request returned None')
+            return
 
     def update_service(self):
         """Logic to update this service's info to the Catalog."""
