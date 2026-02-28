@@ -128,6 +128,10 @@ class TelegramBot:
             "waiting_delete_confirmation":  self.state_handlers.handle_delete_room,
             "waiting_add_device_name":      self.state_handlers.handle_waiting_add_device_name,
             "waiting_remove_device_choice": self.state_handlers.handle_waiting_remove_device_choice,
+            "waiting_change_room_name":     self.state_handlers.handle_waiting_change_room_name,
+            "waiting_change_bedtime":       self.state_handlers.handle_waiting_change_bedtime,
+            "waiting_change_wakeup":        self.state_handlers.handle_waiting_change_wakeup,
+            "waiting_change_temp":          self.state_handlers.handle_waiting_change_temp,
         }
         handler = handlers.get(state)
         if handler:
@@ -153,6 +157,10 @@ class TelegramBot:
             "add_device_light":  lambda cid: self.callback_handlers.handle_add_device(cid, device_type="light"),
             "add_device_heater": lambda cid: self.callback_handlers.handle_add_device(cid, device_type="heater"),
             "add_device_fan":    lambda cid: self.callback_handlers.handle_add_device(cid, device_type="fan"),
+            "change_room_name":  self.callback_handlers.handle_change_room_name,
+            "change_bedtime":    self.callback_handlers.handle_change_bedtime,
+            "change_wakeup":     self.callback_handlers.handle_change_wakeup,
+            "change_temp":       self.callback_handlers.handle_change_temp,
         }
 
         handler = handlers.get(query_data)
@@ -199,6 +207,10 @@ class TelegramBot:
     def send_room_settings_options(self, chat_ID):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🗑️ Delete room",         callback_data="delete_room")],
+            [InlineKeyboardButton(text="⚙️ Change room name",   callback_data="change_room_name")],
+            [InlineKeyboardButton(text="⏰ Change bedtime",      callback_data="change_bedtime")],
+            [InlineKeyboardButton(text="⏰ Change wake-up time", callback_data="change_wakeup")],
+            [InlineKeyboardButton(text="🌡️ Change desired temp", callback_data="change_temp")],
             [InlineKeyboardButton(text="⬅️ Back to main menu",   callback_data="main_menu")],
         ])
         self.bot.sendMessage(chat_ID, "Room settings — choose an option:", reply_markup=keyboard)
@@ -239,7 +251,6 @@ class TelegramBot:
             self.reset_bedroom_info(chat_ID)
             self.set_state(chat_ID, "waiting_room_name")
         else:
-            # No user data even after restore - need to register from scratch
             self.set_state(chat_ID, None)
             self.bot.sendMessage(chat_ID, "Please send /start to begin.")
 
@@ -270,11 +281,17 @@ class TelegramBot:
         if not bedroom_id:
             return None, None  # message already sent by require_bedroom
 
-        res = self.catalog.get("getDevices", params={"bedroom_id": bedroom_id})
-        if not res or res.get("status") != "success":
+        data, status, error = self.catalog.get("getDevices", params={"bedroom_id": bedroom_id})
+
+        if error:
+            if status == 404:
+                return None, "❌ Bedroom not found."
+            return None, f"❌ Could not retrieve devices: {error}"
+
+        if not data or data.get("status") != "success":
             return None, "Could not retrieve devices."
 
-        devices = res.get("devices", [])
+        devices = data.get("devices", [])
         if not devices:
             return None, "No devices found in your room."
 
@@ -300,7 +317,10 @@ class TelegramBot:
             "wakeup":              wakeup  or "07:00:00",
             "desired_temperature": desired_temperature if desired_temperature is not None else 22.0,
         }
-        data = self.catalog.post("addBedroom", json=payload)
+        data, status, error = self.catalog.post("addBedroom", json=payload)
+        if error:
+            self.bot.sendMessage(chat_ID, f"❌ Could not create bedroom: {error}")
+            return None
         if data:
             room_id = data.get("bedroom_id")
             self.bot.sendMessage(chat_ID, f"✅ Room '{room_name}' created! ID: {room_id} — you're all set.")
@@ -308,14 +328,17 @@ class TelegramBot:
         return None
 
     def remove_bedroom(self, bedroom_id):
-        res = self.catalog.delete("removeRoom", params={"bedroom_id": bedroom_id})
-        if res is not None:
-            return True
-        logger.error(f"Error removing bedroom {bedroom_id}")
-        return False
+        data, status, error = self.catalog.delete("removeRoom", params={"bedroom_id": bedroom_id})
+        if error:
+            logger.error(f"Error removing bedroom {bedroom_id} ({status}): {error}")
+            return False
+        return True
 
     def check_username_exists(self, chat_ID, username):
-        data = self.catalog.get("checkUsername", params={"username": username})
+        data, status, error = self.catalog.get("checkUsername", params={"username": username})
+        if error:
+            logger.error(f"Error checking username ({status}): {error}")
+            return False
         if data and data.get("exists"):
             self.bot.sendMessage(chat_ID, f"Username '{username}' already exists. Please choose another.")
             return True
@@ -328,11 +351,15 @@ class TelegramBot:
         if bedroom_id:
             params["bedroom_id"] = bedroom_id
 
-        try:
-            info = self.catalog.get("getBedroomInfo", params=params)
-        except Exception as e:
-            logger.error(f"Exception fetching bedroom info: {e}")
-            info = None
+        info, status, error = self.catalog.get("getBedroomInfo", params=params)
+
+        if error:
+            logger.error(f"Error fetching bedroom info for {bedroom_id} ({status}): {error}")
+            if status == 404:
+                self.bot.sendMessage(chat_ID, "❌ Room not found. It may have been deleted.")
+            else:
+                self.bot.sendMessage(chat_ID, "⚠️ Could not retrieve room information right now. Some details may be missing.")
+            return
 
         if info and info.get("status") == "success":
             self.set_bedroom_info(
@@ -345,8 +372,7 @@ class TelegramBot:
             if info.get("bedroom_id"):
                 self.set_state(chat_ID, self.get(chat_ID, "state"), bedroom_id=info["bedroom_id"])
         else:
-            err = info.get('error') if isinstance(info, dict) else None
-            logger.error(f"Error fetching bedroom info for {bedroom_id}: {err or 'no response'}")
+            logger.error(f"Error fetching bedroom info for {bedroom_id}: invalid response")
             self.bot.sendMessage(chat_ID, "⚠️ Could not retrieve room information right now. Some details may be missing.")
 
     def restore_user_session(self, chat_ID, silent=False):
@@ -357,27 +383,32 @@ class TelegramBot:
             chat_ID: The Telegram chat ID
             silent: If True, only restore data without sending welcome messages
         """
-        try:
-            data = self.catalog.get("getUserSession", params={"telegram_chat_id": chat_ID})
-            if not data:
-                return
+        data, status, error = self.catalog.get("getUserSession", params={"telegram_chat_id": chat_ID})
 
-            username   = data.get("username")
-            bedroom_id = data.get("bedroom_id")
+        if error:
+            if status == 404:
+                logger.debug(f"No session found for chat_id {chat_ID}")
+            else:
+                logger.error(f"Error restoring session ({status}): {error}")
+                if not silent:
+                    self.bot.sendMessage(chat_ID, "⚠️ Error retrieving your session. Please try again.")
+            return
 
-            if username and bedroom_id:
-                self.set_state(chat_ID, "registered", username=username, bedroom_id=bedroom_id)
-                if not silent:
-                    self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You're in room {bedroom_id}. 👋")
-            elif username:
-                self.set_state(chat_ID, "waiting_room_name", username=username)
-                if not silent:
-                    self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You don't have a room yet. Let's create one! 🏠")
-                    self.bot.sendMessage(chat_ID, "What's the room name? Send 'skip' for the default.")
-        except Exception as e:
-            logger.error(f"Unexpected error restoring session: {e}")
+        if not data:
+            return
+
+        username   = data.get("username")
+        bedroom_id = data.get("bedroom_id")
+
+        if username and bedroom_id:
+            self.set_state(chat_ID, "registered", username=username, bedroom_id=bedroom_id)
             if not silent:
-                self.bot.sendMessage(chat_ID, "⚠️ Unexpected error. Please try again.")
+                self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You're in room {bedroom_id}. 👋")
+        elif username:
+            self.set_state(chat_ID, "waiting_room_name", username=username)
+            if not silent:
+                self.bot.sendMessage(chat_ID, f"Welcome back, {username}! You don't have a room yet. Let's create one! 🏠")
+                self.bot.sendMessage(chat_ID, "What's the room name? Send 'skip' for the default.")
 
 
 

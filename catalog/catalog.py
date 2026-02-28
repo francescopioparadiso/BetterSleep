@@ -185,7 +185,7 @@ class Catalog:
             "updateService": self._put_update_service,
             "updateServiceLastUpdate": self._put_update_service_last_update,
             "updateDevice": self._put_update_device,
-            # join-related endpoints removed
+            "updateBedroomSettings": self._put_update_bedroom_settings,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -223,6 +223,35 @@ class Catalog:
         if success:
             return json.dumps({"status": "success", "message": "Device updated"})
         raise cherrypy.HTTPError(404, "The Device ID does not exist")
+
+    def _put_update_bedroom_settings(self):
+        """Update bedroom settings (room_name, bedtime, wakeup, desired_temperature).
+
+        Expects JSON with bedroom_id and at least one field to update.
+        """
+        payload = self._load_json_body()
+        require_fields(payload, ['bedroom_id'])
+
+        bedroom_id = payload.get('bedroom_id')
+        updates = {}
+
+        # Collect fields to update
+        if 'room_name' in payload:
+            updates['room_name'] = payload['room_name']
+        if 'bedtime' in payload:
+            updates['bedtime'] = payload['bedtime']
+        if 'wakeup' in payload:
+            updates['wakeup'] = payload['wakeup']
+        if 'desired_temperature' in payload:
+            updates['desired_temperature'] = payload['desired_temperature']
+
+        if not updates:
+            raise cherrypy.HTTPError(400, "No fields to update")
+
+        success = self.db.update_bedroom_settings(bedroom_id, updates)
+        if success:
+            return json.dumps({"status": "success", "message": "Bedroom settings updated"})
+        raise cherrypy.HTTPError(404, "Bedroom not found or update failed")
 
     # --------------------------------------------------------
     # DELETE METHOD - Remove resources
@@ -368,7 +397,7 @@ class Catalog:
 
             bedroom_info = self.db.get_bedroom_info(bedroom_id)
             if bedroom_info:
-                # bedroom_info is a tuple (room_name, Bedtime, Wakeup, Desired_Temperature)
+                # bedroom_info is a tuple (room_name, bedtime, wakeup, desired_temperature)
                 room_name, bedtime, wakeup, desired_temperature = bedroom_info
                 return json.dumps({
                     "status": "success",

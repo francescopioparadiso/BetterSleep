@@ -61,3 +61,28 @@ class CallbackHandlers:
 
     def handle_remove_device(self, chat_ID):
         self._bot.begin_remove_device(chat_ID)
+
+    def handle_change_room_name(self, chat_ID):
+        if not self._bot.require_bedroom(chat_ID):
+            return
+        self._bot.bot.sendMessage(chat_ID, "📝 What's the new room name?")
+        self._bot.set_state(chat_ID, "waiting_change_room_name")
+
+    def handle_change_bedtime(self, chat_ID):
+        if not self._bot.require_bedroom(chat_ID):
+            return
+        self._bot.bot.sendMessage(chat_ID, "🕰️ What's your new bedtime? Reply in HH:MM (24h), e.g. 23:00")
+        self._bot.set_state(chat_ID, "waiting_change_bedtime")
+
+    def handle_change_wakeup(self, chat_ID):
+        if not self._bot.require_bedroom(chat_ID):
+            return
+        self._bot.bot.sendMessage(chat_ID, "⏰ What's your new wake-up time? Reply in HH:MM (24h), e.g. 07:00")
+        self._bot.set_state(chat_ID, "waiting_change_wakeup")
+
+    def handle_change_temp(self, chat_ID):
+        if not self._bot.require_bedroom(chat_ID):
+            return
+        self._bot.bot.sendMessage(chat_ID, "🌡️ What's your new desired temperature? Send a number, e.g. 21.5")
+        self._bot.set_state(chat_ID, "waiting_change_temp")
+

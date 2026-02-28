@@ -176,18 +176,16 @@ class PostgresDB:
     # --- BEDROOMS & CHECKS ---
     def insert_bedroom(self, b):
         """Insert a new bedroom and return its ID."""
-        # Provide default values for Bedtime, Wakeup and Desired_Temperature
+        # Provide default values for bedtime, wakeup and desired_temperature
         query = """
-                INSERT INTO bedrooms (room_name, Bedtime, Wakeup, Desired_Temperature)
+                INSERT INTO bedrooms (room_name, bedtime, wakeup, desired_temperature)
                 VALUES (%s, %s, %s, %s)
                 RETURNING bedroom_id
                 """
         bedtime = b.get('bedtime', '22:00:00')
         wakeup = b.get('wakeup', '07:00:00')
         desired_temp = b.get('desired_temperature', 21.0)
-        # _execute deve restituire la riga con RETURNING
         result = self._execute_query(query, (b.get('room_name', 'Bedroom'), bedtime, wakeup, desired_temp), fetch=True, single=True)
-        # result dovrebbe essere qualcosa come [(id,)]
         return result[0] if result else None
 
     def delete_bedroom(self, room_id):
@@ -217,7 +215,41 @@ class PostgresDB:
         result = self._execute_query(query, (bedroom_id,), fetch=True, single=False)
         return result if result else []
     def get_bedroom_info(self, bedroom_id):
-        """Return bedroom info (room_name, Bedtime, Wakeup, Desired_Temperature) by bedroom ID."""
-        query = "SELECT room_name, Bedtime, Wakeup, Desired_Temperature FROM bedrooms WHERE bedroom_id = %s"
+        """Return bedroom info (room_name, bedtime, wakeup, desired_temperature) by bedroom ID."""
+        query = "SELECT room_name, bedtime, wakeup, desired_temperature FROM bedrooms WHERE bedroom_id = %s"
         result = self._execute_query(query, (bedroom_id,), fetch=True, single=True)
         return result if result else None
+
+    def update_bedroom_settings(self, bedroom_id, updates):
+        """Update bedroom settings dynamically based on the provided updates dict.
+
+        Args:
+            bedroom_id: The bedroom ID to update
+            updates: Dictionary with keys like 'room_name', 'bedtime', 'wakeup', 'desired_temperature'
+
+        Returns:
+            True if update was successful, False otherwise
+        """
+        if not updates:
+            return False
+
+        # Whitelist of allowed fields (must match database column names exactly)
+        allowed_fields = {'room_name', 'bedtime', 'wakeup', 'desired_temperature'}
+
+        # Build SET clause dynamically
+        set_clauses = []
+        values = []
+        for field, value in updates.items():
+            if field in allowed_fields:
+                set_clauses.append(f"{field} = %s")
+                values.append(value)
+
+        if not set_clauses:
+            return False
+
+        # Add bedroom_id to values for WHERE clause
+        values.append(bedroom_id)
+
+        query = f"UPDATE bedrooms SET {', '.join(set_clauses)} WHERE bedroom_id = %s"
+        return self._execute_query(query, tuple(values))
+

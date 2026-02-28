@@ -7,33 +7,55 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+
 class CatalogClient:
-    def __init__(self,catalog_url,service_info,remove_interval=10, timeout=5):
+    def __init__(self, catalog_url, service_info, remove_interval=10, timeout=5):
         self.timeout = timeout
         self._stop_event = threading.Event()
         self._worker = None
         self.catalog_url = catalog_url
         self.service_info = service_info
         self.remove_interval = remove_interval
+
     def request(self, method, endpoint, **kwargs):
+        """Make a request to the catalog and return (data, status_code, error_message).
+
+        Returns:
+            tuple: (data_dict, status_code, error_message)
+                - data_dict: Response JSON as dict, or None if error
+                - status_code: HTTP status code (int), or None if timeout/connection error
+                - error_message: Error message string, or None if success
+        """
         try:
             call = getattr(requests, method.lower())
             res = call(f"{self.catalog_url}/{endpoint}", timeout=self.timeout, **kwargs)
             res.raise_for_status()
-            # Some endpoints may return no body (204) or non-JSON; handle gracefully
+
+            # Success case
             if res.content:
                 try:
-                    return res.json()
+                    return res.json(), res.status_code, None
                 except ValueError:
-                    return {}
-            return {}
-        except requests.exceptions.Timeout:
-            logger.warning(f"Catalog timeout {method} {endpoint}")
+                    return {}, res.status_code, None
+            return {}, res.status_code, None
+
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Catalog timeout {method} {endpoint}: {str(e)}")
+            return None, None, "Request timed out"
+
         except requests.exceptions.HTTPError as e:
-            logger.error(f"Catalog HTTP error {method} {endpoint}: {e}")
+            status_code = e.response.status_code if e.response is not None else None
+            try:
+                error_detail = e.response.json().get('error', str(e)) if e.response is not None else str(e)
+            except:
+                error_detail = str(e)
+
+            logger.error(f"Catalog HTTP error {status_code} {method} {endpoint}: {error_detail}")
+            return None, status_code, error_detail
+
         except Exception as e:
-            logger.error(f"Catalog unexpected error {method} {endpoint}: {e}")
-        return None
+            logger.error(f"Catalog unexpected error {method} {endpoint}: {type(e).__name__} - {str(e)}")
+            return None, None, f"Unexpected error: {str(e)}"
 
     def get(self, endpoint, **kwargs):
         return self.request('get', endpoint, **kwargs)
@@ -55,13 +77,11 @@ class CatalogClient:
             "type": self.service_info.get('type', 'Analytics'),
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        # Use the client wrapper so we get consistent timeout/error handling
-        response = self.post('addService', json=service)
-        if response is not None:
-            logger.info('Successfully registered with Catalog')
+        data, status, error = self.post('addService', json=service)
+        if error:
+            logger.error(f'Registration failed ({status}): {error}')
         else:
-            logger.error('Registration failed: request returned None')
-            return
+            logger.info('Successfully registered with Catalog')
 
     def update_service(self):
         """Logic to update this service's info to the Catalog."""
@@ -69,12 +89,11 @@ class CatalogClient:
             "serviceID": self.service_info['serviceID'],
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        # Use the client wrapper so we get consistent timeout/error handling
-        response = self.put('updateServiceLastUpdate', json=service)
-        if response is not None:
-            logger.debug('Successfully updated with Catalog')
+        data, status, error = self.put('updateServiceLastUpdate', json=service)
+        if error:
+            logger.error(f'Update failed ({status}): {error}')
         else:
-            logger.error('Update failed: request returned None')
+            logger.debug('Successfully updated with Catalog')
 
     def unregister_service(self):
         """Logic to unregister this service from the Catalog."""
@@ -109,3 +128,4 @@ class CatalogClient:
         if self._worker is not None:
             self._worker.join(timeout=2)
             self._worker = None
+

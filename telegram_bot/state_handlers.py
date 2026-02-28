@@ -2,8 +2,7 @@ from utils import parse_time
 
 
 class StateHandlers:
-    """Container for state-oriented handlers.
-
+    """
     This class is instantiated with the main TelegramBot instance and
     delegates calls to it for shared operations (catalog calls, sending messages, state helpers).
     """
@@ -23,7 +22,7 @@ class StateHandlers:
             self._bot.send_registered_user_options(chat_ID)
             return
         if state:
-            return  # pending wizard state restored; do nothing
+            return
 
         # fresh user
         self._bot.bot.sendMessage(chat_ID, "👋 Welcome to BetterSleep — your sleep-friendly assistant! Type /help for tips.")
@@ -40,9 +39,9 @@ class StateHandlers:
             return
 
         payload = {"username": username, "telegram_chat_id": chat_ID, "bedroom_id": None}
-        res = self._bot.catalog.post("addUser", json=payload)
-        if not res:
-            self._bot.bot.sendMessage(chat_ID, "❌ Could not create your account right now. Please try again later.")
+        data, status, error = self._bot.catalog.post("addUser", json=payload)
+        if error:
+            self._bot.bot.sendMessage(chat_ID, f"❌ Could not create your account: {error}")
             return
 
         self._bot.set_state(chat_ID, "waiting_room_name", username=username)
@@ -110,11 +109,11 @@ class StateHandlers:
             self._bot.set_state(chat_ID, "waiting_room_name")
             return
 
-        assoc_res = self._bot.catalog.post("associateUserToBedroom", json={"telegram_chat_id": chat_ID, "bedroom_id": room_id})
-        if assoc_res and assoc_res.get("status") == "success":
+        assoc_data, assoc_status, assoc_error = self._bot.catalog.post("associateUserToBedroom", json={"telegram_chat_id": chat_ID, "bedroom_id": room_id})
+        if not assoc_error and assoc_data and assoc_data.get("status") == "success":
             self._bot.finalize_registration(chat_ID, username, room_id)
         else:
-            self._bot.bot.sendMessage(chat_ID, "❌ Could not associate the room to your user. Please try again.")
+            self._bot.bot.sendMessage(chat_ID, f"❌ Could not associate the room to your user: {assoc_error or 'Unknown error'}")
             try:
                 self._bot.catalog.delete("removeRoom", params={"bedroom_id": room_id})
             except Exception:
@@ -131,10 +130,7 @@ class StateHandlers:
         bedroom_id = self._bot.get(chat_ID, "bedroom_id")
         self._bot.remove_bedroom(bedroom_id)
         self._bot.bot.sendMessage(chat_ID, f"🗑️ Room {bedroom_id} deleted.")
-        self._bot.reset_bedroom_info(chat_ID)
-        # Clear all user data - they need to register again
-        self._bot.set_state(chat_ID, None, bedroom_id=None, username=None)
-        self._bot.bot.sendMessage(chat_ID, "Please send /start to register again.")
+        self._bot.ensure_valid_state_and_show_menu(chat_ID)
 
     def handle_waiting_remove_device_choice(self, chat_ID, message):
         if not message.strip().isdigit():
@@ -147,11 +143,11 @@ class StateHandlers:
             return
 
         device_id = devices[idx].get('device_id')
-        res = self._bot.catalog.delete("removeDevice", params={"deviceID": device_id})
-        if res is not None:
-            self._bot.bot.sendMessage(chat_ID, f"✅ Device {device_id} removed.")
+        data, status, error = self._bot.catalog.delete("removeDevice", params={"deviceID": device_id})
+        if error:
+            self._bot.bot.sendMessage(chat_ID, f"❌ Failed to remove device {device_id}: {error}")
         else:
-            self._bot.bot.sendMessage(chat_ID, f"❌ Failed to remove device {device_id}.")
+            self._bot.bot.sendMessage(chat_ID, f"✅ Device {device_id} removed.")
 
         self._bot.set_bedroom_info(chat_ID, devices_list=None)
         self._bot.ensure_valid_state_and_show_menu(chat_ID)
@@ -183,15 +179,99 @@ class StateHandlers:
             "value": 0,
         }
         self._bot.bot.sendMessage(chat_ID, f"🔧 Creating {pending_type} device named '{name}'…")
-        res = self._bot.catalog.post("addDevice", json=payload)
+        data, status, error = self._bot.catalog.post("addDevice", json=payload)
 
-        if res and res.get("status") == "success":
-            device_id = res.get("device_id") or res.get("id") or "(unknown)"
+        if error:
+            self._bot.bot.sendMessage(chat_ID, f"❌ Could not create device: {error}")
+        elif data and data.get("status") == "success":
+            device_id = data.get("device_id") or data.get("id") or "(unknown)"
             self._bot.bot.sendMessage(chat_ID, f"✅ Device created: {name} (id: {device_id}) — added to your room.")
         else:
-            err = res.get("error") if isinstance(res, dict) else None
-            self._bot.bot.sendMessage(chat_ID, f"❌ Could not create device{': ' + err if err else '.'}")
+            self._bot.bot.sendMessage(chat_ID, "❌ Could not create device.")
 
         # Clear pending device type and return to main menu
         self._bot.set_state(chat_ID, "registered", pending_device_type=None)
         self._bot.send_registered_user_options(chat_ID)
+
+    def _update_bedroom_setting(self, chat_ID, message, field_name, validator=None, display_name=None):
+        """Generic method to update a bedroom setting.
+
+        Args:
+            chat_ID: Telegram chat ID
+            message: User's input message
+            field_name: Database field name (e.g., 'room_name', 'bedtime', 'wakeup', 'desired_temperature')
+            validator: Optional function to validate and transform the input. Should return (is_valid, value_or_error_msg)
+            display_name: Human-readable name for the field (for messages)
+        """
+        bedroom_id = self._bot.require_bedroom(chat_ID)
+        if not bedroom_id:
+            self._bot.ensure_valid_state_and_show_menu(chat_ID)
+            return
+
+        display_name = display_name or field_name
+
+        # Validate input if validator provided
+        if validator:
+            is_valid, result = validator(message)
+            if not is_valid:
+                self._bot.bot.sendMessage(chat_ID, f"❗ {result}")
+                return
+            value = result
+        else:
+            value = message.strip()
+
+        # Update via catalog API
+        payload = {"bedroom_id": bedroom_id, field_name: value}
+        data, status, error = self._bot.catalog.put("updateBedroomSettings", json=payload)
+
+        if error:
+            self._bot.bot.sendMessage(chat_ID, f"❌ Could not update {display_name}: {error}")
+        elif data and data.get("status") == "success":
+            self._bot.bot.sendMessage(chat_ID, f"✅ {display_name} updated to {value}.")
+        else:
+            self._bot.bot.sendMessage(chat_ID, f"❌ Could not update {display_name}.")
+
+        self._bot.set_state(chat_ID, "registered")
+        self._bot.send_registered_user_options(chat_ID)
+
+    def handle_waiting_change_room_name(self, chat_ID, message):
+        def validate_room_name(msg):
+            name = msg.strip()
+            if not name:
+                return False, "Please send a non-empty room name."
+            if len(name) > 100:
+                return False, "Please choose a shorter name (max 100 characters)."
+            return True, name
+
+        self._update_bedroom_setting(chat_ID, message, "room_name", validate_room_name, "Room name")
+
+    def handle_waiting_change_bedtime(self, chat_ID, message):
+        def validate_time(msg):
+            bedtime = parse_time(msg)
+            if not bedtime:
+                return False, "Invalid time format. Please use HH:MM, e.g. 23:00"
+            return True, bedtime
+
+        self._update_bedroom_setting(chat_ID, message, "bedtime", validate_time, "Bedtime")
+
+    def handle_waiting_change_wakeup(self, chat_ID, message):
+        def validate_time(msg):
+            wakeup = parse_time(msg)
+            if not wakeup:
+                return False, "Invalid time format. Please use HH:MM, e.g. 07:00"
+            return True, wakeup
+
+        self._update_bedroom_setting(chat_ID, message, "wakeup", validate_time, "Wake-up time")
+
+    def handle_waiting_change_temp(self, chat_ID, message):
+        def validate_temp(msg):
+            try:
+                temp = float(msg.strip())
+            except ValueError:
+                return False, "Invalid temperature. Please send a number, e.g. 22 or 21.5"
+            if temp < 5 or temp > 35:
+                return False, "Please choose a temperature between 5 and 35 °C."
+            return True, temp
+
+        self._update_bedroom_setting(chat_ID, message, "desired_temperature", validate_temp, "Desired temperature")
+

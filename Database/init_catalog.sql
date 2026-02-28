@@ -14,9 +14,9 @@ CREATE TABLE services (
 CREATE TABLE bedrooms (
     bedroom_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     room_name VARCHAR(100) DEFAULT 'Bedroom',
-    Bedtime TIME NOT NULL,
-    Wakeup TIME NOT NULL,
-    Desired_Temperature FLOAT NOT NULL
+    bedtime TIME NOT NULL,
+    wakeup TIME NOT NULL,
+    desired_temperature FLOAT NOT NULL
      );
 
 CREATE TABLE users (
