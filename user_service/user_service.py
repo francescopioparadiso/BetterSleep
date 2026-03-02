@@ -8,7 +8,7 @@ from postgres_db import PostgresDB
 import catalog_client
 # Configure logging
 logger = logging.getLogger(__name__)
-
+import bcrypt
 
 # ============================================================
 # CATALOG REST SERVICE
@@ -37,7 +37,7 @@ class UserService:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
-            "addUser": self._post_add_user,
+            "addUser": self._post_singin,
             "addHouse": self._post_add_house,
             "addRoom": self._post_add_room,
             "addInvitation": self._post_add_invitation,
@@ -48,11 +48,11 @@ class UserService:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler()
 
-    def _post_add_user(self):
+    def _post_singin(self):
         """Add a new user to the catalog."""
         new_user = self._load_json_body()
         require_fields(new_user, ['email', 'password'])
-
+        new_user['password'] = bcrypt.hashpw(new_user['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         success = self.db.insert_user(new_user)
         if success:
             return json.dumps({"status": "success", "message": "User Added"})
@@ -252,7 +252,7 @@ class UserService:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
-            "getUser": self._get_user,
+            "login": self._get_login,
             "getHouse": self._get_house,
             "getRoom": self._get_room,
             "getInvitation": self._get_invitation,
@@ -267,16 +267,17 @@ class UserService:
         if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
+    def _get_login(self, params):
+        """Authenticate a user by email and password."""
+        email = params.get('email')
+        password = params.get('password')
+        if not email or not password:
+            raise cherrypy.HTTPError(400, "Missing 'email' or 'password' parameter")
 
-    def _get_user(self, params):
-        """Get information about a user by ID."""
-        user_id = params.get('id')
-        if not user_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-        user = self.db.get_user(user_id)
-        if user:
+        user = self.db.login_user(email)
+        if user and bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
             return json.dumps({"status": "success", "user": user})
-        raise cherrypy.HTTPError(404, "User not found")
+        raise cherrypy.HTTPError(401, "Invalid email or password")
 
     def _get_house(self, params):
         """Get information about a house by ID."""

@@ -62,12 +62,16 @@ class PostgresDB:
     # --- USERS ---
     def insert_user(self, u):
         query = "INSERT INTO users (email, password) VALUES (%s, %s) RETURNING id"
-        result = self._execute_query(query, (u['email'], u['password']), fetch=True, single=True)
-        return result['id'] if result else None
+        try:
+            result = self._execute_query(query, (u['email'], u['password']), fetch=True, single=True)
+            return result['id'] if result else None
+        except IntegrityError:
+            return None
 
-    def get_user(self, user_id):
-        query = "SELECT * FROM users WHERE id = %s"
-        return self._execute_query(query, (user_id,), fetch=True, single=True)
+    def login_user(self, email):
+        query = "SELECT * FROM users WHERE email = %s"
+        result = self._execute_query(query, (email,), fetch=True, single=True)
+        return result if result else None
 
     def get_all_users(self):
         query = "SELECT * FROM users ORDER BY id"
