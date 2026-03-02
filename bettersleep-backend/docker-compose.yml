@@ -1,0 +1,18 @@
+services:
+  subscriber:
+    build: .
+    container_name: bettersleep_subscriber
+    command: python -u subscriber.py  # <-- Added -u here
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  simulator:
+    build: .
+    container_name: bettersleep_simulator
+    command: python -u simulator.py   # <-- Added -u here
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - subscriber
