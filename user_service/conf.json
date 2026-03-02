@@ -1,0 +1,24 @@
+{
+  "serviceInfo": {
+    "serviceID": 4,
+    "name": "User Service",
+    "host": "0.0.0.0",
+    "port": 9095,
+    "type": "UserService"
+  },
+  "catalogURL": "http://localhost:8080",
+
+ "MQTT": {
+      "broker": "localhost",
+      "port": 1883,
+      "topic": "services/user"
+    },
+  "Database": {
+        "host": "localhost",
+        "port": 5432,
+        "user": "admin",
+        "password": "password",
+        "database": "bettersleep"
+    },
+  "removeInterval": 10
+}

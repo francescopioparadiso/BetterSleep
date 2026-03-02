@@ -3,18 +3,18 @@
     "service_name": "BetterSleep_Catalog",
     "project_owner": "Group 1",
     "version": "1.0",
-    "last_update": "2026-02-13"
+    "last_update": "2026-03-02"
   },
   "server": {
     "host": "0.0.0.0",
     "port": 8080
   },
   "database": {
-    "host": "localhost",
-    "port": 5432,
-    "user": "admin",
-    "password": "password_sql",
-    "dbname": "bettersleep_catalog"
+     "host": "localhost",
+      "port": 27017,
+      "username": "admin",
+      "password": "password_mongo",
+      "database": "catalogdb"
   },
   "broker": {
     "host": "broker.hivemq.com",

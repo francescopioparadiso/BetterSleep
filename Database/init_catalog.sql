@@ -1,42 +1,43 @@
--- ==========================================
--- 3. SCHEMA DEFINITION (MODIFICATO)
--- ==========================================
-
-CREATE TABLE services (
-    service_id INT PRIMARY KEY,
-    name TEXT,
-    endpoint VARCHAR(255),
-    type VARCHAR(20),
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- USERS
+create table users (
+  id integer generated always as identity primary key,
+  email text not null,
+  password text not null,
+  created_at timestamp with time zone default now()
 );
 
--- Spostiamo bedrooms SOPRA users perché users ora ne dipende
-CREATE TABLE bedrooms (
-    bedroom_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    room_name VARCHAR(100) DEFAULT 'Bedroom',
-    bedtime TIME NOT NULL,
-    wakeup TIME NOT NULL,
-    desired_temperature FLOAT NOT NULL
-     );
-
-CREATE TABLE users (
-    telegram_chat_id BIGINT PRIMARY KEY ,
-    username VARCHAR(100) UNIQUE NOT NULL,
-    bedroom_id INT REFERENCES bedrooms(bedroom_id) ON DELETE SET NULL
+-- HOUSES
+create table houses (
+  id integer generated always as identity primary key,
+  name text not null,
+  created_at timestamp with time zone default now()
 );
 
-CREATE TABLE devices (
-    device_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    device_name VARCHAR(100),
-    device_type VARCHAR(50),
-    value INT NOT NULL ,
-    bedroom_id INT REFERENCES bedrooms(bedroom_id) ON DELETE CASCADE
+-- HOUSE MEMBERS
+create table house_members (
+  id integer generated always as identity primary key,
+  house_id integer references houses(id) on delete cascade,
+  user_id integer references users(id) on delete cascade,
+  role text default 'owner'
 );
 
-CREATE TABLE sensor(
-    sensor_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    sensor_name VARCHAR(100),
-    sensor_type VARCHAR(50),
-    value FLOAT NOT NULL,
-    bedroom_id INT REFERENCES bedrooms(bedroom_id) ON DELETE CASCADE
+-- INVITATIONS
+create table invitations (
+  id integer generated always as identity primary key,
+  house_id integer references houses(id) on delete cascade,
+  email text,
+  status integer default 0, -- 0: pending, 1: accepted, 2: rejected
+  created_at timestamp with time zone default now()
 );
+
+-- ROOMS
+create table rooms (
+  id integer generated always as identity primary key,
+  house_id integer references houses(id) on delete cascade,
+  name text,
+  bedtime time,
+  wake_time time,
+  desired_temperature integer,
+  created_at timestamp with time zone default now()
+);
+

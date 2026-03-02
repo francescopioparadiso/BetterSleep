@@ -4,9 +4,12 @@ import logging
 import cherrypy
 import threading
 import time
-from postgres_db import PostgresDB
+import dateutil.parser
+from mongo_db import MongoDBAdapter
 
-# Configure logging
+# Configure logging with DEBUG level
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,12 +54,11 @@ class Catalog:
         def _loop():
             while not self._stop_event.is_set():
                 try:
-                    logger.debug("Running cleanup loop...")
                     deleted = self.db.delete_stale_services(self.service_ttl_s)
                     if deleted > 0:
-                        logger.info(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
+                        print(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
                 except Exception as e:
-                    logger.error(f"Error during cleanup loop: {e}")
+                    print(f"Error during cleanup loop: {e}")
                 time.sleep(self.cleanup_interval_s)
 
         self._worker = threading.Thread(target=_loop, daemon=True)
@@ -80,36 +82,40 @@ class Catalog:
             raise cherrypy.HTTPError(400, "Error parsing request body")
 
 
-
     # --------------------------------------------------------
     # POST METHOD - Add new resources
     # --------------------------------------------------------
     def POST(self, *uri, **params):
         """Handle POST requests to add new Services, Devices, or Users."""
         if not uri:
+            print("POST request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
             "addService": self._post_add_service,
             "addDevice": self._post_add_device,
-            "addUser": self._post_add_user,
-            "addBedroom": self._post_add_bedroom,
-            "associateUserToBedroom": self._post_associate_user_to_bedroom,
         }
         handler = handlers.get(uri[0])
         if not handler:
+            print(f"POST handler not found for endpoint: {uri[0]}")
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler()
 
     def _post_add_service(self):
         """Add a new service to the catalog."""
-        new_service = self._load_json_body()
-        check_if_is_a_service(new_service)
+        try:
+            new_service = self._load_json_body()
+            check_if_is_a_service(new_service)
+            success = self.db.insert_service(new_service)
 
-        success = self.db.insert_service(new_service)
-        if success:
-            return json.dumps({"status": "success", "message": "Service Added"})
-        raise cherrypy.HTTPError(409, "The Service ID already exists")
+            if success:
+                return json.dumps({"status": "success", "message": "Service Added"})
+
+            print(f"Service ID {new_service.get('serviceID')} already exists")
+            raise cherrypy.HTTPError(409, "The Service ID already exists")
+        except Exception as e:
+            print(f"Error in _post_add_service: {e}")
+            raise
 
     def _post_add_device(self):
         """Add a new device to the catalog."""
@@ -122,74 +128,27 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Device Added", "device_id": device_id})
         raise cherrypy.HTTPError(409, "Failed to create device")
 
-    def _post_add_user(self):
-        """Add a new user to the catalog."""
-        new_user = self._load_json_body()
-        require_fields(new_user, ['username', 'telegram_chat_id'])
-
-        success = self.db.insert_user(new_user)
-        if success:
-            return json.dumps({"status": "success", "message": "User Added"})
-        raise cherrypy.HTTPError(409, "The User ID already exists")
-
-    def _post_add_bedroom(self):
-        """Add a new bedroom to the catalog."""
-        new_bedroom = self._load_json_body()
-        # create bedroom without passwords — passwords removed from schema
-        room_name = new_bedroom.get('room_name', 'Bedroom')
-        bedtime = new_bedroom.get('bedtime')
-        wakeup = new_bedroom.get('wakeup')
-        desired_temperature = new_bedroom.get('desired_temperature')
-
-        bedroom_id = self.db.insert_bedroom({
-            'room_name': room_name,
-            'bedtime': bedtime,
-            'wakeup': wakeup,
-            'desired_temperature': desired_temperature,
-        })
-        if bedroom_id:
-            return json.dumps({"status": "success", "message": "Bedroom Added", "bedroom_id": bedroom_id})
-        raise cherrypy.HTTPError(409, "Failed to create bedroom")
-
-    def _post_associate_user_to_bedroom(self):
-        """Associate an existing user (by telegram_chat_id) to an existing bedroom_id.
-
-        Expects JSON: {"telegram_chat_id": <id>, "bedroom_id": <id>}
-        Uses DB adaptor method `associate_user_to_bedroom` (atomic, enforces 0..1 constraint).
-        """
-        payload = self._load_json_body()
-        require_fields(payload, ['telegram_chat_id', 'bedroom_id'])
-
-        try:
-            # DB method renamed to English spelling
-            success = self.db.associate_user_to_bedroom(payload)
-            if success:
-                return json.dumps({"status": "success", "message": "User associated to bedroom"})
-            else:
-                raise cherrypy.HTTPError(409, "Failed to associate user to bedroom")
-        except cherrypy.HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"Error associating user to bedroom: {e}")
-            raise cherrypy.HTTPError(500, "Internal Server Error")
-
     # --------------------------------------------------------
     # PUT METHOD - Update existing resources
     # --------------------------------------------------------
     def PUT(self, *uri, **params):
         """Handle PUT requests to update Services, Devices, or Users."""
+        logger.info(f"PUT method called with uri={uri}, params={params}")
         if not uri:
+            print("PUT request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
             "updateService": self._put_update_service,
             "updateServiceLastUpdate": self._put_update_service_last_update,
             "updateDevice": self._put_update_device,
-            "updateBedroomSettings": self._put_update_bedroom_settings,
         }
         handler = handlers.get(uri[0])
+        logger.info(f"Looking for handler: {uri[0]}, found: {handler is not None}")
         if not handler:
+            print(f"Handler not found for endpoint: {uri[0]}")
             raise cherrypy.HTTPError(404, "Endpoint not found")
+        logger.info(f"Calling handler for {uri[0]}")
         return handler()
 
     def _put_update_service(self):
@@ -200,19 +159,26 @@ class Catalog:
         success = self.db.update_service(updated_service)
         if success:
             return json.dumps({"status": "success", "message": "Service updated"})
-        logger.warning(f"Update failed for serviceID {updated_service.get('serviceID')}")
+        print(f"Update failed for serviceID {updated_service.get('serviceID')}")
         raise cherrypy.HTTPError(404, "The Service ID does not exist")
 
     def _put_update_service_last_update(self):
         """Update the last_update timestamp of a service."""
-        updated_service = self._load_json_body()
-        require_fields(updated_service, ['serviceID', 'last_update'])
+        try:
+            updated_service = self._load_json_body()
+            require_fields(updated_service, ['serviceID', 'last_update'])
 
-        success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
-        if success:
-            return json.dumps({"status": "success", "message": "Service last_update updated"})
-        logger.warning(f"Update failed for serviceID {updated_service.get('serviceID')}")
-        raise cherrypy.HTTPError(404, "The Service ID does not exist")
+            success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
+            if success:
+                return json.dumps({"status": "success", "message": "Service last_update updated"})
+
+            print(f"Update failed for serviceID {updated_service.get('serviceID')} - service not found")
+            raise cherrypy.HTTPError(404, "The Service ID does not exist")
+        except cherrypy.HTTPError:
+            raise
+        except Exception as e:
+            print(f"Error in _put_update_service_last_update: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _put_update_device(self):
         """Update an existing device in the catalog."""
@@ -224,34 +190,6 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Device updated"})
         raise cherrypy.HTTPError(404, "The Device ID does not exist")
 
-    def _put_update_bedroom_settings(self):
-        """Update bedroom settings (room_name, bedtime, wakeup, desired_temperature).
-
-        Expects JSON with bedroom_id and at least one field to update.
-        """
-        payload = self._load_json_body()
-        require_fields(payload, ['bedroom_id'])
-
-        bedroom_id = payload.get('bedroom_id')
-        updates = {}
-
-        # Collect fields to update
-        if 'room_name' in payload:
-            updates['room_name'] = payload['room_name']
-        if 'bedtime' in payload:
-            updates['bedtime'] = payload['bedtime']
-        if 'wakeup' in payload:
-            updates['wakeup'] = payload['wakeup']
-        if 'desired_temperature' in payload:
-            updates['desired_temperature'] = payload['desired_temperature']
-
-        if not updates:
-            raise cherrypy.HTTPError(400, "No fields to update")
-
-        success = self.db.update_bedroom_settings(bedroom_id, updates)
-        if success:
-            return json.dumps({"status": "success", "message": "Bedroom settings updated"})
-        raise cherrypy.HTTPError(404, "Bedroom not found or update failed")
 
     # --------------------------------------------------------
     # DELETE METHOD - Remove resources
@@ -264,8 +202,7 @@ class Catalog:
         handlers = {
             "removeService": self._delete_remove_service,
             "removeDevice": self._delete_remove_device,
-            "removeUser": self._delete_remove_user,
-            "removeRoom": self._delete_remove_room,
+
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -283,16 +220,7 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Service Deleted"})
         raise cherrypy.HTTPError(404, "Service not found")
 
-    def _delete_remove_room(self, params):
-        """Delete a bedroom by bedroom_id."""
-        bedroom_id = params.get('bedroom_id')
-        if not bedroom_id:
-            raise cherrypy.HTTPError(400, "Missing 'bedroom_id' parameter")
 
-        success = self.db.delete_bedroom(bedroom_id)
-        if success:
-            return json.dumps({"status": "success", "message": "Bedroom Deleted"})
-        raise cherrypy.HTTPError(404, "Bedroom not found")
 
     def _delete_remove_device(self, params):
         """Delete a device by deviceID."""
@@ -305,35 +233,25 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Device Deleted"})
         raise cherrypy.HTTPError(404, "Device not found")
 
-    def _delete_remove_user(self, params):
-        """Delete a user by username."""
-        username = params.get('username')
-        if not username:
-            raise cherrypy.HTTPError(400, "Missing 'username' parameter")
-
-        success = self.db.delete_user(username)
-        if success:
-            return json.dumps({"status": "success", "message": "User Deleted"})
-        raise cherrypy.HTTPError(404, "User not found")
 
     # --------------------------------------------------------
     # GET METHOD - Retrieve resources
     # --------------------------------------------------------
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
+        logger.info(f"GET method called with uri={uri}, params={params}")
         if not uri:
+            print("GET request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
             "getDatabaseEndpoint": self._get_database_endpoint,
-            # checkRoom and checkUsername were used for joining; checkRoom removed
-            "checkUsername": self._get_check_username,
-            "getDevices": self._get_devices,
-            "getUserSession": self._get_user_session_from_chat_id,
-            "getBedroomInfo": self.get_bedroom_info,
+            "getAllServices": self._get_all_services,
+            "getService": self._get_service,
         }
         handler = handlers.get(uri[0])
         if not handler:
+            print(f"GET handler not found for endpoint: {uri[0]}")
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
 
@@ -351,6 +269,37 @@ class Catalog:
             logger.error(f"Error retrieving database endpoint: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
+    def _get_all_services(self, params):
+        """Get all services from the catalog (for debugging)."""
+        try:
+            services = self.db.get_all_services()
+            services_json = []
+            for service in services:
+                service['_id'] = str(service.get('_id', ''))
+                services_json.append(service)
+            return json.dumps({"status": "success", "count": len(services), "services": services_json})
+        except Exception as e:
+            print(f"Error retrieving all services: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+
+    def _get_service(self, params):
+        """Get a specific service by serviceID."""
+        service_id = params.get('serviceID')
+        if not service_id:
+            raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
+        try:
+            service = self.db.get_service(service_id)
+            if service:
+                service['_id'] = str(service.get('_id', ''))
+                return json.dumps({"status": "success", "service": service})
+            print(f"Service {service_id} not found")
+            raise cherrypy.HTTPError(404, f"Service {service_id} not found")
+        except cherrypy.HTTPError:
+            raise
+        except Exception as e:
+            print(f"Error retrieving service {service_id}: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+
     def _get_check_username(self, params):
         """Check if a username exists in the database."""
         username = params.get('username')
@@ -361,77 +310,6 @@ class Catalog:
             return json.dumps({"status": "success", "exists": exists})
         except Exception as e:
             logger.error(f"Error checking username: {e}")
-            raise cherrypy.HTTPError(500, "Internal Server Error")
-    def get_bedroom_info(self, params):
-        """Get information about a bedroom.
-
-        Accepts either:
-        - bedroom_id and telegram_chat_id
-        - or only telegram_chat_id (in which case the user's associated bedroom is resolved)
-
-        Returns top-level keys: room_name, bedtime, wakeup, desired_temperature.
-        """
-        bedroom_id = params.get('bedroom_id')
-        chat_id = params.get('telegram_chat_id')
-
-        # If bedroom_id missing but telegram_chat_id provided, try to resolve from user's session
-        if not bedroom_id:
-            if not chat_id:
-                raise cherrypy.HTTPError(400, "Missing 'bedroom_id' or 'telegram_chat_id' parameter")
-            try:
-                usersession = self.db.getUserSession(chat_id)
-                if not usersession or not usersession[1]:
-                    # user exists but no bedroom associated
-                    raise cherrypy.HTTPError(404, "No bedroom associated to this user")
-                bedroom_id = usersession[1]
-            except cherrypy.HTTPError:
-                raise
-            except Exception as e:
-                logger.error(f"Error resolving bedroom_id from chat_id {chat_id}: {e}")
-                raise cherrypy.HTTPError(500, "Internal Server Error")
-
-        try:
-            # check optional access: if chat_id provided, ensure the user is associated to the bedroom
-            if chat_id and not self.db.check_user_associated_to_bedroom(chat_id, bedroom_id):
-                raise cherrypy.HTTPError(403, "User not associated with this bedroom")
-
-            bedroom_info = self.db.get_bedroom_info(bedroom_id)
-            if bedroom_info:
-                # bedroom_info is a tuple (room_name, bedtime, wakeup, desired_temperature)
-                room_name, bedtime, wakeup, desired_temperature = bedroom_info
-                return json.dumps({
-                    "status": "success",
-                    "bedroom_id": bedroom_id,
-                    "room_name": room_name,
-                    "bedtime": str(bedtime),
-                    "wakeup": str(wakeup),
-                    "desired_temperature": desired_temperature
-                })
-
-            logger.warning(f"Bedroom {bedroom_id} not found")
-            raise cherrypy.HTTPError(404, "Bedroom not found")
-        except cherrypy.HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"Error retrieving bedroom information: {e}")
-            raise cherrypy.HTTPError(500, "Internal Server Error")
-
-    def _get_user_session_from_chat_id(self, params):
-        """Retrieve user session (username and bedroom_id) by telegram_chat_id."""
-        telegram_chat_id = params.get('telegram_chat_id')
-        if not telegram_chat_id:
-            raise cherrypy.HTTPError(400, "Missing 'telegram_chat_id' parameter")
-        try:
-            usersession = self.db.getUserSession(telegram_chat_id)
-            if usersession:
-                return json.dumps({"status": "success", "username": usersession[0], "bedroom_id": usersession[1]})
-            else:
-                logger.debug(f"No session found for chat_id {telegram_chat_id}")
-                raise cherrypy.HTTPError(404, "User session not found")
-        except cherrypy.HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"Error retrieving user session: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_devices(self, params):
@@ -503,7 +381,7 @@ if __name__ == "__main__":
 
     # Initialize the Database Adaptor
     try:
-        my_db_adaptor = PostgresDB(db_conf)
+        my_db_adaptor = MongoDBAdapter(db_conf)
     except Exception as e:
         logger.error(f"Failed to initialize database connection: {e}")
         sys.exit(1)
@@ -518,11 +396,9 @@ if __name__ == "__main__":
             'server.socket_port': server_conf['port'],
             'server.socket_host': server_conf['host'],
             'error_page.default': json_error_page
-
         })
 
-        # Start the Web Server
-        logger.info(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
+        print(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
         cherrypy.engine.subscribe('start', catalog.start_cleanup_loop)
         cherrypy.engine.subscribe('stop', catalog.stop_cleanup_loop)
         cherrypy.engine.start()
