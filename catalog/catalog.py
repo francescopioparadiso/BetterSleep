@@ -36,6 +36,18 @@ def require_fields(payload, required_fields):
 # CATALOG REST SERVICE
 # ============================================================
 
+def _load_json_body():
+    body = cherrypy.request.body.read()
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON format in request body: {e}")
+        raise cherrypy.HTTPError(400, "Invalid JSON format")
+    except Exception as e:
+        logger.error(f"Unexpected error parsing request body: {e}")
+        raise cherrypy.HTTPError(400, "Error parsing request body")
+
+
 class Catalog:
 
     exposed = True
@@ -70,21 +82,7 @@ class Catalog:
             self._worker.join(timeout=10)
             self._worker = None
 
-    def _load_json_body(self):
-        body = cherrypy.request.body.read()
-        try:
-            return json.loads(body)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON format in request body: {e}")
-            raise cherrypy.HTTPError(400, "Invalid JSON format")
-        except Exception as e:
-            logger.error(f"Unexpected error parsing request body: {e}")
-            raise cherrypy.HTTPError(400, "Error parsing request body")
-
-
-    # --------------------------------------------------------
-    # POST METHOD - Add new resources
-    # --------------------------------------------------------
+    # POST METHOD - Create new resources
     def POST(self, *uri, **params):
         """Handle POST requests to add new Services, Devices, or Users."""
         if not uri:
@@ -104,7 +102,7 @@ class Catalog:
     def _post_add_service(self):
         """Add a new service to the catalog."""
         try:
-            new_service = self._load_json_body()
+            new_service = _load_json_body()
             check_if_is_a_service(new_service)
             success = self.db.insert_service(new_service)
 
@@ -119,7 +117,7 @@ class Catalog:
 
     def _post_add_device(self):
         """Add a new device to the catalog."""
-        new_device = self._load_json_body()
+        new_device = _load_json_body()
         # validate minimal fields (device_name, bedroom_id)
         check_if_is_a_device(new_device)
 
@@ -128,9 +126,7 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Device Added", "device_id": device_id})
         raise cherrypy.HTTPError(409, "Failed to create device")
 
-    # --------------------------------------------------------
     # PUT METHOD - Update existing resources
-    # --------------------------------------------------------
     def PUT(self, *uri, **params):
         """Handle PUT requests to update Services, Devices, or Users."""
         logger.info(f"PUT method called with uri={uri}, params={params}")
@@ -153,7 +149,7 @@ class Catalog:
 
     def _put_update_service(self):
         """Update an existing service in the catalog."""
-        updated_service = self._load_json_body()
+        updated_service = _load_json_body()
         check_if_is_a_service(updated_service)
 
         success = self.db.update_service(updated_service)
@@ -165,7 +161,7 @@ class Catalog:
     def _put_update_service_last_update(self):
         """Update the last_update timestamp of a service."""
         try:
-            updated_service = self._load_json_body()
+            updated_service = _load_json_body()
             require_fields(updated_service, ['serviceID', 'last_update'])
 
             success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
@@ -182,7 +178,7 @@ class Catalog:
 
     def _put_update_device(self):
         """Update an existing device in the catalog."""
-        updated_device = self._load_json_body()
+        updated_device = _load_json_body()
         check_if_is_a_device(updated_device)
 
         success = self.db.update_device(updated_device)
@@ -191,9 +187,7 @@ class Catalog:
         raise cherrypy.HTTPError(404, "The Device ID does not exist")
 
 
-    # --------------------------------------------------------
     # DELETE METHOD - Remove resources
-    # --------------------------------------------------------
     def DELETE(self, *uri, **params):
         """Handle DELETE requests to remove Services, Devices, Users, or Bedrooms."""
         if not uri:
@@ -234,9 +228,7 @@ class Catalog:
         raise cherrypy.HTTPError(404, "Device not found")
 
 
-    # --------------------------------------------------------
     # GET METHOD - Retrieve resources
-    # --------------------------------------------------------
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
         logger.info(f"GET method called with uri={uri}, params={params}")
@@ -245,9 +237,10 @@ class Catalog:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
-            "getDatabaseEndpoint": self._get_database_endpoint,
             "getAllServices": self._get_all_services,
             "getService": self._get_service,
+            "getEndpointTimeSeries": self._get_endpoint_Time_series_DB,
+            "getEndpointUserService": self._get_endpoint_user_service,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -255,18 +248,32 @@ class Catalog:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
 
-    def _get_database_endpoint(self, params):
-        """Get the endpoint of the database server."""
+    def _get_endpoint_Time_series_DB(self):
+        """Get the endpoint of the TimeSeriesDB service."""
         try:
-            endpoint = self.db.get_endpoint_server_database()
+            endpoint = self.db.get_endpoint_Time_series_DB()
             if endpoint:
                 return json.dumps({"status": "success", "endpoint": endpoint})
-            logger.warning("Database endpoint not found")
-            raise cherrypy.HTTPError(404, "Database endpoint not found")
+            print("TimeSeriesDB service not found")
+            raise cherrypy.HTTPError(404, "TimeSeriesDB service not found")
         except cherrypy.HTTPError:
             raise
         except Exception as e:
-            logger.error(f"Error retrieving database endpoint: {e}")
+            print(f"Error retrieving TimeSeriesDB endpoint: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
+
+    def _get_endpoint_user_service(self):
+        """Get the endpoint of the UserService."""
+        try:
+            endpoint = self.db.get_endpoint_user_service()
+            if endpoint:
+                return json.dumps({"status": "success", "endpoint": endpoint})
+            print("UserService not found")
+            raise cherrypy.HTTPError(404, "UserService not found")
+        except cherrypy.HTTPError:
+            raise
+        except Exception as e:
+            print(f"Error retrieving UserService endpoint: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_all_services(self, params):
@@ -319,7 +326,6 @@ class Catalog:
             raise cherrypy.HTTPError(400, "Missing 'bedroom_id' parameter")
         try:
             devices = self.db.get_devices_by_bedroom(bedroom_id)
-            # devices is list of tuples (device_id, device_name, device_type)
             devices_out = []
             for d in devices:
                 device_id, device_name, device_type, value = d
@@ -369,24 +375,14 @@ if __name__ == "__main__":
     except FileNotFoundError:
         logger.error("Configuration file 'conf.json' not found")
         sys.exit(1)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in 'conf.json': {e}")
-        sys.exit(1)
-    except KeyError as e:
-        logger.error(f"Missing required configuration key: {e}")
-        sys.exit(1)
     except Exception as e:
         logger.error(f"Error reading conf.json: {e}")
         sys.exit(1)
-
-    # Initialize the Database Adaptor
     try:
         my_db_adaptor = MongoDBAdapter(db_conf)
     except Exception as e:
         logger.error(f"Failed to initialize database connection: {e}")
         sys.exit(1)
-
-    # Mount the Catalog REST Service
     try:
         catalog = Catalog(my_db_adaptor, cleanup_interval_s, service_ttl_s)
         cherrypy.tree.mount(catalog, '/', conf)

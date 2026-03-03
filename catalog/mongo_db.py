@@ -150,6 +150,32 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error deleting stale services: {e}", exc_info=True)
             raise
+    def get_endpoint_Time_series_DB(self):
+
+        try:
+            service = self.db.services.find_one({"type": "TimeSeriesDB"})
+            if service:
+                logger.info(f"TimeSeriesDB service found: {service['endpoint']}")
+                return service['endpoint']
+            logger.warning("No TimeSeriesDB service found")
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving TimeSeriesDB endpoint: {e}")
+            raise
+
+    def get_endpoint_user_service(self):
+
+        try:
+            service = self.db.services.find_one({"type": "UserService"})
+            if service:
+                logger.info(f"UserService found: {service['endpoint']}")
+                return service['endpoint']
+            logger.warning("No UserService found")
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving UserService endpoint: {e}")
+            raise
+
 
 # DEVICES OPERATIONS
     def insert_device(self, device):
@@ -221,13 +247,8 @@ class MongoDBAdapter:
             raise
 
 
-    def get_endpoint_server_database(self):
 
-        try:
-            return f"{self.host}:{self.port}"
-        except Exception as e:
-            logger.error(f"Error retrieving database endpoint: {e}")
-            return None
+
 
     # ================================================================
     # CONNECTION MANAGEMENT

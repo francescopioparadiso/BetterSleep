@@ -27,12 +27,12 @@ class UserService:
         try:
             self.catalog.register_service()
         except Exception as e:
-            logger.error(f'Failed to start catalog heartbeat: {e}')
-    # --------------------------------------------------------
-    # POST METHOD - Add new resources
-    # --------------------------------------------------------
+            logger.error(f'Failed to Register with Catalog: {e}')
+            raise Exception
+
+    # POST METHOD - Create new resources
     def POST(self, *uri, **params):
-        """Handle POST requests to add new Services, Devices, or Users."""
+
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
@@ -98,11 +98,8 @@ class UserService:
             return json.dumps({"status": "success", "message": "House Member Added"})
         raise cherrypy.HTTPError(409, "The House Member already exists")
 
-    # --------------------------------------------------------
     # PUT METHOD - Update existing resources
-    # --------------------------------------------------------
     def PUT(self, *uri, **params):
-        """Handle PUT requests to update Services, Devices, or Users."""
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
@@ -168,11 +165,8 @@ class UserService:
             return json.dumps({"status": "success", "message": "House Member updated"})
         raise cherrypy.HTTPError(404, "House Member not found")
 
-    # --------------------------------------------------------
     # DELETE METHOD - Remove resources
-    # --------------------------------------------------------
     def DELETE(self, *uri, **params):
-        """Handle DELETE requests to remove Services, Devices, Users, or Bedrooms."""
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
