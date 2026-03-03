@@ -37,7 +37,8 @@ class UserService:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
-            "addUser": self._post_singin,
+            "signup": self._post_signup,   # Changed from addUser to match Swift
+            "login": self._post_login,     # Moved login to POST to match Swift
             "addHouse": self._post_add_house,
             "addRoom": self._post_add_room,
             "addInvitation": self._post_add_invitation,
@@ -48,15 +49,23 @@ class UserService:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler()
 
-    def _post_singin(self):
-        """Add a new user to the catalog."""
+    def _post_signup(self):
         new_user = self._load_json_body()
         require_fields(new_user, ['email', 'password'])
-        new_user['password'] = bcrypt.hashpw(new_user['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        success = self.db.insert_user(new_user)
-        if success:
-            return json.dumps({"status": "success", "message": "User Added"})
+        
+        user_id = self.db.signup_user(new_user['email'], new_user['password'])
+        if user_id:
+            return json.dumps({"status": "success", "id": user_id, "message": "User Added"})
         raise cherrypy.HTTPError(409, "The User already exists")
+
+    def _post_login(self):
+        credentials = self._load_json_body()
+        require_fields(credentials, ['email', 'password'])
+        
+        user = self.db.login_user(credentials['email'], credentials['password'])
+        if user:
+            return json.dumps({"status": "success", "id": user['id'], "user": user})
+        raise cherrypy.HTTPError(401, "Invalid email or password")
 
     def _post_add_house(self):
         """Add a new house to the catalog."""

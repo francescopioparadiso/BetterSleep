@@ -2,6 +2,7 @@ import sys
 import logging
 import psycopg2
 from psycopg2 import DatabaseError, IntegrityError, OperationalError
+from werkzeug.security import generate_password_hash, check_password_hash
 
 logger = logging.getLogger(__name__)
 
@@ -60,30 +61,24 @@ class PostgresDB:
                     logger.warning(f"Error closing database connection: {e}")
 
     # --- USERS ---
-    def insert_user(self, u):
+    def signup_user(self, email, password):
+        # check if email already exists
+        if self._execute_query("SELECT 1 FROM users WHERE email = %s", (email,), fetch=True, single=True):
+            return None 
+        
+        hashed_password = generate_password_hash(password)
         query = "INSERT INTO users (email, password) VALUES (%s, %s) RETURNING id"
-        try:
-            result = self._execute_query(query, (u['email'], u['password']), fetch=True, single=True)
-            return result['id'] if result else None
-        except IntegrityError:
-            return None
-
-    def login_user(self, email):
+        result = self._execute_query(query, (email, hashed_password), fetch=True, single=True)
+        return result['id'] if result else None
+        
+    def login_user(self, email, password):
         query = "SELECT * FROM users WHERE email = %s"
-        result = self._execute_query(query, (email,), fetch=True, single=True)
-        return result if result else None
-
-    def get_all_users(self):
-        query = "SELECT * FROM users ORDER BY id"
-        return self._execute_query(query, fetch=True)
-
-    def update_user(self, u):
-        query = "UPDATE users SET email = %s, password = %s WHERE id = %s"
-        return self._execute_query(query, (u['email'], u['password'], u['id']))
-
-    def delete_user(self, user_id):
-        query = "DELETE FROM users WHERE id = %s"
-        return self._execute_query(query, (user_id,))
+        user = self._execute_query(query, (email,), fetch=True, single=True)
+        
+        if user and check_password_hash(user['password'], password):
+            return user
+            
+        return None
 
     # --- HOUSES ---
     def insert_house(self, h):
