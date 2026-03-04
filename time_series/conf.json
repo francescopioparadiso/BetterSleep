@@ -7,9 +7,10 @@
     "type": "DatabaseAdapter"
   },
  "MQTT": {
-      "broker": "localhost",
+      "broker": "broker.hivemq.com",
       "port": 1883,
-      "topic": "bed/analytics"
+      "topic_subscribe": "House/+/Bedroom/+/sensor/+/data",
+      "clientID": "TimeSeriesDBAdapterClientBetterSleepIoT"
     },
   "catalogURL": "http://localhost:8080",
   "removeInterval": 10,

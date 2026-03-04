@@ -5,6 +5,7 @@ import sys
 import cherrypy
 
 from common import catalog_client
+from common.MQTT.MyMQTT import MyMQTT
 from common.common import json_error_page
 from time_series.time_series_db import TimeSeriesDB
 
@@ -37,7 +38,7 @@ def checkSenML(newmeasurament):
     if not all(all(field in event for field in required_event)
                for event in newmeasurament["e"]):
         raise cherrypy.HTTPError(400, "Missing required fields inside 'e'")
-
+    return  True
 
 class TimeSeriesDBAdapter:
     exposed = True
@@ -47,10 +48,16 @@ class TimeSeriesDBAdapter:
         self.service_info = conf['serviceInfo']
         self.remove_interval = conf.get('removeInterval', 10)
         self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
+        self.clientID=conf['MQTT']['clientID']
+        self.broker=conf['MQTT']['broker']
+        self.port=conf['MQTT']['port']
+        self.topic_subscribe=conf['MQTT']['topic_subscribe']
+        self.mqtt_client_subscriber = MyMQTT(self.clientID, self.broker, self.port, self)
 
         try:
             self.db = TimeSeriesDB(conf)
             self.catalog.register()
+            self.startClient()
             if not self.db.health_check():
                 logger.critical("Unable to connect to the database.")
                 self.catalog.stop_background_loop()
@@ -61,26 +68,7 @@ class TimeSeriesDBAdapter:
     # POST METHOD - Add new resources
     # --------------------------------------------------------
     def POST(self, *uri, **params):
-        """Handle POST requests to add new Services, Devices, or Users."""
-        if not uri:
-            raise cherrypy.HTTPError(400, "Endpoint not specified")
-
-        handlers = {
-            "addMeasurement": self._post_add_measurement,
-        }
-        handler = handlers.get(uri[0])
-        if not handler:
-            raise cherrypy.HTTPError(404, "Endpoint not found")
-        return handler()
-
-    def _post_add_measurement(self):
-        newmeasurament = _load_json_body()
-        # newmesurament is in senML
-        checkSenML(newmeasurament)
-        success = self.db.insert_data("mesurament",newmeasurament)
-        if success:
-            return json.dumps({"status": "success", "message": "Mesurament Added"})
-        raise cherrypy.HTTPError(409, "Problem with the addition of Mesurament")
+        pass
 
     def GET(self, *uri, **params):
         pass
@@ -90,6 +78,21 @@ class TimeSeriesDBAdapter:
     def DELETE(self, *uri, **params):
         pass
 
+    def notify(self, topic, payload):
+        message_received = json.loads(payload)
+        if checkSenML(message_received):
+            logger.debug(f"Received valid SenML message: {message_received}")
+            self.db.insert_data("measurements", message_received)
+        else:
+            logger.warning(f"Received invalid SenML message: {message_received}")
+
+    def startClient(self):
+        self.mqtt_client_subscriber.start()
+        self.mqtt_client_subscriber.mySubscribe(self.topic_subscribe)
+
+    def stopClient(self):
+        # self.mqtt_client_subscriber.unsubscribe() -> not necessary because stop is already unsubscribing
+        self.mqtt_client_subscriber.stop()
 
 
 if __name__ == "__main__":
@@ -122,6 +125,7 @@ if __name__ == "__main__":
 
         cherrypy.engine.subscribe('start', time_series_db_adapter.catalog.start_background_loop)
         cherrypy.engine.subscribe('stop', time_series_db_adapter.catalog.stop_background_loop)
+        cherrypy.engine.subscribe('stop', time_series_db_adapter.stopClient)
         cherrypy.engine.subscribe('stop', time_series_db_adapter.catalog.unregister)
 
         cherrypy.engine.start()

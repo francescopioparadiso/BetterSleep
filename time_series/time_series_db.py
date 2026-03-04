@@ -52,7 +52,7 @@ class TimeSeriesDB:
 
     def insert_data(self, collection_name, data):
         """Insert data into a collection."""
-        if not self.db:
+        if self.db is None:
             logger.error("Not connected to MongoDB, cannot insert data")
             return False
         try:
