@@ -33,6 +33,7 @@ struct LoginView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "envelope.fill")
                                 .foregroundColor(.gray)
+                                .frame(width: 24)
                             
                             TextField("Email address", text: $email)
                                 .textInputAutocapitalization(.never)
@@ -45,6 +46,7 @@ struct LoginView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "lock.fill")
                                 .foregroundColor(.gray)
+                                .frame(width: 24)
                             
                             SecureField("Password", text: $password)
                         }

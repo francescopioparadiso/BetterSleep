@@ -7,7 +7,7 @@ class AuthViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     
     // TODO: Point this to your new Python User Management Microservice IP
-    private let baseURL = "http://127.0.0.1:9095"
+    private let baseURL = "http://localhost:9095"
     
     // Check if a user is already logged in when the app starts
     func checkSession() {
