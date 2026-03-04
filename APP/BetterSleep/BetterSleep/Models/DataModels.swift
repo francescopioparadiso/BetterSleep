@@ -97,53 +97,61 @@ enum SensorType: String, Codable, CaseIterable, Hashable {
     }
 }
 
-// MARK: - Models
+// MARK: - Updated Postgres Models (IDs are now Int)
+
+struct User: Identifiable, Codable, Hashable {
+    var id: Int
+    var email: String
+    var night_time: String?
+    var morning_time: String?
+    var created_at: String?
+}
+
 struct House: Codable, Identifiable, Hashable {
-    var id: UUID?
+    var id: Int?
     var name: String
+    var created_at: String?
 }
 
 struct Room: Identifiable, Codable, Hashable {
-    var id: UUID?
-    var house_id: UUID
+    var id: Int?
+    var house_id: Int
     var name: String
-    var user_id: UUID?
+    var user_id: Int?
+    var bedtime: String?
+    var wake_time: String?
+    var desired_temperature: Int?
+    var created_at: String?
 }
 
 struct Sensor: Codable, Identifiable, Hashable {
-    var id: UUID?
-    var room_id: UUID
+    var id: Int?
+    var room_id: Int
     var name: String
-    var sensor_type: SensorType // Upgraded from String to Enum!
+    var sensor_type: SensorType
     var bedtime_value: Double
     var wakeup_value: Double
 }
 
 struct SensorDataLog: Identifiable, Codable, Hashable {
-    var id: UUID?
-    var sensor_id: UUID
+    var id: Int?
+    var sensor_id: Int
     var value: Double
     var created_at: String
 }
 
 struct Invitation: Codable, Identifiable {
-    var id: UUID?
-    var house_id: UUID
+    var id: Int?
+    var house_id: Int
     var email: String
-    var status: String
+    var status: Int? // 0: pending, 1: accepted, 2: rejected
+    var created_at: String?
 }
 
 struct HouseMember: Identifiable, Codable, Hashable {
-    var id: UUID?
-    var house_id: UUID
-    var user_id: UUID
-    var role: String
-    var email: String
-}
-
-struct GlobalPreference: Codable, Identifiable {
-    var id: UUID?
-    var user_id: UUID
-    var bedtime: String     // format: "22:30:00"
-    var wake_time: String   // format: "07:00:00"
+    var id: Int?
+    var house_id: Int
+    var user_id: Int
+    var role: Int? // 0: owner/admin, 1: member
+    var email: String? // Manually populated via Swift
 }

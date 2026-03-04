@@ -1,7 +1,6 @@
 import SwiftUI
 import Combine
 import Foundation
-import Supabase
 
 struct HousesListView: View {
     @StateObject private var viewModel = HouseViewModel()

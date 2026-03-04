@@ -1,8 +1,10 @@
 -- USERS
 create table users (
   id integer generated always as identity primary key,
-  email text not null,
+  email text UNIQUE not null,
   password text not null,
+  night_time text default '22:00',
+  morning_time text default '07:00',
   created_at timestamp with time zone default now()
 );
 
@@ -18,7 +20,7 @@ create table house_members (
   id integer generated always as identity primary key,
   house_id integer references houses(id) on delete cascade,
   user_id integer references users(id) on delete cascade,
-  role text default 'owner'
+  role integer default 0 -- 0: admin, 1: member (VIRGOLA RIMOSSA QUI!)
 );
 
 -- INVITATIONS
@@ -34,10 +36,7 @@ create table invitations (
 create table rooms (
   id integer generated always as identity primary key,
   house_id integer references houses(id) on delete cascade,
+  user_id integer references users(id) on delete cascade,
   name text,
-  bedtime time,
-  wake_time time,
-  desired_temperature integer,
   created_at timestamp with time zone default now()
 );
-

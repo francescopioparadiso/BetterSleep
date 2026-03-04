@@ -25,26 +25,26 @@ class SensorViewModel: ObservableObject {
     }
     
     func addSensor(name: String, type: SensorType, roomId: UUID) async {
-        do {
-            let newSensorId = UUID()
-            let newSensor = Sensor(
-                id: newSensorId,
-                room_id: roomId,
-                name: name,
-                sensor_type: type, // Now uses Enum securely
-                bedtime_value: type.defaultBedtime, // Pulled dynamically from Enum!
-                wakeup_value: type.defaultWakeup    // Pulled dynamically from Enum!
-            )
-            
-            try await supabase
-                .from("sensors")
-                .insert(newSensor)
-                .execute()
-            
-            self.sensors.append(newSensor)
-        } catch {
-            print("❌ Error adding sensor: \(error)")
-        }
+//        do {
+//            let newSensorId = UUID()
+//            let newSensor = Sensor(
+//                id: newSensorId,
+//                room_id: roomId,
+//                name: name,
+//                sensor_type: type, // Now uses Enum securely
+//                bedtime_value: type.defaultBedtime, // Pulled dynamically from Enum!
+//                wakeup_value: type.defaultWakeup    // Pulled dynamically from Enum!
+//            )
+//            
+//            try await supabase
+//                .from("sensors")
+//                .insert(newSensor)
+//                .execute()
+//            
+//            self.sensors.append(newSensor)
+//        } catch {
+//            print("❌ Error adding sensor: \(error)")
+//        }
     }
     
     func deleteSensor(at offsets: IndexSet) async {

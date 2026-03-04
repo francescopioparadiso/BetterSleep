@@ -116,21 +116,21 @@ struct SensorsListView: View {
                 }
                 .navigationTitle("Add Sensor")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { showingAddSensor = false } }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Add") {
-                            Task {
-                                let finalName = newSensorName.isEmpty ? "New Sensor" : newSensorName
-                                if let rid = room.id { await viewModel.addSensor(name: finalName, type: newSensorType, roomId: rid) }
-                                newSensorName = ""; showingAddSensor = false
-                            }
-                        }.bold()
-                    }
-                }
+//                .toolbar {
+//                    ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { showingAddSensor = false } }
+//                    ToolbarItem(placement: .navigationBarTrailing) {
+//                        Button("Add") {
+//                            Task {
+//                                let finalName = newSensorName.isEmpty ? "New Sensor" : newSensorName
+//                                if let rid = room.id { await viewModel.addSensor(name: finalName, type: newSensorType, roomId: rid) }
+//                                newSensorName = ""; showingAddSensor = false
+//                            }
+//                        }.bold()
+//                    }
+//                }
             }
             .presentationDetents([.medium])
         }
-        .task { if let rid = room.id { await viewModel.fetchSensors(roomId: rid) } }
+//        .task { if let rid = room.id { await viewModel.fetchSensors(roomId: rid) } }
     }
 }

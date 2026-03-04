@@ -1,8 +1,13 @@
+import sys
+import os
+# This tells Python to add the parent directory to its searchable paths
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import json
 import logging
 import cherrypy
 from postgres_db import PostgresDB
-from common import catalog_client
+from common import catalog_client  # <--- Now this will work!
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -60,9 +65,15 @@ class UserService:
         credentials = self._load_json_body()
         require_fields(credentials, ['email', 'password'])
         
-        user = self.db.login_user(credentials['email'], credentials['password'])
+        clean_email = credentials['email'].strip()
+        
+        user = self.db.login_user(clean_email, credentials['password'])
         if user:
+            if 'created_at' in user and user['created_at']:
+                user['created_at'] = str(user['created_at'])
+                
             return json.dumps({"status": "success", "id": user['id'], "user": user})
+            
         raise cherrypy.HTTPError(401, "Invalid email or password")
 
     def _post_add_house(self):
@@ -70,29 +81,20 @@ class UserService:
         new_house = self._load_json_body()
         require_fields(new_house, ['name'])
 
-        success = self.db.insert_house(new_house)
-        if success:
-            return json.dumps({"status": "success", "message": "House Added"})
+        house_id = self.db.insert_house(new_house)
+        if house_id:
+            # Ora restituiamo l'ID all'app Swift!
+            return json.dumps({"status": "success", "id": house_id, "message": "House Added"})
         raise cherrypy.HTTPError(409, "The House already exists")
-
-    def _post_add_room(self):
-        """Add a new room to the catalog."""
-        new_room = self._load_json_body()
-        require_fields(new_room, ['house_id', 'name'])
-
-        success = self.db.insert_room(new_room)
-        if success:
-            return json.dumps({"status": "success", "message": "Room Added"})
-        raise cherrypy.HTTPError(409, "The Room already exists")
 
     def _post_add_invitation(self):
         """Add a new invitation to the catalog."""
         new_invite = self._load_json_body()
         require_fields(new_invite, ['house_id', 'email'])
 
-        success = self.db.insert_invitation(new_invite)
-        if success:
-            return json.dumps({"status": "success", "message": "Invitation Added"})
+        invite_id = self.db.insert_invitation(new_invite)
+        if invite_id:
+            return json.dumps({"status": "success", "id": invite_id, "message": "Invitation Added"})
         raise cherrypy.HTTPError(409, "The Invitation already exists")
 
     def _post_add_house_member(self):
@@ -100,11 +102,11 @@ class UserService:
         new_member = self._load_json_body()
         require_fields(new_member, ['house_id', 'user_id'])
 
-        success = self.db.insert_house_member(new_member)
-        if success:
-            return json.dumps({"status": "success", "message": "House Member Added"})
+        member_id = self.db.insert_house_member(new_member)
+        if member_id:
+            return json.dumps({"status": "success", "id": member_id, "message": "House Member Added"})
         raise cherrypy.HTTPError(409, "The House Member already exists")
-
+    
     # PUT METHOD - Update existing resources
     def PUT(self, *uri, **params):
         if not uri:
@@ -287,18 +289,14 @@ class UserService:
             raise cherrypy.HTTPError(400, "Missing 'id' parameter")
         house = self.db.get_house(house_id)
         if house:
-            return json.dumps({"status": "success", "house": house})
+            # Il parametro default=str converte magicamente il created_at!
+            return json.dumps({"status": "success", "house": house}, default=str)
         raise cherrypy.HTTPError(404, "House not found")
 
-    def _get_room(self, params):
-        """Get information about a room by ID."""
-        room_id = params.get('id')
-        if not room_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-        room = self.db.get_room(room_id)
-        if room:
-            return json.dumps({"status": "success", "room": room})
-        raise cherrypy.HTTPError(404, "Room not found")
+    def _get_all_houses(self, params):
+        """Get information about all houses."""
+        houses = self.db.get_all_houses()
+        return json.dumps({"status": "success", "houses": houses}, default=str)
 
     def _get_invitation(self, params):
         """Get information about an invitation by ID."""
@@ -307,8 +305,13 @@ class UserService:
             raise cherrypy.HTTPError(400, "Missing 'id' parameter")
         invite = self.db.get_invitation(invite_id)
         if invite:
-            return json.dumps({"status": "success", "invitation": invite})
+            return json.dumps({"status": "success", "invitation": invite}, default=str)
         raise cherrypy.HTTPError(404, "Invitation not found")
+
+    def _get_all_invitations(self, params):
+        """Get information about all invitations."""
+        invitations = self.db.get_all_invitations()
+        return json.dumps({"status": "success", "invitations": invitations}, default=str)
 
     def _get_house_member(self, params):
         """Get information about a house member by ID."""
@@ -317,34 +320,14 @@ class UserService:
             raise cherrypy.HTTPError(400, "Missing 'id' parameter")
         member = self.db.get_house_member(member_id)
         if member:
-            return json.dumps({"status": "success", "house_member": member})
+            return json.dumps({"status": "success", "house_member": member}, default=str)
         raise cherrypy.HTTPError(404, "House Member not found")
-
-    def _get_all_users(self, params):
-        """Get information about all users."""
-        users = self.db.get_all_users()
-        return json.dumps({"status": "success", "users": users})
-
-    def _get_all_houses(self, params):
-        """Get information about all houses."""
-        houses = self.db.get_all_houses()
-        return json.dumps({"status": "success", "houses": houses})
-
-    def _get_all_rooms(self, params):
-        """Get information about all rooms."""
-        rooms = self.db.get_all_rooms()
-        return json.dumps({"status": "success", "rooms": rooms})
-
-    def _get_all_invitations(self, params):
-        """Get information about all invitations."""
-        invitations = self.db.get_all_invitations()
-        return json.dumps({"status": "success", "invitations": invitations})
 
     def _get_all_house_members(self, params):
         """Get information about all house members."""
         members = self.db.get_all_house_members()
-        return json.dumps({"status": "success", "house_members": members})
-
+        return json.dumps({"status": "success", "house_members": members}, default=str)
+    
     def _load_json_body(self):
         body = cherrypy.request.body.read()
         try:

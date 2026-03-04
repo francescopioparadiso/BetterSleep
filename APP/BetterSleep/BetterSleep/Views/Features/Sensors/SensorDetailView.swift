@@ -184,9 +184,9 @@ struct SensorDetailView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .onChange(of: viewModel.selectedTimeRange) { _, _ in
-                        Task { if let sid = sensor.id { await viewModel.fetchChartData(sensorId: sid) } }
-                    }
+//                    .onChange(of: viewModel.selectedTimeRange) { _, _ in
+//                        Task { if let sid = sensor.id { await viewModel.fetchChartData(sensorId: sid) } }
+//                    }
                     
                     if viewModel.isChartLoading {
                         HStack { Spacer(); ProgressView("Loading chart..."); Spacer() }.frame(height: 300)
@@ -254,9 +254,9 @@ struct SensorDetailView: View {
                                 .foregroundColor(.primary)
                         }
                         .padding(.vertical, 2)
-                        .onAppear {
-                            if log == viewModel.logs.last { Task { if let sid = sensor.id { await viewModel.fetchLogs(sensorId: sid) } } }
-                        }
+//                        .onAppear {
+//                            if log == viewModel.logs.last { Task { if let sid = sensor.id { await viewModel.fetchLogs(sensorId: sid) } } }
+//                        }
                     }
                     if viewModel.isFetchingMore {
                         HStack { Spacer(); ProgressView(); Spacer() }.listRowBackground(Color.clear)
@@ -265,8 +265,8 @@ struct SensorDetailView: View {
             }
         }
         .navigationTitle("Logs")
-        .refreshable { if let sid = sensor.id { await viewModel.refreshAll(sensorId: sid) } }
-        .task { if let sid = sensor.id { await viewModel.fetchInitialData(sensorId: sid) } }
+//        .refreshable { if let sid = sensor.id { await viewModel.refreshAll(sensorId: sid) } }
+//        .task { if let sid = sensor.id { await viewModel.fetchInitialData(sensorId: sid) } }
     }
     
     private var headerView: some View {

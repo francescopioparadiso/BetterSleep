@@ -1,173 +1,116 @@
 import SwiftUI
-import Supabase
 
 struct ManageInvitesView: View {
-    var houseId: UUID
+    var houseId: Int // Changed from UUID to Int!
     @StateObject private var houseVM = HouseViewModel()
     @Environment(\.dismiss) var dismiss
     
     @State private var emailToInvite = ""
     @State private var isSending = false
     @State private var errorMessage: String? = nil
-    @State private var isFetching = true // Controls the initial loading spinner
+    @State private var isFetching = true
     
-    // Check if the current user is the owner to allow deleting guests
+    // Check if current user is owner (role == 0 in Postgres)
     var isCurrentUserOwner: Bool {
-        houseVM.currentHouseMembers.first(where: { $0.user_id == houseVM.currentUserId })?.role == "owner"
+        houseVM.currentHouseMembers.first(where: { $0.user_id == houseVM.currentUserId })?.role == 0
     }
     
-    // Sort members so the Owner always appears at the very top of the list
+    // Sort members so the Owner always appears at the top
     var sortedMembers: [HouseMember] {
         houseVM.currentHouseMembers.sorted { a, b in
-            if a.role == "owner" { return true }
-            if b.role == "owner" { return false }
-            return a.email < b.email
+            if a.role == 0 { return true }
+            if b.role == 0 { return false }
+            return (a.email ?? "") < (b.email ?? "")
         }
     }
     
     var body: some View {
         NavigationView {
             List {
-                // MARK: - Unified Access List
-                Section(
-                    header: Text("House Access"),
-                    footer: Text("Users must create a BetterSleep account before they can be invited.")
-                ) {
+                Section(header: Text("House Access"), footer: Text("Users must create a BetterSleep account before they can be invited.")) {
                     if isFetching {
-                        // Show a spinner centered in the list while fetching
                         HStack {
                             Spacer()
                             ProgressView("Loading access list...")
                             Spacer()
-                        }
-                        .listRowBackground(Color.clear)
-                        .padding(.vertical, 12)
-                        
+                        }.listRowBackground(Color.clear).padding(.vertical, 12)
                     } else {
-                        // --- 1. ACTIVE MEMBERS (Owner First, then Guests) ---
+                        // --- 1. ACTIVE MEMBERS ---
                         ForEach(sortedMembers) { member in
                             HStack {
-                                // Leading Icon
-                                Image(systemName: member.role == "owner" ? "star.fill" : "person.fill")
-                                    .foregroundColor(member.role == "owner" ? .yellow : .blue)
-                                    .frame(width: 30)
+                                Image(systemName: member.role == 0 ? "star.fill" : "person.fill")
+                                    .foregroundColor(member.role == 0 ? .yellow : .blue).frame(width: 30)
                                 
                                 VStack(alignment: .leading) {
-                                    Text(member.email).font(.body)
+                                    Text(member.email ?? "Unknown User").font(.body)
                                     Text(member.user_id == houseVM.currentUserId ? "You" : "Housemate")
                                         .font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
                                 
-                                // Proper Label for Owner vs Guest
-                                Text(member.role == "owner" ? "Owner" : "Guest")
+                                Text(member.role == 0 ? "Owner" : "Guest")
                                     .font(.caption).bold()
                                     .padding(.horizontal, 8).padding(.vertical, 4)
-                                    .background(member.role == "owner" ? Color.yellow.opacity(0.2) : Color.gray.opacity(0.2))
-                                    .foregroundColor(member.role == "owner" ? .yellow : .primary)
-                                    .cornerRadius(8)
+                                    .background(member.role == 0 ? Color.yellow.opacity(0.2) : Color.gray.opacity(0.2))
+                                    .foregroundColor(member.role == 0 ? .yellow : .primary).cornerRadius(8)
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 if isCurrentUserOwner && member.user_id != houseVM.currentUserId {
                                     Button(role: .destructive) {
-                                        Task {
-                                            // Safely unwrap the optional ID
-                                            if let memberId = member.id {
-                                                await houseVM.removeMember(memberId: memberId)
-                                            }
-                                        }
-                                    } label: {
-                                        Label("Remove", systemImage: "trash")
-                                    }
+                                        Task { if let id = member.id { await houseVM.removeMember(memberId: id) } }
+                                    } label: { Label("Remove", systemImage: "trash") }
                                 }
                             }
                         }
                         
-                        // --- 2. PENDING INVITES ---
-                        let pendingInvites = houseVM.currentHouseInvites.filter { $0.status == "pending" }
+                        // --- 2. PENDING INVITES (status == 0) ---
+                        let pendingInvites = houseVM.currentHouseInvites.filter { $0.status == 0 }
                         ForEach(pendingInvites) { invite in
                             HStack {
-                                // Leading Icon with Orange Question Mark
-                                Image(systemName: "questionmark.circle.fill")
-                                    .foregroundColor(.orange)
-                                    .frame(width: 30)
-                                
-                                Text(invite.email)
-                                    .foregroundColor(.primary)
-                                
+                                Image(systemName: "questionmark.circle.fill").foregroundColor(.orange).frame(width: 30)
+                                Text(invite.email).foregroundColor(.primary)
                                 Spacer()
-                                
-                                Text("Pending")
-                                    .font(.caption).bold()
+                                Text("Pending").font(.caption).bold()
                                     .padding(.horizontal, 8).padding(.vertical, 4)
-                                    .background(Color.orange.opacity(0.2))
-                                    .foregroundColor(.orange)
-                                    .cornerRadius(8)
+                                    .background(Color.orange.opacity(0.2)).foregroundColor(.orange).cornerRadius(8)
                             }
-                            // Optional: Swipe to cancel/delete a pending invite
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 if isCurrentUserOwner {
                                     Button(role: .destructive) {
                                         Task {
-                                            if let inviteId = invite.id {
-                                                _ = try? await supabase.from("invitations").delete().eq("id", value: inviteId).execute()
+                                            if let id = invite.id {
+                                                await houseVM.deleteInvite(inviteId: id)
                                                 await houseVM.fetchHouseDetails(for: houseId)
                                             }
                                         }
-                                    } label: {
-                                        Label("Cancel", systemImage: "xmark.circle")
-                                    }
+                                    } label: { Label("Cancel", systemImage: "xmark.circle") }
                                 }
                             }
                         }
                         
-                        // --- 3. THE ADDING ROW (Bottom of the list) ---
+                        // --- 3. ADDING ROW ---
                         VStack(alignment: .leading, spacing: 0) {
                             HStack {
-                                Image(systemName: "envelope.badge.fill")
-                                    .foregroundColor(.blue)
-                                    .frame(width: 30)
-                                
+                                Image(systemName: "envelope.badge.fill").foregroundColor(.blue).frame(width: 30)
                                 TextField("Invite housemate via email...", text: $emailToInvite)
-                                    .keyboardType(.emailAddress)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
+                                    .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                                 
-                                if isSending {
-                                    ProgressView()
-                                } else {
+                                if isSending { ProgressView() } else {
                                     Button(action: sendInvite) {
-                                        Image(systemName: "paperplane.fill")
-                                            .font(.system(size: 18, weight: .bold))
+                                        Image(systemName: "paperplane.fill").font(.system(size: 18, weight: .bold))
                                             .foregroundColor(emailToInvite.isEmpty || !emailToInvite.contains("@") ? .gray : .blue)
-                                    }
-                                    .disabled(emailToInvite.isEmpty || !emailToInvite.contains("@"))
-                                    .buttonStyle(PlainButtonStyle()) // Prevents the whole row from becoming clickable
+                                    }.disabled(emailToInvite.isEmpty || !emailToInvite.contains("@")).buttonStyle(PlainButtonStyle())
                                 }
                             }
-                            
-                            // Display error messages right below the text field
-                            if let error = errorMessage {
-                                Text(error)
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                                    .padding(.top, 4)
-                                    .padding(.leading, 38) // Aligns with the text field (past the icon)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                        
+                            if let error = errorMessage { Text(error).font(.caption).foregroundColor(.red).padding(.top, 4).padding(.leading, 38) }
+                        }.padding(.vertical, 4)
                     }
                 }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Manage Access")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("Done") { dismiss() } } }
             .task {
                 isFetching = true
                 await houseVM.fetchHouseDetails(for: houseId)
@@ -176,24 +119,16 @@ struct ManageInvitesView: View {
         }
     }
     
-    // MARK: - Actions
     private func sendInvite() {
         Task {
             isSending = true
             errorMessage = nil
-            
-            // 1. Check if user exists
             let userExists = await houseVM.checkUserExists(email: emailToInvite.lowercased())
-            
             if userExists {
-                // 2. Send the invite
                 await houseVM.inviteUser(email: emailToInvite, to: houseId)
                 emailToInvite = ""
-                // 3. Refresh lists
                 await houseVM.fetchHouseDetails(for: houseId)
-            } else {
-                errorMessage = "User not found. They must sign up first."
-            }
+            } else { errorMessage = "User not found. They must sign up first." }
             isSending = false
         }
     }
