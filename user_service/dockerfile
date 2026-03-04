@@ -7,5 +7,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY ../common ./common
 
-CMD ["python3", "catalog.py"]
+CMD ["python3", "user_service.py"]

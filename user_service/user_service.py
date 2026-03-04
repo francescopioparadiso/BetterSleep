@@ -1,11 +1,9 @@
 import json
-import sys
 import logging
 import cherrypy
-import threading
-import time
 from postgres_db import PostgresDB
-import catalog_client
+from common import catalog_client
+
 # Configure logging
 logger = logging.getLogger(__name__)
 import bcrypt
@@ -25,7 +23,7 @@ class UserService:
         self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
 
         try:
-            self.catalog.register_service()
+            self.catalog.register()
         except Exception as e:
             logger.error(f'Failed to Register with Catalog: {e}')
             raise Exception
@@ -384,8 +382,8 @@ if __name__ == "__main__":
         'server.socket_port': full_conf['serviceInfo']['port'],
     })
 
-    cherrypy.engine.subscribe('start', user_service.catalog.start_background_loop())
-    cherrypy.engine.subscribe('stop',  user_service.catalog.stop_background_loop())
-
+    cherrypy.engine.subscribe('start', user_service.catalog.start_background_loop)
+    cherrypy.engine.subscribe('stop', user_service.catalog.stop_background_loop)
+    cherrypy.engine.subscribe('stop', user_service.catalog.unregister)
     cherrypy.engine.start()
     cherrypy.engine.block()

@@ -40,3 +40,5 @@ GET http://localhost:8080/checkUsername?username=antontino54
 GET http://localhost:8080/getUserSession?telegram_chat_id=417168004
 ###
 GET http://localhost:8080/checkRoom/?bedroom_id=8&password=2
+
+
