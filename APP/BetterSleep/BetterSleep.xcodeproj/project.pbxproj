@@ -6,15 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		2C9B52882F4F0D2200C7053C /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 2C9B52872F4F0D2200C7053C /* Supabase */; };
-		2CB7BE692F4DC2F90065BE27 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = 2CB7BE682F4DC2F90065BE27 /* Auth */; };
-		2CB7BE6B2F4DC2F90065BE27 /* Functions in Frameworks */ = {isa = PBXBuildFile; productRef = 2CB7BE6A2F4DC2F90065BE27 /* Functions */; };
-		2CB7BE6D2F4DC2F90065BE27 /* PostgREST in Frameworks */ = {isa = PBXBuildFile; productRef = 2CB7BE6C2F4DC2F90065BE27 /* PostgREST */; };
-		2CB7BE6F2F4DC2F90065BE27 /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = 2CB7BE6E2F4DC2F90065BE27 /* Realtime */; };
-		2CB7BE712F4DC2F90065BE27 /* Storage in Frameworks */ = {isa = PBXBuildFile; productRef = 2CB7BE702F4DC2F90065BE27 /* Storage */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileReference section */
 		2CB7BE522F4DBFCE0065BE27 /* BetterSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BetterSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -32,12 +23,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2CB7BE6D2F4DC2F90065BE27 /* PostgREST in Frameworks */,
-				2CB7BE6B2F4DC2F90065BE27 /* Functions in Frameworks */,
-				2C9B52882F4F0D2200C7053C /* Supabase in Frameworks */,
-				2CB7BE692F4DC2F90065BE27 /* Auth in Frameworks */,
-				2CB7BE712F4DC2F90065BE27 /* Storage in Frameworks */,
-				2CB7BE6F2F4DC2F90065BE27 /* Realtime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -88,12 +73,6 @@
 			);
 			name = BetterSleep;
 			packageProductDependencies = (
-				2CB7BE682F4DC2F90065BE27 /* Auth */,
-				2CB7BE6A2F4DC2F90065BE27 /* Functions */,
-				2CB7BE6C2F4DC2F90065BE27 /* PostgREST */,
-				2CB7BE6E2F4DC2F90065BE27 /* Realtime */,
-				2CB7BE702F4DC2F90065BE27 /* Storage */,
-				2C9B52872F4F0D2200C7053C /* Supabase */,
 			);
 			productName = BetterSleep;
 			productReference = 2CB7BE522F4DBFCE0065BE27 /* BetterSleep.app */;
@@ -124,7 +103,6 @@
 			mainGroup = 2CB7BE492F4DBFCE0065BE27;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2CB7BE532F4DBFCE0065BE27 /* Products */;
@@ -387,50 +365,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/supabase/supabase-swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.5.1;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		2C9B52872F4F0D2200C7053C /* Supabase */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Supabase;
-		};
-		2CB7BE682F4DC2F90065BE27 /* Auth */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Auth;
-		};
-		2CB7BE6A2F4DC2F90065BE27 /* Functions */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Functions;
-		};
-		2CB7BE6C2F4DC2F90065BE27 /* PostgREST */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = PostgREST;
-		};
-		2CB7BE6E2F4DC2F90065BE27 /* Realtime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Realtime;
-		};
-		2CB7BE702F4DC2F90065BE27 /* Storage */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2CB7BE672F4DC2F90065BE27 /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Storage;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 2CB7BE4A2F4DBFCE0065BE27 /* Project object */;
 }

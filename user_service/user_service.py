@@ -82,7 +82,6 @@ class UserService:
 
         house_id = self.db.insert_house(new_house)
         if house_id:
-            # Ora restituiamo l'ID all'app Swift!
             return json.dumps({"status": "success", "id": house_id, "message": "House Added"})
         raise cherrypy.HTTPError(409, "The House already exists")
 
@@ -265,6 +264,9 @@ class UserService:
 
         handlers = {
             "login": self._get_login,
+            "getAllHouses": self._get_all_houses,
+            "getAllHouseMembers": self._get_all_house_members,
+
             "getHouse": self._get_house,
             "getRoom": self._get_room,
             "getInvitation": self._get_invitation,
@@ -274,11 +276,13 @@ class UserService:
             "getAllRooms": self._get_all_rooms,
             "getAllInvitations": self._get_all_invitations,
             "getAllHouseMembers": self._get_all_house_members,
+            "getEmailByUserId": self._get_email_by_user_id,
         }
         handler = handlers.get(uri[0])
         if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
+    
     def _get_login(self, params):
         """Authenticate a user by email and password."""
         email = params.get('email')
@@ -290,6 +294,30 @@ class UserService:
         if user:
             return json.dumps({"status": "success", "user": user})
         raise cherrypy.HTTPError(401, "Invalid email or password")
+    
+    def _get_all_houses(self, params):
+        """Fetch all houses and safely convert dates for JSON."""
+        houses = self.db.get_all_houses()
+        
+        for h in houses:
+            # Fix the datetime crash!
+            if 'created_at' in h and h['created_at']:
+                h['created_at'] = str(h['created_at'])
+                
+        return json.dumps({
+            "status": "success", 
+            "houses": houses  # Swift is looking specifically for this "houses" key!
+        })
+
+    def _get_all_house_members(self, params):
+        """Fetch all house members."""
+        members = self.db.get_all_house_members()
+        
+        # (No created_at column in house_members, so it is naturally safe to dump!)
+        return json.dumps({
+            "status": "success", 
+            "house_members": members # Swift is looking specifically for this "house_members" key!
+        })
 
     def _get_house(self, params):
         """Get information about a house by ID."""

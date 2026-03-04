@@ -65,7 +65,8 @@ class PostgresDB:
         # check if email already exists
         if self._execute_query("SELECT 1 FROM users WHERE email = %s", (email,), fetch=True, single=True):
             return None 
-        hashed_password = generate_password_hash(password)
+        
+        hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
         query = "INSERT INTO users (email, password, night_time, morning_time) VALUES (%s, %s, %s, %s) RETURNING id"
         result = self._execute_query(query, (email, hashed_password, night_time or '22:00', morning_time or '07:00'), fetch=True, single=True)
         return result['id'] if result else None
@@ -83,11 +84,16 @@ class PostgresDB:
         query = "UPDATE users SET email = %s, night_time = %s, morning_time = %s WHERE id = %s"
         return self._execute_query(query, (u['email'], u.get('night_time', '22:00'), u.get('morning_time', '07:00'), u['id']))
 
-    def delete_user(self, user_id):
-        query = "DELETE FROM users WHERE id = %s"
-        return self._execute_query(query, (user_id,))
-
     # --- HOUSES ---
+    def getHousesByUser(self, u):
+        query = """
+            SELECT h.* FROM houses h
+            JOIN house_members hm ON h.id = hm.house_id
+            WHERE hm.user_id = %s
+            ORDER BY h.id
+        """
+        return self._execute_query(query, (u['id'],), fetch=True)
+
     def insert_house(self, h):
         query = "INSERT INTO houses (name) VALUES (%s) RETURNING id"
         result = self._execute_query(query, (h['name'],), fetch=True, single=True)

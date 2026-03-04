@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "1. Database",
+            "type": "shell",
+            "command": "docker compose up",
+            "options": { "cwd": "${workspaceFolder}/Database" },
+            "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "2. Catalog",
+            "type": "shell",
+            "command": "python3 catalog.py",
+            "options": { "cwd": "${workspaceFolder}/catalog" },
+            "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "3. User Service",
+            "type": "shell",
+            "command": "python3 user_service.py",
+            "options": { "cwd": "${workspaceFolder}/user_service" },
+            "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "🚀 START PROJECT",
+            "dependsOn": ["1. Database", "2. Catalog", "3. User Service"],
+            "dependsOrder": "parallel",
+            "problemMatcher": []
+        }
+    ]
+}
