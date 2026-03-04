@@ -11,7 +11,6 @@ from common import catalog_client  # <--- Now this will work!
 
 # Configure logging
 logger = logging.getLogger(__name__)
-import bcrypt
 
 # ============================================================
 # CATALOG REST SERVICE
@@ -107,6 +106,16 @@ class UserService:
             return json.dumps({"status": "success", "id": member_id, "message": "House Member Added"})
         raise cherrypy.HTTPError(409, "The House Member already exists")
     
+    def _post_add_room(self):
+        """Add a new room to the catalog."""
+        new_room = self._load_json_body()
+        require_fields(new_room, ['house_id', 'user_id', 'name'])
+
+        room_id = self.db.insert_room(new_room)
+        if room_id:
+            return json.dumps({"status": "success", "id": room_id, "message": "Room Added"})
+        raise cherrypy.HTTPError(409, "The Room already exists")
+
     # PUT METHOD - Update existing resources
     def PUT(self, *uri, **params):
         if not uri:
@@ -277,8 +286,8 @@ class UserService:
         if not email or not password:
             raise cherrypy.HTTPError(400, "Missing 'email' or 'password' parameter")
 
-        user = self.db.login_user(email)
-        if user and bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
+        user = self.db.login_user(email, password)
+        if user:
             return json.dumps({"status": "success", "user": user})
         raise cherrypy.HTTPError(401, "Invalid email or password")
 
@@ -328,6 +337,26 @@ class UserService:
         members = self.db.get_all_house_members()
         return json.dumps({"status": "success", "house_members": members}, default=str)
     
+    def _get_room(self, params):
+        """Get information about a room by ID."""
+        room_id = params.get('id')
+        if not room_id:
+            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
+        room = self.db.get_room(room_id)
+        if room:
+            return json.dumps({"status": "success", "room": room}, default=str)
+        raise cherrypy.HTTPError(404, "Room not found")
+
+    def _get_all_users(self, params):
+        """Get information about all users."""
+        # Not implemented in PostgresDB, so return empty for now
+        return json.dumps({"status": "success", "users": []})
+
+    def _get_all_rooms(self, params):
+        """Get information about all rooms."""
+        rooms = self.db.get_all_rooms()
+        return json.dumps({"status": "success", "rooms": rooms}, default=str)
+
     def _load_json_body(self):
         body = cherrypy.request.body.read()
         try:

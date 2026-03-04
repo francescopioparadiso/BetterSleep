@@ -61,14 +61,13 @@ class PostgresDB:
                     logger.warning(f"Error closing database connection: {e}")
 
     # --- USERS ---
-    def signup_user(self, email, password):
+    def signup_user(self, email, password, night_time=None, morning_time=None):
         # check if email already exists
         if self._execute_query("SELECT 1 FROM users WHERE email = %s", (email,), fetch=True, single=True):
             return None 
-        
         hashed_password = generate_password_hash(password)
-        query = "INSERT INTO users (email, password) VALUES (%s, %s) RETURNING id"
-        result = self._execute_query(query, (email, hashed_password), fetch=True, single=True)
+        query = "INSERT INTO users (email, password, night_time, morning_time) VALUES (%s, %s, %s, %s) RETURNING id"
+        result = self._execute_query(query, (email, hashed_password, night_time or '22:00', morning_time or '07:00'), fetch=True, single=True)
         return result['id'] if result else None
         
     def login_user(self, email, password):
@@ -79,6 +78,14 @@ class PostgresDB:
             return user
             
         return None
+
+    def update_user(self, u):
+        query = "UPDATE users SET email = %s, night_time = %s, morning_time = %s WHERE id = %s"
+        return self._execute_query(query, (u['email'], u.get('night_time', '22:00'), u.get('morning_time', '07:00'), u['id']))
+
+    def delete_user(self, user_id):
+        query = "DELETE FROM users WHERE id = %s"
+        return self._execute_query(query, (user_id,))
 
     # --- HOUSES ---
     def insert_house(self, h):
@@ -105,7 +112,7 @@ class PostgresDB:
     # --- HOUSE MEMBERS ---
     def insert_house_member(self, m):
         query = "INSERT INTO house_members (house_id, user_id, role) VALUES (%s, %s, %s) RETURNING id"
-        result = self._execute_query(query, (m['house_id'], m['user_id'], m.get('role', 'owner')), fetch=True, single=True)
+        result = self._execute_query(query, (m['house_id'], m['user_id'], int(m.get('role', 0))), fetch=True, single=True)
         return result['id'] if result else None
 
     def get_house_member(self, member_id):
@@ -118,7 +125,7 @@ class PostgresDB:
 
     def update_house_member(self, m):
         query = "UPDATE house_members SET house_id = %s, user_id = %s, role = %s WHERE id = %s"
-        return self._execute_query(query, (m['house_id'], m['user_id'], m.get('role', 'owner'), m['id']))
+        return self._execute_query(query, (m['house_id'], m['user_id'], int(m.get('role', 0)), m['id']))
 
     def delete_house_member(self, member_id):
         query = "DELETE FROM house_members WHERE id = %s"
@@ -148,8 +155,8 @@ class PostgresDB:
 
     # --- ROOMS ---
     def insert_room(self, r):
-        query = "INSERT INTO rooms (house_id, name, bedtime, wake_time, desired_temperature) VALUES (%s, %s, %s, %s, %s) RETURNING id"
-        result = self._execute_query(query, (r['house_id'], r['name'], r.get('bedtime'), r.get('wake_time'), r.get('desired_temperature')), fetch=True, single=True)
+        query = "INSERT INTO rooms (house_id, user_id, name) VALUES (%s, %s, %s) RETURNING id"
+        result = self._execute_query(query, (r['house_id'], r['user_id'], r['name']), fetch=True, single=True)
         return result['id'] if result else None
 
     def get_room(self, room_id):
@@ -161,8 +168,8 @@ class PostgresDB:
         return self._execute_query(query, fetch=True)
 
     def update_room(self, r):
-        query = "UPDATE rooms SET house_id = %s, name = %s, bedtime = %s, wake_time = %s, desired_temperature = %s WHERE id = %s"
-        return self._execute_query(query, (r['house_id'], r['name'], r.get('bedtime'), r.get('wake_time'), r.get('desired_temperature'), r['id']))
+        query = "UPDATE rooms SET house_id = %s, user_id = %s, name = %s WHERE id = %s"
+        return self._execute_query(query, (r['house_id'], r['user_id'], r['name'], r['id']))
 
     def delete_room(self, room_id):
         query = "DELETE FROM rooms WHERE id = %s"
