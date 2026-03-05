@@ -1,5 +1,35 @@
 import SwiftUI
 
+private func flagForHouse(_ name: String) -> String {
+    let n = name.lowercased()
+    // Italian cities
+    if n.contains("roma") || n.contains("rome") || n.contains("milano") || n.contains("milan")
+        || n.contains("torino") || n.contains("turin") || n.contains("napol") || n.contains("firenz")
+        || n.contains("florence") || n.contains("venezia") || n.contains("venice") || n.contains("bologna")
+        || n.contains("italia") || n.contains("italy") || n.contains("genova") || n.contains("palermo")
+        || n.contains("bari") || n.contains("catania") { return "🇮🇹" }
+    // UK
+    if n.contains("london") || n.contains("manchester") || n.contains("liverpool") || n.contains("birmingham")
+        || n.contains("uk") || n.contains("england") || n.contains("edinburgh") || n.contains("scotland") { return "🇬🇧" }
+    // USA
+    if n.contains("new york") || n.contains("los angeles") || n.contains("chicago") || n.contains("miami")
+        || n.contains("san francisco") || n.contains("boston") || n.contains("seattle")
+        || n.contains("usa") || n.contains("america") { return "🇺🇸" }
+    // France
+    if n.contains("paris") || n.contains("lyon") || n.contains("marseille") || n.contains("france")
+        || n.contains("nice") || n.contains("toulouse") { return "🇫🇷" }
+    // Germany
+    if n.contains("berlin") || n.contains("munich") || n.contains("münchen") || n.contains("hamburg")
+        || n.contains("frankfurt") || n.contains("german") { return "🇩🇪" }
+    // Spain
+    if n.contains("madrid") || n.contains("barcelona") || n.contains("spain") || n.contains("sevilla")
+        || n.contains("valencia") { return "🇪🇸" }
+    // Japan
+    if n.contains("tokyo") || n.contains("osaka") || n.contains("japan") || n.contains("kyoto") { return "🇯🇵" }
+    // Default house emoji
+    return "🏠"
+}
+
 struct HouseView: View {
     @StateObject private var viewModel = HouseModel()
     
@@ -54,13 +84,20 @@ struct HouseView: View {
                             Section(header: Text("My Homes")) {
                                 ForEach(viewModel.houses) { house in
                                     NavigationLink(destination: RoomsView(house: house)) {
-                                        HStack {
-                                            Image(systemName: "house.fill")
-                                                .foregroundColor(.blue)
-                                                .frame(width: 30)
-                                            Text(house.name)
-                                                .font(.system(size: 18, weight: .medium, design: .rounded))
+                                        HStack(spacing: 14) {
+                                            Text(flagForHouse(house.name))
+                                                .font(.largeTitle)
+                                                .frame(width: 36)
+                                            
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(house.name)
+                                                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                                                Text("Smart Home")
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
                                         }
+                                        .padding(.vertical, 6)
                                     }
                                 }
                                 .onDelete { indexSet in

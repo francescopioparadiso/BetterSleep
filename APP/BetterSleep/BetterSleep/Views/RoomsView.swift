@@ -1,6 +1,6 @@
 import SwiftUI
 
-private func iconForRoom(_ name: String) -> String {
+func iconForRoom(_ name: String) -> String {
     let n = name.lowercased()
     if n.contains("bed")    { return "bed.double.fill" }
     if n.contains("bath")   { return "shower.fill" }
@@ -54,8 +54,7 @@ struct RoomsView: View {
     }
     
     var body: some View {
-        ZStack(alignment: .top) {
-            List {
+        List {
                 // MARK: - Rooms
                 Section(header: Text("Rooms")) {
                     if roomModel.rooms.isEmpty {
@@ -74,28 +73,24 @@ struct RoomsView: View {
                         }
                         .listRowBackground(Color.clear)
                     } else {
-                        ForEach(roomModel.rooms) { room in
-                            HStack(spacing: 14) {
-                                Image(systemName: iconForRoom(room.name))
-                                    .font(.title2)
-                                    .foregroundColor(.indigo)
-                                    .frame(width: 36)
-                                
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(room.name)
-                                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                                    Text("0 sensors")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                        ForEach($roomModel.rooms) { $room in
+                            NavigationLink(destination: SensorsView(house: house, room: $room, roomModel: roomModel)) {
+                                HStack(spacing: 14) {
+                                    Image(systemName: iconForRoom(room.name))
+                                        .font(.title2)
+                                        .foregroundColor(.indigo)
+                                        .frame(width: 36)
+                                    
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(room.name)
+                                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                                        Text("6 sensors")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
-                                
-                                Spacer()
-                                
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(.secondary)
+                                .padding(.vertical, 6)
                             }
-                            .padding(.vertical, 6)
                         }
                         .onDelete { offsets in
                             Task {
@@ -205,9 +200,8 @@ struct RoomsView: View {
                     .padding(.vertical, 4)
                 }
             }
-            .listStyle(.insetGrouped)
-            
-            // MARK: - Error Toast
+        .listStyle(.insetGrouped)
+        .safeAreaInset(edge: .top, spacing: 0) {
             if let errorMessage = invitationModel.errorMessage {
                 HStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -217,15 +211,16 @@ struct RoomsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .foregroundStyle(.white)
-                .background(Color.red.opacity(0.85))
+                .foregroundStyle(Color.red)
+                .background(Color.red.opacity(0.15))
                 .clipShape(.rect(cornerRadius: 24))
                 .shadow(color: Color.red, radius: 30, x: 0, y: 0)
+                .padding(.horizontal)
+                .padding(.top, 4)
                 .transition(.asymmetric(
                     insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5)),
                     removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5))
                 ))
-                .zIndex(1)
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
                         withAnimation(toastAnimation) {
@@ -242,6 +237,7 @@ struct RoomsView: View {
                 Button(action: { showingAddRoom = true }) {
                     Image(systemName: "plus")
                 }
+                .buttonStyle(.glassProminent)
             }
         }
         .alert("New Room", isPresented: $showingAddRoom) {

@@ -106,13 +106,20 @@ class UserService:
         raise cherrypy.HTTPError(409, "The House Member already exists")
     
     def _post_add_room(self):
-        """Add a new room to the catalog."""
+        """Add a new room to the catalog and auto-create default sensors."""
         new_room = self._load_json_body()
         require_fields(new_room, ['house_id', 'user_id', 'name'])
 
         room_id = self.db.insert_room(new_room)
         if room_id:
-            return json.dumps({"status": "success", "id": room_id, "message": "Room Added"})
+            # Auto-create default sensors for this room
+            sensor_ids = self.db.create_default_sensors(room_id, new_room['house_id'])
+            return json.dumps({
+                "status": "success",
+                "id": room_id,
+                "message": "Room Added",
+                "sensors_created": len(sensor_ids)
+            })
         raise cherrypy.HTTPError(409, "The Room already exists")
 
     # PUT METHOD - Update existing resources
@@ -123,6 +130,7 @@ class UserService:
         handlers = {
             "updateUser": self._put_update_user,
             "updateInvitation": self._put_update_invitation,
+            "updateRoom": self._put_update_room,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -149,6 +157,16 @@ class UserService:
             return json.dumps({"status": "success", "message": "Invitation updated"})
         raise cherrypy.HTTPError(404, "Invitation not found")
 
+    def _put_update_room(self):
+        """Update room settings (temperature/light night/morning)."""
+        updated_room = self._load_json_body()
+        require_fields(updated_room, ['id'])
+
+        success = self.db.update_room(updated_room)
+        if success:
+            return json.dumps({"status": "success", "message": "Room updated"})
+        raise cherrypy.HTTPError(404, "Room not found")
+
     # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):
         if not uri:
@@ -159,6 +177,7 @@ class UserService:
             "removeRoom": self._delete_remove_room,
             "removeInvitation": self._delete_remove_invitation,
             "removeHouseMember": self._delete_remove_house_member,
+            "removeSensor": self._delete_remove_sensor,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -209,6 +228,17 @@ class UserService:
             return json.dumps({"status": "success", "message": "House Member Deleted"})
         raise cherrypy.HTTPError(404, "House Member not found")
 
+    def _delete_remove_sensor(self, params):
+        """Delete a sensor by ID."""
+        sensor_id = params.get('id')
+        if not sensor_id:
+            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
+
+        success = self.db.delete_sensor(sensor_id)
+        if success:
+            return json.dumps({"status": "success", "message": "Sensor Deleted"})
+        raise cherrypy.HTTPError(404, "Sensor not found")
+
     # --------------------------------------------------------
     # GET METHOD - Retrieve resources
     # --------------------------------------------------------
@@ -223,6 +253,7 @@ class UserService:
             "getAllUsers": self._get_all_users,
             "getAllRooms": self._get_all_rooms,
             "getAllInvitations": self._get_all_invitations,
+            "getSensorsByRoom": self._get_sensors_by_room,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -253,6 +284,14 @@ class UserService:
         """Get information about all rooms."""
         rooms = self.db.get_all_rooms()
         return json.dumps({"status": "success", "rooms": rooms}, default=str)
+
+    def _get_sensors_by_room(self, params):
+        """Get all sensors for a specific room."""
+        room_id = params.get('room_id')
+        if not room_id:
+            raise cherrypy.HTTPError(400, "Missing 'room_id' parameter")
+        sensors = self.db.get_sensors_by_room(room_id)
+        return json.dumps({"status": "success", "sensors": sensors}, default=str)
 
     def _load_json_body(self):
         body = cherrypy.request.body.read()

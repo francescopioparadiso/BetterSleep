@@ -55,4 +55,32 @@ class RoomModel: ObservableObject {
             self.rooms.removeAll { $0.id == roomId }
         } catch { print("Error deleting room: \(error)") }
     }
+
+    private var updateTask: Task<Void, Never>?
+
+    func updateRoomDebounced(_ room: Room) {
+        updateTask?.cancel()
+        updateTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 800_000_000)
+                let base = try await baseURL()
+                var req = URLRequest(url: URL(string: "\(base)/updateRoom")!)
+                req.httpMethod = "PUT"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let body: [String: Any] = [
+                    "id": room.id ?? 0,
+                    "temperature_night": room.temperature_night ?? 18,
+                    "temperature_morning": room.temperature_morning ?? 22,
+                    "light_night": room.light_night ?? 0,
+                    "light_morning": room.light_morning ?? 100
+                ]
+                req.httpBody = try JSONSerialization.data(withJSONObject: body)
+                _ = try await URLSession.shared.data(for: req)
+            } catch is CancellationError {
+                // Expected
+            } catch {
+                print("Error updating room: \(error)")
+            }
+        }
+    }
 }

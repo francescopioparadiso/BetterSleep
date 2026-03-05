@@ -38,5 +38,19 @@ create table rooms (
   house_id integer references houses(id) on delete cascade,
   user_id integer references users(id) on delete cascade,
   name text,
+  created_at timestamp with time zone default now(),
+  temperature_night integer default 18,
+  temperature_morning integer default 22,
+  light_night integer default 0,
+  light_morning integer default 100
+);
+
+-- SENSORS
+create table sensors (
+  id integer generated always as identity primary key,
+  room_id integer references rooms(id) on delete cascade,
+  type text not null, -- ambient_temp, humidity, light, heart_rate, vibration, presence
+  name text not null,
+  mqtt_topic text,
   created_at timestamp with time zone default now()
 );
