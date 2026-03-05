@@ -24,7 +24,7 @@ if __name__ == "__main__":
     broker = 'broker.hivemq.com'
     port = 1883
     clientID = 'SensorFakePublisher20251113'
-    topic = 'House/1/Bedroom/1/sensor/temperature/1/data'
+    topic = 'House/1/Bedroom/1/sensor/ambient_temp/1/data'
     mqtt_client_publisher = simplePublisher(clientID, broker, port, topic)
     mqtt_client_publisher.startClient()
     while True:

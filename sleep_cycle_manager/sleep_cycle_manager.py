@@ -1,12 +1,11 @@
 import json
 import sys
-import time
 import threading
 import logging
-from datetime import datetime
 import cherrypy
 from common.catalog_client import CatalogClient
-
+from common.MQTT.MyMQTT import MyMQTT
+from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class SleepCycleManager:
@@ -20,8 +19,68 @@ class SleepCycleManager:
         self._worker = None
         self.catalog_client = CatalogClient(self.catalog_url, self.service_info, self.remove_interval)
         self.catalog_client.register()
+        self.clientID = conf['MQTT']['clientID']
+        self.broker = conf['MQTT']['broker']
+        self.port = conf['MQTT']['port']
+        self.topic_subscribe = conf['MQTT']['topic_subscribe']
+        try:
+            self.mqtt_client = MyMQTT(self.clientID, self.broker, self.port, self)
+            self.startClient()
+            self.mqtt_client.mySubscribe(self.topic_subscribe)
+        except Exception as e:
+            logger.error(f"Error initializing MQTT client: {e}")
+            self.catalog_client.unregister()
+            sys.exit(1)
+
+    def startClient(self):
+        self.mqtt_client.start()
+
+    def stopClient(self):
+        self.mqtt_client.stop()
+
+    def publish(self, message,command_topic=None):
+        try:
+            self.mqtt_client.publish(command_topic, json.dumps(message))
+            logger.info(f"Published message to {topic_to_publish}: {message}")
+        except Exception as e:
+            logger.error(f"Error publishing message: {e}")
 
 
+    def notify(self, topic, payload):
+        # 1. Decodifica il messaggio SenML ricevuto dai sensori simolati
+        message_received = json.loads(payload)
+        if data in topic:
+            print(topic)
+            houseid=topic.split("/")[1]
+            bedroomid=topic.split("/")[3]
+            sensor_type=topic.split("/")[5]
+            sensorid=topic.split("/")[6]
+            room_actuetor=["fan"] # we need to ask to the catalog for the actuators in the room, but for now we can assume that there is only one actuator in the room and it is the fan
+            desiderate_temperature=25 # we need to ask to the catalog for the desiderate temperature, but for now we can assume that the desiderate temperature is 25 degrees
+            if sensor_type == "ambient_temp":
+                temp_value = message_received['e'][0]['v']
+                if temp_value > desiderate_temperature and "fan" in room_actuetor:
+                    if "fan" in room_actuetor:
+                        command = {"action": "ON", "device": "fan", "timestamp": str(datetime.now())}
+                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
+                    elif "heater" in room_actuetor:
+                        command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
+                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
+
+                elif temp_value < desiderate_temperature :
+                    if "fan" in room_actuetor:
+                        command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
+                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
+                    elif "heater" in room_actuetor:
+                        command = {"action": "ON", "device": "heater", "timestamp": str(datetime.now())}
+                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
+                else:
+                    if "fan" in room_actuetor:
+                        command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
+                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
+                    elif "heater" in room_actuetor:
+                        command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
+                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
 
 if __name__ == "__main__":
   # Standard CherryPy startup sequence
