@@ -55,6 +55,12 @@ class Fan(Actuator):
         data = json.loads(msg.payload.decode())
         print(f"\n[ACTUATOR - FAN] Status changed to: {data['value']}\n")
 
+class Heater(Actuator):
+    def on_message(self, client, userdata, msg):
+        import json
+        data = json.loads(msg.payload.decode())
+        print(f"\n[ACTUATOR - HEATER] Status changed to: {data['value']}\n")
+
 # MAIN EXECUTION
 
 if __name__ == "__main__":
@@ -68,11 +74,13 @@ if __name__ == "__main__":
     vibration = VibrationSensor(H_ID, B_ID, "VIB_01", "vibration", CATALOG_URL, BROKER_IP)
     
     light = SmartLight(H_ID, B_ID, "LIGHT_01", CATALOG_URL, BROKER_IP)
-    fan = Fan(H_ID, B_ID, "FAN_01", CATALOG_URL, BROKER_IP)
+    fan = Fan(H_ID, B_ID, "FAN_01", CATALOG_URL, BROKER_IP
+    heater = Heater(H_ID, B_ID, "HEAT_01", CATALOG_URL, BROKER_IP)
 
     # Start Actuators
     light.start()
     fan.start()
+    heater.start()
 
     # Start Sensors in separate threads (to use input() simultaneously)
     threading.Thread(target=presence.run, daemon=True).start()
