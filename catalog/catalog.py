@@ -4,7 +4,6 @@ import logging
 import cherrypy
 import threading
 import time
-import dateutil.parser
 from mongo_db import MongoDBAdapter
 
 # Configure logging with DEBUG level
@@ -74,7 +73,7 @@ class Catalog:
         def _loop():
             while not self._stop_event.is_set():
                 try:
-                    deleted = self.db.delete_stale_services(self.service_ttl_s)
+                    deleted = self.db.delete_stale(self.service_ttl_s)
                     if deleted > 0:
                         print(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
                 except Exception as e:
@@ -144,6 +143,7 @@ class Catalog:
             "updateService": self._put_update_service,
             "updateServiceLastUpdate": self._put_update_service_last_update,
             "updateSensorLastUpdate": self._put_update_sensor_last_update,
+            "updateActuatorLastUpdate": self._put_update_actuator_last_update,
         }
         handler = handlers.get(uri[0])
         logger.info(f"Looking for handler: {uri[0]}, found: {handler is not None}")
@@ -191,6 +191,14 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Sensor last_update updated"})
         raise cherrypy.HTTPError(404, "The Sensor ID does not exist")
 
+    def _put_update_actuator_last_update(self):
+        """Update the last_update timestamp of an actuator."""
+        updated_actuator = _load_json_body()
+        require_fields(updated_actuator, ['ActuatorID', 'last_update'])
+        success = self.db.update_actuator_last_update(updated_actuator['ActuatorID'], updated_actuator['last_update'])
+        if success:
+            return json.dumps({"status": "success", "message": "Actuator last_update updated"})
+        raise cherrypy.HTTPError(404, "The Actuator ID does not exist")
 
     # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):
@@ -201,6 +209,7 @@ class Catalog:
         handlers = {
             "removeService": self._delete_remove_service,
             "removeSensor": self._delete_remove_sensor,
+            "removeActuator": self._delete_remove_actuator,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -227,7 +236,15 @@ class Catalog:
         if success:
             return json.dumps({"status": "success", "message": "Sensor Deleted"})
         raise cherrypy.HTTPError(404, "Sensor not found")
-
+    def _delete_remove_actuator(self, params):
+        """Delete an actuator by serviceID."""
+        actuator_id = params.get('ActuatorID')
+        if not actuator_id:
+            raise cherrypy.HTTPError(400, "Missing 'ActuatorID' parameter")
+        success = self.db.delete_actuator(actuator_id)
+        if success:
+            return json.dumps({"status": "success", "message": "Actuator Deleted"})
+        raise cherrypy.HTTPError(404, "Actuator not found")
 
     # GET METHOD - Retrieve resources
     def GET(self, *uri, **params):
@@ -242,6 +259,7 @@ class Catalog:
             "getService": self._get_service,
             "getEndpointTimeSeries": self._get_endpoint_Time_series_DB,
             "getEndpointUserService": self._get_endpoint_user_service,
+
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -318,27 +336,6 @@ class Catalog:
             return json.dumps({"status": "success", "exists": exists})
         except Exception as e:
             logger.error(f"Error checking username: {e}")
-            raise cherrypy.HTTPError(500, "Internal Server Error")
-
-    def _get_devices(self, params):
-        """Return list of devices for a given bedroom_id."""
-        bedroom_id = params.get('bedroom_id')
-        if not bedroom_id:
-            raise cherrypy.HTTPError(400, "Missing 'bedroom_id' parameter")
-        try:
-            devices = self.db.get_devices_by_bedroom(bedroom_id)
-            devices_out = []
-            for d in devices:
-                device_id, device_name, device_type, value = d
-                devices_out.append({
-                    'device_id': device_id,
-                    'device_name': device_name,
-                    'device_type': device_type,
-                    'value': value,
-                })
-            return json.dumps({"status": "success", "devices": devices_out})
-        except Exception as e:
-            logger.error(f"Error retrieving devices for bedroom {bedroom_id}: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
 

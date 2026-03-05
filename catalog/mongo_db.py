@@ -120,36 +120,22 @@ class MongoDBAdapter:
             logger.error(f"Error retrieving all services: {e}")
             return []
 
-    def delete_stale_services(self, ttl_seconds):
-        try:
-            # 1️⃣ Calcola cutoff
-            cutoff_time = datetime.now() - timedelta(seconds=ttl_seconds)
+    def delete_stale(self, ttl_seconds):
+        cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=ttl_seconds)
+        cutoff_str = cutoff_time.strftime("%Y-%m-%d %H:%M:%S")
+        total_deleted = 0
+        # Elimina servizi
+        result_services = self.db.services.delete_many({"last_update": {"$lt": cutoff_str}})
+        total_deleted += result_services.deleted_count
+        # Elimina sensori
+        result_sensors = self.db.sensors.delete_many({"last_update": {"$lt": cutoff_str}})
+        total_deleted += result_sensors.deleted_count
+        # Elimina attuatori
+        result_actuators = self.db.actuators.delete_many({"last_update": {"$lt": cutoff_str}})
+        total_deleted += result_actuators.deleted_count
+        logger.info(f"Deleted {total_deleted} stale services/sensors/actuators (older than {cutoff_str})")
+        return total_deleted
 
-            # 2️⃣ Usa lo STESSO formato salvato nel DB
-            cutoff_str = cutoff_time.strftime("%Y-%m-%d %H:%M:%S")
-
-            logger.debug(
-                f"Cleanup: current_time={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, "
-                f"cutoff_time={cutoff_str}, ttl_seconds={ttl_seconds}"
-            )
-
-            # 3️⃣ Confronto stringa ISO-like ordinabile
-            result = self.db.services.delete_many({
-                "last_update": {"$lt": cutoff_str}
-            })
-
-            deleted_count = result.deleted_count
-
-            if deleted_count > 0:
-                logger.info(f"Deleted {deleted_count} stale services (older than {cutoff_str})")
-            else:
-                logger.debug(f"No stale services to delete (cutoff: {cutoff_str})")
-
-            return deleted_count
-
-        except Exception as e:
-            logger.error(f"Error deleting stale services: {e}", exc_info=True)
-            raise
     def get_endpoint_Time_series_DB(self):
 
         try:
@@ -175,79 +161,102 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error retrieving UserService endpoint: {e}")
             raise
-
-
-# DEVICES OPERATIONS
-    def insert_device(self, device):
+    ### Actuators OPERATIONS
+    def insert_sensor(self,new_sensor):
 
         try:
-            # Generate device_id if not provided
-            if 'device_id' not in device:
-                import uuid
-                device['device_id'] = str(uuid.uuid4())
+            logger.debug(f"Attempting to insert sensor: {new_sensor}")
+            logger.debug(f"Sensor last_update value: {new_sensor.get('last_update')} (type: {type(new_sensor.get('last_update')).__name__})")
 
-            if 'inserted_at' not in device:
-                device['inserted_at'] = datetime.now(timezone.utc)
-
-            result = self.db.devices.insert_one(device)
-            logger.info(f"Device {device['device_id']} inserted successfully")
-            return device['device_id']
+            result = self.db.sensors.insert_one(new_sensor)
+            logger.info(f"Sensor {new_sensor['sensorID']} inserted successfully with ID: {result.inserted_id}")
+            logger.debug(f"Sensor data saved - last_update: {new_sensor.get('last_update')}, inserted_at: {new_sensor.get('inserted_at')}")
+            return True
+        except DuplicateKeyError:
+            logger.warning(f"Sensor ID {new_sensor['sensorID']} already exists")
+            return False
         except Exception as e:
-            logger.error(f"Error inserting device: {e}")
-            return None
-
-    def update_device(self, device):
+            logger.error(f"Error inserting sensor: {e}", exc_info=True)
+            raise
+    def delete_sensor(self, sensor_id):
 
         try:
-            device_id = device.get('device_id')
-            if not device_id:
-                raise ValueError("device_id is required for update")
+            # Forza la conversione a stringa per evitare mismatch
+            sensor_id = str(sensor_id)
+            result = self.db.sensors.delete_one({"sensorID": sensor_id})
+            if result.deleted_count > 0:
+                logger.info(f"Sensor {sensor_id} deleted successfully")
+                return True
+            logger.warning(f"Sensor {sensor_id} not found for deletion")
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting sensor {sensor_id}: {e}", exc_info=True)
+            return False
+    def update_sensor_last_update(self, sensor_id, last_update):
 
-            result = self.db.devices.update_one(
-                {"device_id": device_id},
-                {"$set": device}
+        try:
+            logger.debug(f"Updating sensor {sensor_id} last_update to: {last_update} (type: {type(last_update).__name__})")
+
+            result = self.db.sensors.update_one(
+                {"sensorID": sensor_id},
+                {"$set": {"last_update": last_update}}
             )
             if result.matched_count > 0:
-                logger.info(f"Device {device_id} updated successfully")
+                logger.info(f"Sensor {sensor_id} last_update timestamp updated to {last_update}")
                 return True
-            logger.warning(f"Device {device_id} not found")
+            logger.warning(f"Sensor {sensor_id} not found")
             return False
         except Exception as e:
-            logger.error(f"Error updating device: {e}")
+            logger.error(f"Error updating sensor last_update: {e}", exc_info=True)
             raise
 
-    def delete_device(self, device_id):
+    def insert_actuator(self,new_actuator):
 
         try:
-            result = self.db.devices.delete_one({"device_id": device_id})
+            logger.debug(f"Attempting to insert actuator: {new_actuator}")
+            logger.debug(f"Actuator last_update value: {new_actuator.get('last_update')} (type: {type(new_actuator.get('last_update')).__name__})")
+
+            result = self.db.actuators.insert_one(new_actuator)
+            logger.info(f"Actuator {new_actuator['actuatorID']} inserted successfully with ID: {result.inserted_id}")
+            logger.debug(f"Actuator data saved - last_update: {new_actuator.get('last_update')}, inserted_at: {new_actuator.get('inserted_at')}")
+            return True
+        except DuplicateKeyError:
+            logger.warning(f"Actuator ID {new_actuator['actuatorID']} already exists")
+            return False
+        except Exception as e:
+            logger.error(f"Error inserting actuator: {e}", exc_info=True)
+            raise
+    def delete_actuator(self, actuator_id):
+
+        try:
+            # Forza la conversione a stringa per evitare mismatch
+            actuator_id = str(actuator_id)
+            result = self.db.actuators.delete_one({"actuatorID": actuator_id})
             if result.deleted_count > 0:
-                logger.info(f"Device {device_id} deleted successfully")
+                logger.info(f"Actuator {actuator_id} deleted successfully")
                 return True
-            logger.warning(f"Device {device_id} not found")
+            logger.warning(f"Actuator {actuator_id} not found for deletion")
             return False
         except Exception as e:
-            logger.error(f"Error deleting device: {e}")
-            raise
-
-    def get_devices_by_bedroom(self, bedroom_id):
+            logger.error(f"Error deleting actuator {actuator_id}: {e}", exc_info=True)
+            return False
+    def update_actuator_last_update(self, actuator_id, last_update):
 
         try:
-            devices = list(self.db.devices.find({"bedroom_id": bedroom_id}))
-            result = []
-            for device in devices:
-                result.append((
-                    device.get('device_id'),
-                    device.get('device_name'),
-                    device.get('device_type'),
-                    device.get('value')
-                ))
-            return result
+            logger.debug(f"Updating actuator {actuator_id} last_update to: {last_update} (type: {type(last_update).__name__})")
+
+            result = self.db.actuators.update_one(
+                {"actuatorID": actuator_id},
+                {"$set": {"last_update": last_update}}
+            )
+            if result.matched_count > 0:
+                logger.info(f"Actuator {actuator_id} last_update timestamp updated to {last_update}")
+                return True
+            logger.warning(f"Actuator {actuator_id} not found")
+            return False
         except Exception as e:
-            logger.error(f"Error retrieving devices for bedroom {bedroom_id}: {e}")
+            logger.error(f"Error updating actuator last_update: {e}", exc_info=True)
             raise
-
-
-
 
 
     # ================================================================

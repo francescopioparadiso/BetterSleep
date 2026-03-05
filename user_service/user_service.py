@@ -266,16 +266,13 @@ class UserService:
             "login": self._get_login,
             "getAllHouses": self._get_all_houses,
             "getAllHouseMembers": self._get_all_house_members,
-
             "getHouse": self._get_house,
             "getRoom": self._get_room,
             "getInvitation": self._get_invitation,
             "getHouseMember": self._get_house_member,
             "getAllUsers": self._get_all_users,
-            "getAllHouses": self._get_all_houses,
             "getAllRooms": self._get_all_rooms,
             "getAllInvitations": self._get_all_invitations,
-            "getAllHouseMembers": self._get_all_house_members,
             "getEmailByUserId": self._get_email_by_user_id,
         }
         handler = handlers.get(uri[0])
@@ -294,30 +291,6 @@ class UserService:
         if user:
             return json.dumps({"status": "success", "user": user})
         raise cherrypy.HTTPError(401, "Invalid email or password")
-    
-    def _get_all_houses(self, params):
-        """Fetch all houses and safely convert dates for JSON."""
-        houses = self.db.get_all_houses()
-        
-        for h in houses:
-            # Fix the datetime crash!
-            if 'created_at' in h and h['created_at']:
-                h['created_at'] = str(h['created_at'])
-                
-        return json.dumps({
-            "status": "success", 
-            "houses": houses  # Swift is looking specifically for this "houses" key!
-        })
-
-    def _get_all_house_members(self, params):
-        """Fetch all house members."""
-        members = self.db.get_all_house_members()
-        
-        # (No created_at column in house_members, so it is naturally safe to dump!)
-        return json.dumps({
-            "status": "success", 
-            "house_members": members # Swift is looking specifically for this "house_members" key!
-        })
 
     def _get_house(self, params):
         """Get information about a house by ID."""
@@ -375,12 +348,12 @@ class UserService:
             return json.dumps({"status": "success", "room": room}, default=str)
         raise cherrypy.HTTPError(404, "Room not found")
 
-    def _get_all_users(self, params):
+    def _get_all_users(self):
         """Get information about all users."""
-        # Not implemented in PostgresDB, so return empty for now
-        return json.dumps({"status": "success", "users": []})
+        users = self.db.get_all_users()
+        return json.dumps({"status": "success", "users": users}, default=str)
 
-    def _get_all_rooms(self, params):
+    def _get_all_rooms(self):
         """Get information about all rooms."""
         rooms = self.db.get_all_rooms()
         return json.dumps({"status": "success", "rooms": rooms}, default=str)

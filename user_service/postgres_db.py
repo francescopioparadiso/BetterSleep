@@ -83,7 +83,9 @@ class PostgresDB:
     def update_user(self, u):
         query = "UPDATE users SET email = %s, night_time = %s, morning_time = %s WHERE id = %s"
         return self._execute_query(query, (u['email'], u.get('night_time', '22:00'), u.get('morning_time', '07:00'), u['id']))
-
+    def get_all_users(self):
+        query = "SELECT * FROM users ORDER BY id"
+        return self._execute_query(query, fetch=True)
     # --- HOUSES ---
     def getHousesByUser(self, u):
         query = """

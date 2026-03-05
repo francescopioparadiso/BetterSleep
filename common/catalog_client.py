@@ -8,8 +8,9 @@ import threading
 logger = logging.getLogger(__name__)
 
 
+# noinspection HttpUrlsUsage
 class CatalogClient:
-    def __init__(self, catalog_url, service_info, remove_interval=10, timeout=5, service=True):
+    def __init__(self, catalog_url, service_info, remove_interval=10, timeout=5, type=0):
         """
 
         Args:
@@ -17,7 +18,7 @@ class CatalogClient:
             service_info:
             remove_interval:
             timeout:
-            service: true if this client represents a service , false if it's a sensor
+            type: 0 for service, 1 for sensor and 2 for Actuator
         """
         self.timeout = timeout
         self._stop_event = threading.Event()
@@ -25,7 +26,7 @@ class CatalogClient:
         self.catalog_url = catalog_url
         self.service_info = service_info
         self.remove_interval = remove_interval
-        self.service = service
+        self.type = type
 
     def request(self, method, endpoint, **kwargs):
         """Make a request to the catalog and return (data, status_code, error_message).
@@ -80,14 +81,16 @@ class CatalogClient:
         return self.request('delete', endpoint, **kwargs)
 
     def register(self):
+
+        idName = 'serviceID' if self.type == 0 else 'sensorID' if self.type == 1 else 'ActuatorID'
         service = {
-            "serviceID": self.service_info['serviceID'],
+            idName : self.service_info[idName],
             "name": self.service_info['name'],
             "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
-            "type": self.service_info.get('type', 'Analytics'),
+            "type": self.service_info.get('type', 'generic'),
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        endpoint = 'addService' if self.service else 'addSensor'
+        endpoint = 'registerService' if self.type == 0 else 'registerSensor' if self.type == 1 else 'registerActuator'
         data, status, error = self.post(endpoint, json=service)
         if error:
             logger.error(f'Registration failed ({status}): {error}')
@@ -100,7 +103,7 @@ class CatalogClient:
             "serviceID": self.service_info['serviceID'],
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        endpoint = 'updateServiceLastUpdate' if self.service else 'updateSensorLastUpdate'
+        endpoint = 'updateLastUpdateService' if self.type == 0 else 'updateLastUpdateSensor' if self.type == 1 else 'updateLastUpdateActuator'
         data, status, error = self.put(endpoint, json=service)
         if error:
             logger.error(f'Update failed ({status}): {error}')
@@ -110,10 +113,10 @@ class CatalogClient:
     def unregister(self):
         """Logic to unregister this service from the Catalog."""
         try:
-            endpoint = 'removeService' if self.service else 'removeSensor'
+            endpoint = 'unregisterService' if self.type == 0 else 'unregisterSensor' if self.type == 1 else 'unregisterActuator'
             response = requests.delete(
                 f'{self.catalog_url}/{endpoint}',
-                params={'serviceID': self.service_info['serviceID']},
+                json={"serviceID": self.service_info['serviceID']} if self.type == 0 else {"sensorID": self.service_info['sensorID']} if self.type == 1 else {"ActuatorID": self.service_info['ActuatorID']},
                 timeout=5
             )
             response.raise_for_status()
