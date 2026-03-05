@@ -3,44 +3,64 @@ import time
 import json
 from models import Sensor, Actuator
 
-# SENSORS
+# SENSORS 
 
 class PresenceSensor(Sensor):
     def run(self):
         self.connect_mqtt()
         while True:
-            val = input(f"[{self.comp_id}] Enter Presence (1=In Bed, 0=Empty): ")
+            val = input(f"\n[{self.comp_id}] Enter Presence (1=In Bed, 0=Empty): ")
             self.publish_data(val)
 
 class HeartRateSensor(Sensor):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, delay_minutes, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.is_user_present = False
-        # The topic to listen for presence
         self.presence_topic = f"House/{self.house_id}/Bedroom/{self.bedroom_id}/sensor/+/data/presence"
+        self.is_present = False
+        self.presence_start_time = None
+        
+        # Per fare test rapidi, se delay_minutes è molto piccolo (es. 0.1), si sbloccherà in pochi secondi.
+        # Usa 20 per il comportamento reale richiesto.
+        self.required_delay_seconds = delay_minutes * 60 
 
     def on_presence_update(self, client, userdata, msg):
         data = json.loads(msg.payload.decode())
-        self.is_user_present = (str(data['value']) == "1")
+        val = str(data['value'])
+        
+        if val == "1" and not self.is_present:
+            # L'utente è appena entrato nel letto, avvio il timer
+            self.is_present = True
+            self.presence_start_time = time.time()
+            print(f"\n[{self.comp_id}] Presence detected. Starting {self.required_delay_seconds/60} min timer before HR transmission is allowed.")
+        elif val == "0":
+            # L'utente si è alzato, resetto tutto
+            self.is_present = False
+            self.presence_start_time = None
+            print(f"\n[{self.comp_id}] Bed is empty. HR transmission blocked.")
 
     def run(self):
         self.connect_mqtt()
-        # Subscribe to presence updates to know if someone is in bed
         self.client.subscribe(self.presence_topic)
         self.client.on_message = self.on_presence_update
         
         while True:
-            val = input(f"[{self.comp_id}] Enter Heart Rate: ")
-            if self.is_user_present:
-                self.publish_data(val)
+            val = input(f"\n[{self.comp_id}] Enter Heart Rate: ")
+            
+            if self.is_present and self.presence_start_time:
+                elapsed = time.time() - self.presence_start_time
+                if elapsed >= self.required_delay_seconds:
+                    self.publish_data(val)
+                else:
+                    remaining = int(self.required_delay_seconds - elapsed)
+                    print(f"[{self.comp_id}] Blocked: Waiting {remaining} more seconds before starting HR transmission.")
             else:
-                print(">>> Heart Rate NOT published: User is not in bed.")
+                print(f"[{self.comp_id}] Blocked: User is not in bed.")
 
 class VibrationSensor(Sensor):
     def run(self):
         self.connect_mqtt()
         while True:
-            val = input(f"[{self.comp_id}] Enter Vibration Level: ")
+            val = input(f"\n[{self.comp_id}] Enter Vibration Level: ")
             self.publish_data(val)
 
 # ACTUATORS 
@@ -48,43 +68,48 @@ class VibrationSensor(Sensor):
 class SmartLight(Actuator):
     def on_message(self, client, userdata, msg):
         data = json.loads(msg.payload.decode())
-        print(f"\n[ACTUATOR - LIGHT] Setting brightness to: {data['value']}\n")
+        print(f"\n>> [ACTUATOR - LIGHT] Setting brightness to: {data['value']}\n")
 
 class Fan(Actuator):
     def on_message(self, client, userdata, msg):
         data = json.loads(msg.payload.decode())
-        print(f"\n[ACTUATOR - FAN] Status changed to: {data['value']}\n")
+        print(f"\n>> [ACTUATOR - FAN] Status changed to: {data['value']}\n")
 
 class Heater(Actuator):
     def on_message(self, client, userdata, msg):
-        import json
         data = json.loads(msg.payload.decode())
-        print(f"\n[ACTUATOR - HEATER] Status changed to: {data['value']}\n")
+        print(f"\n>> [ACTUATOR - HEATER] Status changed to: {data['value']}\n")
 
 # MAIN EXECUTION
 
 if __name__ == "__main__":
-    CATALOG_URL = "http://127.0.0.1:8080" # Change to your actual Catalog IP
-    BROKER_IP = "broker.hivemq.com"     # Change to your actual Broker IP
+    CATALOG_URL = "http://127.0.0.1:8080" 
+    BROKER_IP = "broker.hivemq.com"     
     H_ID, B_ID = "House01", "Bedroom01"
 
-    # Initialize Components
+    # Inizializza Componenti
     presence = PresenceSensor(H_ID, B_ID, "PRES_01", "presence", CATALOG_URL, BROKER_IP)
-    heart_rate = HeartRateSensor(H_ID, B_ID, "HR_01", "heartrate", CATALOG_URL, BROKER_IP)
+    
+    # IMPORTANTE: Qui passi i minuti di ritardo (es. 20). 
+    # Ho messo 0.16 (circa 10 secondi) ma può essere cambiato
+    heart_rate = HeartRateSensor(0.16, H_ID, B_ID, "HR_01", "heartrate", CATALOG_URL, BROKER_IP)
+    
+    body_temp = BodyTemperatureSensor(H_ID, B_ID, "BT_01", "body_temperature", CATALOG_URL, BROKER_IP)
     vibration = VibrationSensor(H_ID, B_ID, "VIB_01", "vibration", CATALOG_URL, BROKER_IP)
     
     light = SmartLight(H_ID, B_ID, "LIGHT_01", CATALOG_URL, BROKER_IP)
-    fan = Fan(H_ID, B_ID, "FAN_01", CATALOG_URL, BROKER_IP
+    fan = Fan(H_ID, B_ID, "FAN_01", CATALOG_URL, BROKER_IP)
     heater = Heater(H_ID, B_ID, "HEAT_01", CATALOG_URL, BROKER_IP)
 
-    # Start Actuators
+    # Avvia Attuatori
     light.start()
     fan.start()
     heater.start()
 
-    # Start Sensors in separate threads (to use input() simultaneously)
+    # Avvia Sensori (Thread separati per lo standard input)
     threading.Thread(target=presence.run, daemon=True).start()
     threading.Thread(target=heart_rate.run, daemon=True).start()
+    threading.Thread(target=body_temp.run, daemon=True).start()
     threading.Thread(target=vibration.run, daemon=True).start()
 
     print("--- BetterSleep Device Connector Started ---")
