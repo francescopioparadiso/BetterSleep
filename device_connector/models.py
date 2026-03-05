@@ -10,7 +10,8 @@ class BaseIoTComponent:
         self.comp_id = comp_id
         self.broker_ip = broker_ip
         
-        # Determine ID key for CatalogClient
+        # Determina la chiave ID corretta in base al tipo per il CatalogClient
+        # 0=Service, 1=Sensor, 2=Actuator
         id_key = 'serviceID' if comp_type_code == 0 else 'sensorID' if comp_type_code == 1 else 'ActuatorID'
         
         self.service_info = {
@@ -21,7 +22,7 @@ class BaseIoTComponent:
             "type": "BetterSleep_Component"
         }
         
-        # Initialize and Start Catalog Registration
+        # Inizializza e avvia la registrazione tramite il CatalogClient 
         self.catalog = CatalogClient(catalog_url, self.service_info, type=comp_type_code)
         self.catalog.register()
         self.catalog.start_background_loop()
@@ -41,7 +42,7 @@ class Sensor(BaseIoTComponent):
     def publish_data(self, value):
         payload = {"timestamp": time.time(), "value": value, "unit": "raw"}
         self.client.publish(self.topic, json.dumps(payload))
-        print(f"[PUBLISH] {self.subtype} data: {value}")
+        print(f"[PUBLISH] {self.subtype} data sent: {value}")
 
 class Actuator(BaseIoTComponent):
     def __init__(self, house_id, bedroom_id, act_id, catalog_url, broker_ip):
@@ -55,4 +56,4 @@ class Actuator(BaseIoTComponent):
         print(f"Actuator {self.comp_id} listening on {self.topic}")
 
     def on_message(self, client, userdata, msg):
-        pass # To be implemented in subclasses
+        pass # implemented by subclasses
