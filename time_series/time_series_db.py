@@ -2,13 +2,33 @@ import logging
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure, OperationFailure
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 
-class TimeSeriesDB:
-    """Handles all MongoDB operations for time series data."""
+def _get_senml_aggregation(filter_query):
+    """Pipeline interna per trasformare i documenti in SenML direttamente nel DB."""
+    pipeline = [
+        {"$match": filter_query},  # Filtra i dati (es. per room_id)
+        {
+            "$project": {
+                "_id": 0,  # Rimuove l'ID di Mongo
+                # Ricostruisce il BN concatenando i campi salvati come int
+                "bn": {
+                    "$concat": [
+                        {"$toString": "$house_id"}, ":",
+                        {"$toString": "$room_id"}, ":",
+                        {"$toString": "$sensor_id"}, ":",
+                        {"$toString": "$sensor_type"}
+                    ]
+                },
+                "e": "$e"  # Mantiene la lista delle misure (SenML Events)
+            }
+        }
+    ]
+    return pipeline
 
+
+class TimeSeriesDB:
     def __init__(self, config):
         self.mongo_port = config['timeSeriesDB']['port']
         self.mongo_host = config['timeSeriesDB']['host']
@@ -20,7 +40,6 @@ class TimeSeriesDB:
         self.connect()
 
     def connect(self):
-        """Connect to MongoDB."""
         try:
             self.client_mongo = MongoClient(
                 host=self.mongo_host,
@@ -31,60 +50,60 @@ class TimeSeriesDB:
             )
             self.db = self.client_mongo[self.mongo_database]
             logger.info("Successfully connected to MongoDB")
-        except ServerSelectionTimeoutError as e:
-            logger.error(f"Failed to connect to MongoDB - timeout: {e}")
-            self.client_mongo = None
-        except ConnectionFailure as e:
-            logger.error(f"Failed to connect to MongoDB - connection failure: {e}")
-            self.client_mongo = None
         except Exception as e:
-            logger.error(f"Unexpected error connecting to MongoDB: {e}")
+            logger.error(f"Error connecting to MongoDB: {e}")
             self.client_mongo = None
 
-    def disconnect(self):
-        """Close MongoDB connection."""
+    # --- LOGICA DI PARSING IN MONGO ---
+
+    def _execute_query(self, filter_query):
+        """Esegue l'aggregazione e restituisce la lista SenML."""
+        if self.db is None:
+            return []
         try:
-            if self.client_mongo:
-                self.client_mongo.close()
-                logger.info("Disconnected from MongoDB")
+            collection = self.db["measurements"]
+            pipeline = _get_senml_aggregation(filter_query)
+            # MongoDB esegue tutto il lavoro qui
+            return list(collection.aggregate(pipeline))
         except Exception as e:
-            logger.error(f"Error disconnecting from MongoDB: {e}")
+            logger.error(f"Aggregation error with filter {filter_query}: {e}")
+            return []
+
+
+
+    def get_sensor_by_room(self, room_id):
+        return self._execute_query({"room_id": int(room_id)})
+
+    def get_sensor_by_type(self, sensor_type):
+        return self._execute_query({"sensor_type": int(sensor_type)})
+
+    def get_sensor_by_room_and_type(self, room_id, sensor_type):
+        return self._execute_query({"room_id": int(room_id), "sensor_type": int(sensor_type)})
+
+    def get_sensor_by_id(self, sensor_id):
+        return self._execute_query({"sensor_id": int(sensor_id)})
+
+    def get_all_sensors(self):
+        return self._execute_query({})
 
     def insert_data(self, collection_name, data):
-        """Insert data into a collection."""
-        if self.db is None:
-            logger.error("Not connected to MongoDB, cannot insert data")
-            return False
+        if self.db is None: return False
         try:
             collection = self.db[collection_name]
-            result = collection.insert_one(data)
-            logger.debug(f"Data inserted successfully with ID: {result.inserted_id}")
-            return True
-        except OperationFailure as e:
-            logger.error(f"MongoDB operation failure during insert: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Error inserting data into {collection_name}: {e}")
-            return False
+            document = dict(data)
+            if "bn" in data:
+                try:
+                    # Splittiamo e salviamo come numeri per query veloci (Index-friendly)
+                    parts = data["bn"].split(":")
+                    document["house_id"] = int(parts[0])
+                    document["room_id"] = int(parts[1])
+                    document["sensor_id"] = int(parts[2])
+                    document["sensor_type"] = int(parts[3])
+                except (ValueError, IndexError):
+                    logger.warning(f"Invalid bn format: {data['bn']}")
 
-    def health_check(self):
-        """
-        This function checks if the MongoDB connection is alive by sending a ping command.
-        Returns: True if the connection is healthy, False otherwise.
-        """
-        try:
-            if self.client_mongo:
-                self.client_mongo.admin.command('ping')
-                logger.debug("MongoDB health check passed")
-                return True
-            logger.warning("MongoDB client is not connected")
-            return False
-        except ServerSelectionTimeoutError as e:
-            logger.error(f"MongoDB health check failed - timeout: {e}")
-            return False
-        except ConnectionFailure as e:
-            logger.error(f"MongoDB health check failed - connection failure: {e}")
-            return False
+            collection.insert_one(document)
+            return True
         except Exception as e:
-            logger.error(f"MongoDB health check failed: {e}")
+            logger.error(f"Error inserting: {e}")
             return False

@@ -71,8 +71,47 @@ class TimeSeriesDBAdapter:
         pass
 
     def GET(self, *uri, **params):
-        pass
+        """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
+        if not uri:
+            raise cherrypy.HTTPError(400, "Endpoint not specified")
 
+        handlers = {
+            "getSensorByRoom": self._get_sensor_by_room,
+            "getSensorByType": self._get_sensor_by_type,
+            "getSensorByRoomAndType": self._get_sensor_by_room_and_type,
+            "getSensorById": self._get_sensor_by_id,
+            "getAllSensors": self._get_all_sensors,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
+            raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler(params)
+
+
+
+    def _get_sensor_by_room(self, params):
+        room_id = params.get("room_id")
+        if not room_id:
+            raise cherrypy.HTTPError(400, "Missing 'room_id' parameter")
+        return self.db.get_sensor_by_room(room_id)
+    def _get_sensor_by_type(self, params):
+        sensor_type = params.get("sensor_type")
+        if not sensor_type:
+            raise cherrypy.HTTPError(400, "Missing 'sensor_type' parameter")
+        return self.db.get_sensor_by_type(sensor_type)
+    def _get_sensor_by_room_and_type(self, params):
+        room_id = params.get("room_id")
+        sensor_type = params.get("sensor_type")
+        if not room_id or not sensor_type:
+            raise cherrypy.HTTPError(400, "Missing 'room_id' or 'sensor_type' parameter")
+        return self.db.get_sensor_by_room_and_type(room_id, sensor_type)
+    def _get_sensor_by_id(self, params):
+        sensor_id = params.get("sensor_id")
+        if not sensor_id:
+            raise cherrypy.HTTPError(400, "Missing 'sensor_id' parameter")
+        return self.db.get_sensor_by_id(sensor_id)
+    def _get_all_sensors(self, params):
+        return self.db.get_all_sensors()
     def PUT(self, *uri, **params):
         pass
     def DELETE(self, *uri, **params):

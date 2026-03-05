@@ -33,8 +33,13 @@ if __name__ == "__main__":
         import random
         import time
         message_to_publish = {
-            #bn roomid:bedroomid:sensorid
-            "bn": "1:1:2",
+            #bn roomid:bedroomid:sensorid:type sensor
+            #0 ambient_temp
+            #1 humidity
+            #2 presence
+            #3 heart_rate
+            #4 vibration
+            "bn": "1:1:2:0",
             "e": [
                 {
                     "n": "temperature",
