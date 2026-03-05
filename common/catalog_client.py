@@ -90,10 +90,11 @@ class CatalogClient:
             "type": self.service_info.get('type', 'generic'),
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        endpoint = 'registerService' if self.type == 0 else 'registerSensor' if self.type == 1 else 'registerActuator'
+        endpoint = "add"+("Service" if self.type == 0 else "Sensor" if self.type == 1 else "Actuator")
         data, status, error = self.post(endpoint, json=service)
         if error:
             logger.error(f'Registration failed ({status}): {error}')
+            raise
         else:
             logger.info('Successfully registered with Catalog')
 
@@ -103,28 +104,32 @@ class CatalogClient:
             "serviceID": self.service_info['serviceID'],
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        endpoint = 'updateLastUpdateService' if self.type == 0 else 'updateLastUpdateSensor' if self.type == 1 else 'updateLastUpdateActuator'
+        endpoint = "updateServiceLastUpdate" if self.type == 0 else "updateSensorLastUpdate" if self.type == 1 else "updateActuatorLastUpdate"
         data, status, error = self.put(endpoint, json=service)
         if error:
             logger.error(f'Update failed ({status}): {error}')
+            raise
         else:
             logger.debug('Successfully updated with Catalog')
+
 
     def unregister(self):
         """Logic to unregister this service from the Catalog."""
         try:
-            endpoint = 'unregisterService' if self.type == 0 else 'unregisterSensor' if self.type == 1 else 'unregisterActuator'
+            if self.type == 0:
+                endpoint = f"removeService?serviceID={self.service_info['serviceID']}"
+            elif self.type == 1:
+                endpoint = f"removeSensor?sensorID={self.service_info['sensorID']}"
+            else:
+                endpoint = f"removeActuator?ActuatorID={self.service_info['ActuatorID']}"
             response = requests.delete(
                 f'{self.catalog_url}/{endpoint}',
-                json={"serviceID": self.service_info['serviceID']} if self.type == 0 else {"sensorID": self.service_info['sensorID']} if self.type == 1 else {"ActuatorID": self.service_info['ActuatorID']},
                 timeout=5
             )
             response.raise_for_status()
             logger.info('Service unregistered from Catalog')
         except Exception as e:
             logger.error(f'Unregister failed: {e}')
-
-
 
     def start_background_loop(self):
         """Start the background loop for periodic updates."""

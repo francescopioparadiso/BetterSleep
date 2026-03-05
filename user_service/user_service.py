@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 class UserService:
     exposed = True
-    def __init__(self, conf, cleanup_interval_s=30, service_ttl_s=60):
-        self.catalog_url = conf['catalogURL']
-        self.service_info = conf['serviceInfo']
-        self.remove_interval = conf.get('removeInterval', 10)
-        self.db_conf = conf['Database']
+    def __init__(self, conf_user_service):
+        self.catalog_url = conf_user_service['catalogURL']
+        self.service_info = conf_user_service['serviceInfo']
+        self.remove_interval = conf_user_service.get('removeInterval', 10)
+        self.db_conf = conf_user_service['Database']
         self.db = PostgresDB(self.db_conf)
         self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
 
@@ -357,6 +357,15 @@ class UserService:
         """Get information about all rooms."""
         rooms = self.db.get_all_rooms()
         return json.dumps({"status": "success", "rooms": rooms}, default=str)
+    def _get_email_by_user_id(self, params):
+        """Get email of a user by their ID."""
+        user_id = params.get('id')
+        if not user_id:
+            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
+        email = self.db.get_email_by_user_id(user_id)
+        if email:
+            return json.dumps({"status": "success", "email": email}, default=str)
+        raise cherrypy.HTTPError(404, "User not found")
 
     def _load_json_body(self):
         body = cherrypy.request.body.read()

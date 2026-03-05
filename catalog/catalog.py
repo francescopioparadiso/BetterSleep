@@ -99,6 +99,7 @@ class Catalog:
         handlers = {
             "addService": self._post_add_service,
             "addSensor": self._post_add_sensor,
+            "addActuator": self._post_add_actuator,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -130,7 +131,14 @@ class Catalog:
         if success:
             return json.dumps({"status": "success", "message": "Sensor Added"})
         raise cherrypy.HTTPError(409, "The Sensor ID already exists")
-
+    def _post_add_actuator(self):
+        """Add a new actuator to the catalog."""
+        new_actuator = _load_json_body()
+        check_if_is_an_actuator(new_actuator)
+        success = self.db.insert_actuator(new_actuator)
+        if success:
+            return json.dumps({"status": "success", "message": "Actuator Added"})
+        raise cherrypy.HTTPError(409, "The Actuator ID already exists")
     # PUT METHOD - Update existing resources
     def PUT(self, *uri, **params):
         """Handle PUT requests to update Services, Devices, or Users."""
@@ -238,9 +246,9 @@ class Catalog:
         raise cherrypy.HTTPError(404, "Sensor not found")
     def _delete_remove_actuator(self, params):
         """Delete an actuator by serviceID."""
-        actuator_id = params.get('ActuatorID')
+        actuator_id = params.get('serviceID')
         if not actuator_id:
-            raise cherrypy.HTTPError(400, "Missing 'ActuatorID' parameter")
+            raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
         success = self.db.delete_actuator(actuator_id)
         if success:
             return json.dumps({"status": "success", "message": "Actuator Deleted"})

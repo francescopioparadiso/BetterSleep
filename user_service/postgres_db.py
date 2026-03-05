@@ -61,6 +61,8 @@ class PostgresDB:
                     logger.warning(f"Error closing database connection: {e}")
 
     # --- USERS ---
+
+
     def signup_user(self, email, password, night_time=None, morning_time=None):
         # check if email already exists
         if self._execute_query("SELECT 1 FROM users WHERE email = %s", (email,), fetch=True, single=True):
@@ -86,7 +88,15 @@ class PostgresDB:
     def get_all_users(self):
         query = "SELECT * FROM users ORDER BY id"
         return self._execute_query(query, fetch=True)
+    def get_email_by_user_id(self, user_id):
+        query = "SELECT email FROM users WHERE id = %s"
+        result = self._execute_query(query, (user_id,), fetch=True, single=True)
+        return result['email'] if result else None
+
+
     # --- HOUSES ---
+
+
     def getHousesByUser(self, u):
         query = """
             SELECT h.* FROM houses h

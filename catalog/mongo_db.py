@@ -1,6 +1,5 @@
 import logging
 from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
@@ -41,25 +40,24 @@ class MongoDBAdapter:
 
 # SERVICES OPERATIONS
     def insert_service(self, service):
-
         try:
             logger.debug(f"Attempting to insert service: {service}")
-            logger.debug(f"Service last_update value: {service.get('last_update')} (type: {type(service.get('last_update')).__name__})")
-
+            # Ensure serviceID is always a string
+            service["serviceID"] = str(service["serviceID"])
+            # Check for duplicate serviceID
+            if self.db.services.find_one({"serviceID": service["serviceID"]}):
+                logger.warning(f"Service ID {service['serviceID']} already exists (pre-check)")
+                return False
             # Add insertion timestamp if not present
             if 'inserted_at' not in service:
                 service['inserted_at'] = datetime.now(timezone.utc)
-
             result = self.db.services.insert_one(service)
             logger.info(f"Service {service['serviceID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Service data saved - last_update: {service.get('last_update')}, inserted_at: {service.get('inserted_at')}")
             return True
-        except DuplicateKeyError:
-            logger.warning(f"Service ID {service['serviceID']} already exists")
-            return False
         except Exception as e:
             logger.error(f"Error inserting service: {e}", exc_info=True)
-            raise
+            return False
 
     def update_service(self, service):
 
@@ -96,9 +94,8 @@ class MongoDBAdapter:
             raise
 
     def delete_service(self, service_id):
-
         try:
-            # Forza la conversione a stringa per evitare mismatch
+            # Ensure service_id is always a string for query
             service_id = str(service_id)
             result = self.db.services.delete_one({"serviceID": service_id})
             if result.deleted_count > 0:
@@ -163,21 +160,19 @@ class MongoDBAdapter:
             raise
     ### Actuators OPERATIONS
     def insert_sensor(self,new_sensor):
-
         try:
             logger.debug(f"Attempting to insert sensor: {new_sensor}")
-            logger.debug(f"Sensor last_update value: {new_sensor.get('last_update')} (type: {type(new_sensor.get('last_update')).__name__})")
-
+            # Check for duplicate sensorID
+            if self.db.sensors.find_one({"sensorID": new_sensor["sensorID"]}):
+                logger.warning(f"Sensor ID {new_sensor['sensorID']} already exists (pre-check)")
+                return False
             result = self.db.sensors.insert_one(new_sensor)
             logger.info(f"Sensor {new_sensor['sensorID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Sensor data saved - last_update: {new_sensor.get('last_update')}, inserted_at: {new_sensor.get('inserted_at')}")
             return True
-        except DuplicateKeyError:
-            logger.warning(f"Sensor ID {new_sensor['sensorID']} already exists")
-            return False
         except Exception as e:
             logger.error(f"Error inserting sensor: {e}", exc_info=True)
-            raise
+            return False
     def delete_sensor(self, sensor_id):
 
         try:
@@ -211,21 +206,19 @@ class MongoDBAdapter:
             raise
 
     def insert_actuator(self,new_actuator):
-
         try:
             logger.debug(f"Attempting to insert actuator: {new_actuator}")
-            logger.debug(f"Actuator last_update value: {new_actuator.get('last_update')} (type: {type(new_actuator.get('last_update')).__name__})")
-
+            # Check for duplicate actuatorID
+            if self.db.actuators.find_one({"actuatorID": new_actuator["actuatorID"]}):
+                logger.warning(f"Actuator ID {new_actuator['actuatorID']} already exists (pre-check)")
+                return False
             result = self.db.actuators.insert_one(new_actuator)
             logger.info(f"Actuator {new_actuator['actuatorID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Actuator data saved - last_update: {new_actuator.get('last_update')}, inserted_at: {new_actuator.get('inserted_at')}")
             return True
-        except DuplicateKeyError:
-            logger.warning(f"Actuator ID {new_actuator['actuatorID']} already exists")
-            return False
         except Exception as e:
             logger.error(f"Error inserting actuator: {e}", exc_info=True)
-            raise
+            return False
     def delete_actuator(self, actuator_id):
 
         try:
@@ -270,4 +263,3 @@ class MongoDBAdapter:
             logger.info("MongoDB connection closed")
         except Exception as e:
             logger.error(f"Error closing MongoDB connection: {e}")
-
