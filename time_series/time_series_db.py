@@ -6,13 +6,12 @@ logger = logging.getLogger(__name__)
 
 
 def _get_senml_aggregation(filter_query):
-    """Pipeline interna per trasformare i documenti in SenML direttamente nel DB."""
+    """convert the query into a MongoDB aggregation pipeline that produces SenML format."""
     pipeline = [
-        {"$match": filter_query},  # Filtra i dati (es. per room_id)
+        {"$match": filter_query},
         {
             "$project": {
-                "_id": 0,  # Rimuove l'ID di Mongo
-                # Ricostruisce il BN concatenando i campi salvati come int
+                "_id": 0,
                 "bn": {
                     "$concat": [
                         {"$toString": "$house_id"}, ":",
@@ -21,7 +20,7 @@ def _get_senml_aggregation(filter_query):
                         {"$toString": "$sensor_type"}
                     ]
                 },
-                "e": "$e"  # Mantiene la lista delle misure (SenML Events)
+                "e": "$e"
             }
         }
     ]
