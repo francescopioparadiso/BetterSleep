@@ -88,40 +88,18 @@ class PostgresDB:
     def get_all_users(self):
         query = "SELECT * FROM users ORDER BY id"
         return self._execute_query(query, fetch=True)
-    def get_email_by_user_id(self, user_id):
-        query = "SELECT email FROM users WHERE id = %s"
-        result = self._execute_query(query, (user_id,), fetch=True, single=True)
-        return result['email'] if result else None
-
 
     # --- HOUSES ---
 
-
-    def getHousesByUser(self, u):
-        query = """
-            SELECT h.* FROM houses h
-            JOIN house_members hm ON h.id = hm.house_id
-            WHERE hm.user_id = %s
-            ORDER BY h.id
-        """
-        return self._execute_query(query, (u['id'],), fetch=True)
 
     def insert_house(self, h):
         query = "INSERT INTO houses (name) VALUES (%s) RETURNING id"
         result = self._execute_query(query, (h['name'],), fetch=True, single=True)
         return result['id'] if result else None
 
-    def get_house(self, house_id):
-        query = "SELECT * FROM houses WHERE id = %s"
-        return self._execute_query(query, (house_id,), fetch=True, single=True)
-
     def get_all_houses(self):
         query = "SELECT * FROM houses ORDER BY id"
         return self._execute_query(query, fetch=True)
-
-    def update_house(self, h):
-        query = "UPDATE houses SET name = %s WHERE id = %s"
-        return self._execute_query(query, (h['name'], h['id']))
 
     def delete_house(self, house_id):
         query = "DELETE FROM houses WHERE id = %s"
@@ -133,17 +111,9 @@ class PostgresDB:
         result = self._execute_query(query, (m['house_id'], m['user_id'], int(m.get('role', 0))), fetch=True, single=True)
         return result['id'] if result else None
 
-    def get_house_member(self, member_id):
-        query = "SELECT * FROM house_members WHERE id = %s"
-        return self._execute_query(query, (member_id,), fetch=True, single=True)
-
     def get_all_house_members(self):
         query = "SELECT * FROM house_members ORDER BY id"
         return self._execute_query(query, fetch=True)
-
-    def update_house_member(self, m):
-        query = "UPDATE house_members SET house_id = %s, user_id = %s, role = %s WHERE id = %s"
-        return self._execute_query(query, (m['house_id'], m['user_id'], int(m.get('role', 0)), m['id']))
 
     def delete_house_member(self, member_id):
         query = "DELETE FROM house_members WHERE id = %s"
@@ -154,10 +124,6 @@ class PostgresDB:
         query = "INSERT INTO invitations (house_id, email, status) VALUES (%s, %s, %s) RETURNING id"
         result = self._execute_query(query, (i['house_id'], i['email'], i.get('status', 0)), fetch=True, single=True)
         return result['id'] if result else None
-
-    def get_invitation(self, invitation_id):
-        query = "SELECT * FROM invitations WHERE id = %s"
-        return self._execute_query(query, (invitation_id,), fetch=True, single=True)
 
     def get_all_invitations(self):
         query = "SELECT * FROM invitations ORDER BY id"
@@ -177,17 +143,9 @@ class PostgresDB:
         result = self._execute_query(query, (r['house_id'], r['user_id'], r['name']), fetch=True, single=True)
         return result['id'] if result else None
 
-    def get_room(self, room_id):
-        query = "SELECT * FROM rooms WHERE id = %s"
-        return self._execute_query(query, (room_id,), fetch=True, single=True)
-
     def get_all_rooms(self):
         query = "SELECT * FROM rooms ORDER BY id"
         return self._execute_query(query, fetch=True)
-
-    def update_room(self, r):
-        query = "UPDATE rooms SET house_id = %s, user_id = %s, name = %s WHERE id = %s"
-        return self._execute_query(query, (r['house_id'], r['user_id'], r['name'], r['id']))
 
     def delete_room(self, room_id):
         query = "DELETE FROM rooms WHERE id = %s"

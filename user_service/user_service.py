@@ -122,10 +122,7 @@ class UserService:
 
         handlers = {
             "updateUser": self._put_update_user,
-            "updateHouse": self._put_update_house,
-            "updateRoom": self._put_update_room,
             "updateInvitation": self._put_update_invitation,
-            "updateHouseMember": self._put_update_house_member,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -142,26 +139,6 @@ class UserService:
             return json.dumps({"status": "success", "message": "User updated"})
         raise cherrypy.HTTPError(404, "User not found")
 
-    def _put_update_house(self):
-        """Update an existing house in the catalog."""
-        updated_house = self._load_json_body()
-        require_fields(updated_house, ['id'])
-
-        success = self.db.update_house(updated_house)
-        if success:
-            return json.dumps({"status": "success", "message": "House updated"})
-        raise cherrypy.HTTPError(404, "House not found")
-
-    def _put_update_room(self):
-        """Update an existing room in the catalog."""
-        updated_room = self._load_json_body()
-        require_fields(updated_room, ['id'])
-
-        success = self.db.update_room(updated_room)
-        if success:
-            return json.dumps({"status": "success", "message": "Room updated"})
-        raise cherrypy.HTTPError(404, "Room not found")
-
     def _put_update_invitation(self):
         """Update an existing invitation in the catalog."""
         updated_invite = self._load_json_body()
@@ -172,23 +149,12 @@ class UserService:
             return json.dumps({"status": "success", "message": "Invitation updated"})
         raise cherrypy.HTTPError(404, "Invitation not found")
 
-    def _put_update_house_member(self):
-        """Update an existing house member in the catalog."""
-        updated_member = self._load_json_body()
-        require_fields(updated_member, ['id'])
-
-        success = self.db.update_house_member(updated_member)
-        if success:
-            return json.dumps({"status": "success", "message": "House Member updated"})
-        raise cherrypy.HTTPError(404, "House Member not found")
-
     # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
-            "removeUser": self._delete_remove_user,
             "removeHouse": self._delete_remove_house,
             "removeRoom": self._delete_remove_room,
             "removeInvitation": self._delete_remove_invitation,
@@ -198,17 +164,6 @@ class UserService:
         if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
-
-    def _delete_remove_user(self, params):
-        """Delete a user by ID."""
-        user_id = params.get('id')
-        if not user_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-
-        success = self.db.delete_user(user_id)
-        if success:
-            return json.dumps({"status": "success", "message": "User Deleted"})
-        raise cherrypy.HTTPError(404, "User not found")
 
     def _delete_remove_house(self, params):
         """Delete a house by ID."""
@@ -263,109 +218,41 @@ class UserService:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
-            "login": self._get_login,
             "getAllHouses": self._get_all_houses,
             "getAllHouseMembers": self._get_all_house_members,
-            "getHouse": self._get_house,
-            "getRoom": self._get_room,
-            "getInvitation": self._get_invitation,
-            "getHouseMember": self._get_house_member,
             "getAllUsers": self._get_all_users,
             "getAllRooms": self._get_all_rooms,
             "getAllInvitations": self._get_all_invitations,
-            "getEmailByUserId": self._get_email_by_user_id,
         }
         handler = handlers.get(uri[0])
         if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
     
-    def _get_login(self, params):
-        """Authenticate a user by email and password."""
-        email = params.get('email')
-        password = params.get('password')
-        if not email or not password:
-            raise cherrypy.HTTPError(400, "Missing 'email' or 'password' parameter")
-
-        user = self.db.login_user(email, password)
-        if user:
-            return json.dumps({"status": "success", "user": user})
-        raise cherrypy.HTTPError(401, "Invalid email or password")
-
-    def _get_house(self, params):
-        """Get information about a house by ID."""
-        house_id = params.get('id')
-        if not house_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-        house = self.db.get_house(house_id)
-        if house:
-            # Il parametro default=str converte magicamente il created_at!
-            return json.dumps({"status": "success", "house": house}, default=str)
-        raise cherrypy.HTTPError(404, "House not found")
-
     def _get_all_houses(self, params):
         """Get information about all houses."""
         houses = self.db.get_all_houses()
         return json.dumps({"status": "success", "houses": houses}, default=str)
-
-    def _get_invitation(self, params):
-        """Get information about an invitation by ID."""
-        invite_id = params.get('id')
-        if not invite_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-        invite = self.db.get_invitation(invite_id)
-        if invite:
-            return json.dumps({"status": "success", "invitation": invite}, default=str)
-        raise cherrypy.HTTPError(404, "Invitation not found")
 
     def _get_all_invitations(self, params):
         """Get information about all invitations."""
         invitations = self.db.get_all_invitations()
         return json.dumps({"status": "success", "invitations": invitations}, default=str)
 
-    def _get_house_member(self, params):
-        """Get information about a house member by ID."""
-        member_id = params.get('id')
-        if not member_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-        member = self.db.get_house_member(member_id)
-        if member:
-            return json.dumps({"status": "success", "house_member": member}, default=str)
-        raise cherrypy.HTTPError(404, "House Member not found")
-
     def _get_all_house_members(self, params):
         """Get information about all house members."""
         members = self.db.get_all_house_members()
         return json.dumps({"status": "success", "house_members": members}, default=str)
     
-    def _get_room(self, params):
-        """Get information about a room by ID."""
-        room_id = params.get('id')
-        if not room_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-        room = self.db.get_room(room_id)
-        if room:
-            return json.dumps({"status": "success", "room": room}, default=str)
-        raise cherrypy.HTTPError(404, "Room not found")
-
-    def _get_all_users(self):
+    def _get_all_users(self, params):
         """Get information about all users."""
         users = self.db.get_all_users()
         return json.dumps({"status": "success", "users": users}, default=str)
 
-    def _get_all_rooms(self):
+    def _get_all_rooms(self, params):
         """Get information about all rooms."""
         rooms = self.db.get_all_rooms()
         return json.dumps({"status": "success", "rooms": rooms}, default=str)
-    def _get_email_by_user_id(self, params):
-        """Get email of a user by their ID."""
-        user_id = params.get('id')
-        if not user_id:
-            raise cherrypy.HTTPError(400, "Missing 'id' parameter")
-        email = self.db.get_email_by_user_id(user_id)
-        if email:
-            return json.dumps({"status": "success", "email": email}, default=str)
-        raise cherrypy.HTTPError(404, "User not found")
 
     def _load_json_body(self):
         body = cherrypy.request.body.read()

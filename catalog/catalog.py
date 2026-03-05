@@ -275,7 +275,7 @@ class Catalog:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
 
-    def _get_endpoint_Time_series_DB(self):
+    def _get_endpoint_Time_series_DB(self, params=None):
         """Get the endpoint of the TimeSeriesDB service."""
         try:
             endpoint = self.db.get_endpoint_Time_series_DB()
@@ -289,7 +289,7 @@ class Catalog:
             print(f"Error retrieving TimeSeriesDB endpoint: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
-    def _get_endpoint_user_service(self):
+    def _get_endpoint_user_service(self, params=None):
         """Get the endpoint of the UserService."""
         try:
             endpoint = self.db.get_endpoint_user_service()
@@ -333,19 +333,6 @@ class Catalog:
         except Exception as e:
             print(f"Error retrieving service {service_id}: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
-
-    def _get_check_username(self, params):
-        """Check if a username exists in the database."""
-        username = params.get('username')
-        if not username:
-            raise cherrypy.HTTPError(400, "Missing 'username' parameter")
-        try:
-            exists = self.db.check_user_exists(username)
-            return json.dumps({"status": "success", "exists": exists})
-        except Exception as e:
-            logger.error(f"Error checking username: {e}")
-            raise cherrypy.HTTPError(500, "Internal Server Error")
-
 
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""

@@ -5,10 +5,9 @@ struct HouseView: View {
     
     @State private var showingAddHouse = false
     @State private var newHouseName = ""
-    @State private var showingProfile = false // 🟢 Added this back!
+    @State private var showingProfile = false
     
     var body: some View {
-        // 🟢 Added the NavigationView wrapper back!
         NavigationView {
             VStack {
                 if viewModel.isLoading {
@@ -54,11 +53,15 @@ struct HouseView: View {
                         if !viewModel.houses.isEmpty {
                             Section(header: Text("My Homes")) {
                                 ForEach(viewModel.houses) { house in
-                                    // Make sure you uncomment your NavigationLink when RoomsListView is ready!
-                                    // NavigationLink(destination: RoomsListView(house: house)) {
-                                    //     ...
-                                    // }
-                                    Text(house.name).font(.system(size: 18, weight: .medium, design: .rounded))
+                                    NavigationLink(destination: RoomsView(house: house)) {
+                                        HStack {
+                                            Image(systemName: "house.fill")
+                                                .foregroundColor(.blue)
+                                                .frame(width: 30)
+                                            Text(house.name)
+                                                .font(.system(size: 18, weight: .medium, design: .rounded))
+                                        }
+                                    }
                                 }
                                 .onDelete { indexSet in
                                     Task { await viewModel.deleteHouse(at: indexSet) }
@@ -71,7 +74,6 @@ struct HouseView: View {
             }
             .navigationTitle("Houses")
             .toolbar {
-                // 🟢 Profile Button (Top Left)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: { showingProfile = true }) {
                         Image(systemName: "person.fill")
@@ -80,7 +82,6 @@ struct HouseView: View {
                     }
                 }
                 
-                // 🟢 Add House Button (Top Right)
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showingAddHouse = true }) {
                         Image(systemName: "plus")
@@ -99,7 +100,6 @@ struct HouseView: View {
                 }
                 .buttonStyle(.glassProminent)
             }
-            // 🟢 Attach the Profile sheet here
             .sheet(isPresented: $showingProfile) {
                 ProfileView()
             }

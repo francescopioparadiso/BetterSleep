@@ -6,10 +6,10 @@ class AuthModel: ObservableObject {
     @Published var isAuthenticated = false
     @Published var errorMessage: String? = nil
     
-    // TODO: Point this to your new Python User Management Microservice IP
-    private let baseURL = "http://localhost:9095"
+    private func baseURL() async throws -> String {
+        try await CatalogClient.shared.getUserServiceURL()
+    }
     
-    // Check if a user is already logged in when the app starts
     func checkSession() {
         if UserDefaults.standard.string(forKey: "currentUserId") != nil {
             isAuthenticated = true
@@ -19,7 +19,11 @@ class AuthModel: ObservableObject {
     }
     
     func signUp(email: String, password: String) async {
-        guard let url = URL(string: "\(baseURL)/signup") else { return }
+        guard let base = try? await baseURL(),
+              let url = URL(string: "\(base)/signup") else {
+            self.errorMessage = "Unable to reach the service catalog."
+            return
+        }
         
         let payload = ["email": email, "password": password]
         
@@ -36,7 +40,6 @@ class AuthModel: ObservableObject {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let userId = json["id"] {
                     UserDefaults.standard.set("\(userId)", forKey: "currentUserId")
-                    // 🟢 Save the email to memory!
                     UserDefaults.standard.set(email, forKey: "currentUserEmail")
                     
                     self.isAuthenticated = true
@@ -51,7 +54,11 @@ class AuthModel: ObservableObject {
     }
     
     func signIn(email: String, password: String) async {
-        guard let url = URL(string: "\(baseURL)/login") else { return }
+        guard let base = try? await baseURL(),
+              let url = URL(string: "\(base)/login") else {
+            self.errorMessage = "Unable to reach the service catalog."
+            return
+        }
         
         let payload = ["email": email, "password": password]
         
@@ -68,7 +75,6 @@ class AuthModel: ObservableObject {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let userId = json["id"] {
                     UserDefaults.standard.set("\(userId)", forKey: "currentUserId")
-                    // 🟢 Save the email to memory!
                     UserDefaults.standard.set(email, forKey: "currentUserEmail")
                     
                     self.isAuthenticated = true
@@ -83,9 +89,7 @@ class AuthModel: ObservableObject {
     }
     
     func signOut() {
-        // Clear local storage to log out
         UserDefaults.standard.removeObject(forKey: "currentUserId")
-        // 🟢 Remove the email on logout!
         UserDefaults.standard.removeObject(forKey: "currentUserEmail")
         self.isAuthenticated = false
     }

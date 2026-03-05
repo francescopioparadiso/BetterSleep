@@ -93,8 +93,11 @@ class CatalogClient:
         endpoint = "add"+("Service" if self.type == 0 else "Sensor" if self.type == 1 else "Actuator")
         data, status, error = self.post(endpoint, json=service)
         if error:
-            logger.error(f'Registration failed ({status}): {error}')
-            raise
+            if status == 409:
+                logger.info('Service already registered with Catalog, continuing.')
+            else:
+                logger.error(f'Registration failed ({status}): {error}')
+                raise Exception(f'Registration failed ({status}): {error}')
         else:
             logger.info('Successfully registered with Catalog')
 
@@ -108,7 +111,6 @@ class CatalogClient:
         data, status, error = self.put(endpoint, json=service)
         if error:
             logger.error(f'Update failed ({status}): {error}')
-            raise
         else:
             logger.debug('Successfully updated with Catalog')
 

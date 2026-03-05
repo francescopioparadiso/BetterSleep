@@ -133,6 +133,5 @@ struct AuthView: View {
 }
 
 #Preview {
-    // 🟢 Fixed the Model name here!
     AuthView(authVM: AuthModel())
 }

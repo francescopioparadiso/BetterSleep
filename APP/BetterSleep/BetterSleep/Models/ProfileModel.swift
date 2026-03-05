@@ -4,7 +4,6 @@ import Combine
 
 @MainActor
 class ProfileModel: ObservableObject {
-    // Defaults matching your init_catalog.sql
     @Published var bedtime: Date = Calendar.current.date(bySettingHour: 22, minute: 0, second: 0, of: Date()) ?? Date()
     @Published var wakeTime: Date = Calendar.current.date(bySettingHour: 7, minute: 0, second: 0, of: Date()) ?? Date()
     
@@ -15,9 +14,11 @@ class ProfileModel: ObservableObject {
     private var currentUserId: Int?
     
     private var saveTask: Task<Void, Never>?
-    private let baseURL = "http://127.0.0.1:9095"
     
-    // Postgres stores these as text like "22:00", so we use HH:mm
+    private func baseURL() async throws -> String {
+        try await CatalogClient.shared.getUserServiceURL()
+    }
+    
     private var timeFormatter: DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
@@ -27,6 +28,9 @@ class ProfileModel: ObservableObject {
     init() {
         if let idString = UserDefaults.standard.string(forKey: "currentUserId"), let id = Int(idString) {
             self.currentUserId = id
+        }
+        if let cachedEmail = UserDefaults.standard.string(forKey: "currentUserEmail") {
+            self.userEmail = cachedEmail
         }
     }
     
@@ -38,10 +42,10 @@ class ProfileModel: ObservableObject {
         }
         
         do {
-            let url = URL(string: "\(baseURL)/getAllUsers")!
+            let base = try await baseURL()
+            let url = URL(string: "\(base)/getAllUsers")!
             let (data, _) = try await URLSession.shared.data(from: url)
             
-            // Parse the JSON and find our specific user
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let usersList = json["users"] as? [[String: Any]],
                let currentUser = usersList.first(where: { ($0["id"] as? Int) == userId }) {
@@ -70,7 +74,7 @@ class ProfileModel: ObservableObject {
         saveTask?.cancel()
         saveTask = Task {
             do {
-                try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second debounce
+                try await Task.sleep(nanoseconds: 1_000_000_000)
                 await savePreferences()
             } catch {
                 // Task cancelled because user is still adjusting the time
@@ -83,11 +87,11 @@ class ProfileModel: ObservableObject {
         isSaving = true
         
         do {
-            var request = URLRequest(url: URL(string: "\(baseURL)/updateUser")!)
+            let base = try await baseURL()
+            var request = URLRequest(url: URL(string: "\(base)/updateUser")!)
             request.httpMethod = "PUT"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             
-            // Your Postgres update_user query requires id, email, night_time, and morning_time
             let payload: [String: Any] = [
                 "id": userId,
                 "email": userEmail,
@@ -97,8 +101,6 @@ class ProfileModel: ObservableObject {
             
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
             _ = try await URLSession.shared.data(for: request)
-            
-            print("Global schedule saved successfully to Postgres!")
         } catch {
             print("Error saving schedule: \(error)")
         }
