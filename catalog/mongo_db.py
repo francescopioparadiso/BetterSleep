@@ -42,8 +42,16 @@ class MongoDBAdapter:
     def insert_service(self, service):
         try:
             logger.debug(f"Attempting to insert service: {service}")
-            # Ensure serviceID is always a string
             service["serviceID"] = str(service["serviceID"])
+            # Forza il formato della data
+            if "last_update" in service:
+                try:
+                    service["last_update"] = datetime.strptime(service["last_update"], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    try:
+                        service["last_update"] = datetime.fromisoformat(service["last_update"]).strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        service["last_update"] = str(service["last_update"])
             # Check for duplicate serviceID
             if self.db.services.find_one({"serviceID": service["serviceID"]}):
                 logger.warning(f"Service ID {service['serviceID']} already exists (pre-check)")
@@ -78,8 +86,20 @@ class MongoDBAdapter:
     def update_service_last_update(self, service_id, last_update):
 
         try:
-            logger.debug(f"Updating service {service_id} last_update to: {last_update} (type: {type(last_update).__name__})")
-
+            service_id = str(service_id)
+            # Forza il formato della data
+            if isinstance(last_update, str):
+                try:
+                    # Prova a convertire, se già nel formato va bene
+                    datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    # Se non è nel formato, prova a convertirlo
+                    try:
+                        last_update = datetime.fromisoformat(last_update).strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        last_update = str(last_update)
+            else:
+                last_update = str(last_update)
             result = self.db.services.update_one(
                 {"serviceID": service_id},
                 {"$set": {"last_update": last_update}}
