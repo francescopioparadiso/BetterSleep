@@ -3,6 +3,8 @@ import sys
 import threading
 import logging
 import cherrypy
+import requests
+
 from common.catalog_client import CatalogClient
 from common.MQTT.MyMQTT import MyMQTT
 from datetime import datetime
@@ -22,11 +24,19 @@ class SleepCycleManager:
         self.clientID = conf['MQTT']['clientID']
         self.broker = conf['MQTT']['broker']
         self.port = conf['MQTT']['port']
+        data, status, error = self.catalog_client.get(f"getEndpointUserService")
+        self.user_service_endpoint = data.get("endpoint")
+        if not self.user_service_endpoint:
+            logger.error("User service endpoint not found in Catalog response")
+            self.catalog_client.unregister()
+            sys.exit(1)
         self.topic_subscribe = conf['MQTT']['topic_subscribe']
+        self.room_preferences_cache = {}  # Cache per le preferenze delle stanze
         try:
             self.mqtt_client = MyMQTT(self.clientID, self.broker, self.port, self)
             self.startClient()
             self.mqtt_client.mySubscribe(self.topic_subscribe)
+            self.mqtt_client.mySubscribe(f"UserService/ChangePreference/#")  # !!TODO topic for change preference i need to implement
         except Exception as e:
             logger.error(f"Error initializing MQTT client: {e}")
             self.catalog_client.unregister()
@@ -47,40 +57,111 @@ class SleepCycleManager:
 
 
     def notify(self, topic, payload):
-        # 1. Decodifica il messaggio SenML ricevuto dai sensori simolati
         message_received = json.loads(payload)
-        if data in topic:
-            print(topic)
-            houseid=topic.split("/")[1]
-            bedroomid=topic.split("/")[3]
-            sensor_type=topic.split("/")[5]
-            sensorid=topic.split("/")[6]
-            room_actuetor=["fan"] # we need to ask to the catalog for the actuators in the room, but for now we can assume that there is only one actuator in the room and it is the fan
-            desiderate_temperature=25 # we need to ask to the catalog for the desiderate temperature, but for now we can assume that the desiderate temperature is 25 degrees
-            if sensor_type == "ambient_temp":
-                temp_value = message_received['e'][0]['v']
-                if temp_value > desiderate_temperature and "fan" in room_actuetor:
-                    if "fan" in room_actuetor:
-                        command = {"action": "ON", "device": "fan", "timestamp": str(datetime.now())}
-                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
-                    elif "heater" in room_actuetor:
-                        command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
-                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
+        # Wildcard-aware topic matching
+        if "UserService/ChangePreference/" in topic:
+            parts = topic.split("/")
+            bedroomid = parts[2]
+            msg = message_received
+            if bedroomid in self.room_preferences_cache:
+                logger.info(f"Update preferences for {bedroomid} in cache")
+                new_prefs = msg.get("new_preferences", {})
+                self.room_preferences_cache[bedroomid].update(new_prefs)
+                logger.info(f"New preferences for {bedroomid}: {self.room_preferences_cache[bedroomid]}")
+            return
 
-                elif temp_value < desiderate_temperature :
-                    if "fan" in room_actuetor:
-                        command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
-                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
-                    elif "heater" in room_actuetor:
-                        command = {"action": "ON", "device": "heater", "timestamp": str(datetime.now())}
-                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
-                else:
-                    if "fan" in room_actuetor:
-                        command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
-                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
-                    elif "heater" in room_actuetor:
-                        command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
-                        self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
+        if topic.startswith("House/") and "/bedroom/" in topic and "/sensors/" in topic:
+
+            houseid = topic.split("/")[1]
+            bedroomid = topic.split("/")[3]
+            sensor_type = topic.split("/")[5]
+            room_data = self.get_room_preference(bedroomid)
+            desiderate_temperature = room_data.get("temperature_night", 18)
+            room_actuetor = room_data.get("actuators", [])
+            if sensor_type == "ambient_temp":
+                self.handle_temperature(message_received, room_actuetor, desiderate_temperature, houseid, bedroomid)
+            if sensor_type == "light":
+                pass
+            if sensor_type == "presence":
+                pass
+            if sensor_type == "humidity":
+                pass
+            if sensor_type == "vibration":
+                pass
+
+    def get_room_preference(self, bedroomid):
+        if bedroomid not in self.room_preferences_cache:
+            logger.info(f"Cache miss for {bedroomid}, fetching from User Service")
+            response = requests.get(f"{self.user_service_endpoint}/get_user_data", params={"bedroomid": bedroomid}) #!!TODO i need to implement
+            """
+               the date of output will be in json 
+               preferences: {
+               "temperature_night": 18,
+               "temperature_morning": 22,
+               "light_night": 0,
+               "light_morning": 100,
+               }
+            """
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    self.room_preferences_cache[bedroomid] = data.get("preferences", {})
+                    self.room_preferences_cache[bedroomid]["actuators"] = self.get_actuators_in_room(bedroomid)
+                    self.room_preferences_cache[bedroomid]["is_sleeping"] = False
+                    self.room_preferences_cache[bedroomid]["last_seen_bed"] = None #!!TODO i need to implement the control of sleeping or not sleeping if more then 30 minutes the user is in bed we can consider him sleeping
+
+                    logger.info(f"Cache updated for {bedroomid}: {self.room_preferences_cache[bedroomid]}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error decoding JSON for {bedroomid}: {e}")
+                    self.room_preferences_cache[bedroomid] = {}
+
+
+            else:
+                logger.error(f"Error in request to User Service for {bedroomid}: {response.status_code} - {response.text}")
+                self.room_preferences_cache[bedroomid] = {}
+        return self.room_preferences_cache[bedroomid]
+
+
+
+    def get_actuators_in_room(self, bedroomid):
+        response = requests.get(f"{self.catalog_url}/getActuatorsInRoom", params={"bedroomid": bedroomid}) #!!TODO i need to implement
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                actuators = data.get("actuators", [])
+                logger.info(f"Actuators in {bedroomid}: {actuators}")
+                return actuators
+            except json.JSONDecodeError as e:
+                logger.error(f"Error of decoding JSON for actuators in {bedroomid}: {e}")
+                return []
+        else:
+            logger.error(f"Error in request to Catalog for actuators in {bedroomid}: {response.status_code} - {response.text}")
+            return []
+
+    def handle_temperature(self, message_received, room_actuetor, desiderate_temperature, houseid, bedroomid):
+        temp_value = message_received['e'][0]['v']
+        if temp_value > desiderate_temperature and "fan" in room_actuetor:
+            if "fan" in room_actuetor:
+                command = {"action": "ON", "device": "fan", "timestamp": str(datetime.now())}
+                self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
+            elif "heater" in room_actuetor:
+                command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
+                self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
+
+        elif temp_value < desiderate_temperature:
+            if "fan" in room_actuetor:
+                command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
+                self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
+            elif "heater" in room_actuetor:
+                command = {"action": "ON", "device": "heater", "timestamp": str(datetime.now())}
+                self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
+        else:
+            if "fan" in room_actuetor:
+                command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
+                self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/fan")
+            elif "heater" in room_actuetor:
+                command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
+                self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
 
 if __name__ == "__main__":
   try:
