@@ -90,6 +90,7 @@ class CatalogClient:
         }
         if self.type in [1, 2]:
             service["roomID"] = self.service_info.get('roomID', '')
+            service["houseID"] = self.service_info.get('houseID', '')
             service["mqtt_topic"] = self.service_info.get('mqtt_topic', '')
         endpoint = "add" + ("Service" if self.type == 0 else "Sensor" if self.type == 1 else "Actuator")
         data, status, error = self.post(endpoint, json=service)
