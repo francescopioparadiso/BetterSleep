@@ -267,6 +267,7 @@ class Catalog:
             "getService": self._get_service,
             "getEndpointTimeSeries": self._get_endpoint_Time_series_DB,
             "getEndpointUserService": self._get_endpoint_user_service,
+            "getSensorByRoom": self._get_sensor_by_room,
 
         }
         handler = handlers.get(uri[0])
@@ -333,7 +334,21 @@ class Catalog:
         except Exception as e:
             print(f"Error retrieving service {service_id}: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
-
+    def _get_sensor_by_room(self, params):
+        """Get sensors by roomID."""
+        room_id = params.get('roomID')
+        if not room_id:
+            raise cherrypy.HTTPError(400, "Missing 'roomID' parameter")
+        try:
+            sensors = self.db.get_sensor_by_room(room_id)
+            sensors_json = []
+            for sensor in sensors:
+                sensor['_id'] = str(sensor.get('_id', ''))
+                sensors_json.append(sensor)
+            return json.dumps({"status": "success", "count": len(sensors), "sensors": sensors_json})
+        except Exception as e:
+            print(f"Error retrieving sensors for room {room_id}: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""
     cherrypy.response.headers["Content-Type"] = "application/json"

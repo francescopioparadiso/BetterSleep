@@ -8,9 +8,8 @@ import threading
 logger = logging.getLogger(__name__)
 
 
-# noinspection HttpUrlsUsage
 class CatalogClient:
-    def __init__(self, catalog_url, service_info, remove_interval=10, timeout=5, type=0):
+    def __init__(self, catalog_url, service_info, remove_interval=10, timeout=5, type_device=0):
         """
 
         Args:
@@ -18,7 +17,7 @@ class CatalogClient:
             service_info:
             remove_interval:
             timeout:
-            type: 0 for service, 1 for sensor and 2 for Actuator
+            type_device: 0 for service, 1 for sensor and 2 for Actuator
         """
         self.timeout = timeout
         self._stop_event = threading.Event()
@@ -26,7 +25,7 @@ class CatalogClient:
         self.catalog_url = catalog_url
         self.service_info = service_info
         self.remove_interval = remove_interval
-        self.type = type
+        self.type = type_device
 
     def request(self, method, endpoint, **kwargs):
         """Make a request to the catalog and return (data, status_code, error_message).
@@ -81,16 +80,18 @@ class CatalogClient:
         return self.request('delete', endpoint, **kwargs)
 
     def register(self):
-
         idName = 'serviceID' if self.type == 0 else 'sensorID' if self.type == 1 else 'ActuatorID'
         service = {
-            idName : self.service_info[idName],
+            idName: self.service_info[idName],
             "name": self.service_info['name'],
             "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
             "type": self.service_info.get('type', 'generic'),
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        endpoint = "add"+("Service" if self.type == 0 else "Sensor" if self.type == 1 else "Actuator")
+        if self.type in [1, 2]:
+            service["roomID"] = self.service_info.get('roomID', '')
+            service["mqtt_topic"] = self.service_info.get('mqtt_topic', '')
+        endpoint = "add" + ("Service" if self.type == 0 else "Sensor" if self.type == 1 else "Actuator")
         data, status, error = self.post(endpoint, json=service)
         if error:
             if status == 409:

@@ -271,7 +271,14 @@ class MongoDBAdapter:
             logger.error(f"Error updating actuator last_update: {e}", exc_info=True)
             raise
 
-
+    def get_sensor_by_room (self, room_id):
+        try:
+            sensors = list(self.db.sensors.find({"roomID": room_id}))
+            logger.debug(f"Retrieved {len(sensors)} sensors for room {room_id} from database")
+            return sensors
+        except Exception as e:
+            logger.error(f"Error retrieving sensors for room {room_id}: {e}")
+            return []
     # ================================================================
     # CONNECTION MANAGEMENT
     # ================================================================
