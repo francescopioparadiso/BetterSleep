@@ -9,7 +9,7 @@ class MyMQTT:
         self.port = port
         self.notifier = notifier
         self.clientID = clientID
-        self._topic = ""
+        self._topics = set()  # Track all subscribed topics
         self._isSubscriber = False
         # create an instance of paho.mqtt.client
         self._paho_mqtt = PahoMQTT.Client(clientID, True)
@@ -34,7 +34,7 @@ class MyMQTT:
         self._paho_mqtt.subscribe(topic, 2)
         # just to remember that it works also as a subscriber
         self._isSubscriber = True
-        self._topic = topic
+        self._topics.add(topic)
         print("subscribed to %s" % topic)
 
     def start(self):
@@ -44,13 +44,15 @@ class MyMQTT:
 
     def unsubscribe(self):
         if self._isSubscriber:
-            # remember to unsuscribe if it is working also as subscriber
-            self._paho_mqtt.unsubscribe(self._topic)
+            for topic in self._topics:
+                self._paho_mqtt.unsubscribe(topic)
+            self._topics.clear()
 
     def stop(self):
         if self._isSubscriber:
-            # remember to unsuscribe if it is working also as subscriber
-            self._paho_mqtt.unsubscribe(self._topic)
+            for topic in self._topics:
+                self._paho_mqtt.unsubscribe(topic)
+            self._topics.clear()
 
         self._paho_mqtt.loop_stop()
         self._paho_mqtt.disconnect()
