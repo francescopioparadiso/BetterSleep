@@ -83,7 +83,6 @@ class SleepCycleManager:
                         self.publish(command, command_topic=f"House/{houseid}/bedroom/{bedroomid}/actuators/heater")
 
 if __name__ == "__main__":
-  # Standard CherryPy startup sequence
   try:
     with open("conf.json", "r") as f:
       full_conf = json.load(f)

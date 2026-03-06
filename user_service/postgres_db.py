@@ -161,37 +161,3 @@ class PostgresDB:
     def delete_room(self, room_id):
         query = "DELETE FROM rooms WHERE id = %s"
         return self._execute_query(query, (room_id,))
-
-    # --- SENSORS ---
-
-    DEFAULT_SENSOR_TYPES = [
-        {"type": "ambient_temp", "name": "Temperature Sensor"},
-        {"type": "humidity",     "name": "Humidity Sensor"},
-        {"type": "light",        "name": "Light Sensor"},
-        {"type": "heart_rate",   "name": "Heart Rate Sensor"},
-        {"type": "vibration",    "name": "Vibration Sensor"},
-        {"type": "presence",     "name": "Presence Sensor"},
-    ]
-
-    def insert_sensor(self, room_id, sensor_type, name, mqtt_topic=None):
-        query = "INSERT INTO sensors (room_id, type, name, mqtt_topic) VALUES (%s, %s, %s, %s) RETURNING id"
-        result = self._execute_query(query, (room_id, sensor_type, name, mqtt_topic), fetch=True, single=True)
-        return result['id'] if result else None
-
-    def create_default_sensors(self, room_id, house_id):
-        """Create all default sensors for a newly created room."""
-        sensor_ids = []
-        for sensor_def in self.DEFAULT_SENSOR_TYPES:
-            mqtt_topic = f"House/{house_id}/Room/{room_id}/sensor/{sensor_def['type']}/data"
-            sensor_id = self.insert_sensor(room_id, sensor_def['type'], sensor_def['name'], mqtt_topic)
-            if sensor_id:
-                sensor_ids.append(sensor_id)
-        return sensor_ids
-
-    def get_sensors_by_room(self, room_id):
-        query = "SELECT * FROM sensors WHERE room_id = %s ORDER BY id"
-        return self._execute_query(query, (room_id,), fetch=True)
-
-    def delete_sensor(self, sensor_id):
-        query = "DELETE FROM sensors WHERE id = %s"
-        return self._execute_query(query, (sensor_id,))
