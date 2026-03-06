@@ -129,15 +129,34 @@ enum SensorType: String, Codable, CaseIterable, Hashable {
     }
 }
 
+// Sensor as returned by the Catalog service
 struct Sensor: Codable, Identifiable, Hashable {
-    var id: Int?
-    var room_id: Int
-    var type: String
+    var sensorID: String
     var name: String
+    var endpoint: String?
+    var type: String
+    var last_update: String?
+    var roomID: String?
+    var houseID: String?
     var mqtt_topic: String?
-    var created_at: String?
+
+    // Identifiable conformance using sensorID
+    var id: String { sensorID }
 
     var sensorType: SensorType? {
         SensorType(rawValue: type)
     }
+}
+
+// MARK: - SenML Models (from TimeSeries DB)
+struct SenMLEvent: Codable, Hashable {
+    var n: String   // name / measurement type
+    var u: String   // unit
+    var t: Double   // timestamp (unix)
+    var v: Double   // value
+}
+
+struct SenMLRecord: Codable, Hashable {
+    var bn: String       // base name: "houseID:roomID:sensorID:sensorType"
+    var e: [SenMLEvent]  // events
 }

@@ -54,7 +54,8 @@ struct RoomsView: View {
     }
     
     var body: some View {
-        List {
+        ZStack(alignment: .top) {
+            List {
                 // MARK: - Rooms
                 Section(header: Text("Rooms")) {
                     if roomModel.rooms.isEmpty {
@@ -200,8 +201,9 @@ struct RoomsView: View {
                     .padding(.vertical, 4)
                 }
             }
-        .listStyle(.insetGrouped)
-        .safeAreaInset(edge: .top, spacing: 0) {
+            .listStyle(.insetGrouped)
+            
+            // MARK: - Dynamic Island Error Toast
             if let errorMessage = invitationModel.errorMessage {
                 HStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -215,12 +217,11 @@ struct RoomsView: View {
                 .background(Color.red.opacity(0.15))
                 .clipShape(.rect(cornerRadius: 24))
                 .shadow(color: Color.red, radius: 30, x: 0, y: 0)
-                .padding(.horizontal)
-                .padding(.top, 4)
                 .transition(.asymmetric(
                     insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5)),
                     removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5))
                 ))
+                .zIndex(1)
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
                         withAnimation(toastAnimation) {

@@ -87,15 +87,9 @@ struct HouseView: View {
                                         HStack(spacing: 14) {
                                             Text(flagForHouse(house.name))
                                                 .font(.largeTitle)
-                                                .frame(width: 36)
                                             
-                                            VStack(alignment: .leading, spacing: 3) {
-                                                Text(house.name)
-                                                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                                                Text("Smart Home")
-                                                    .font(.caption)
-                                                    .foregroundColor(.secondary)
-                                            }
+                                            Text(house.name)
+                                                .font(.system(.headline, design: .rounded, weight: .semibold))
                                         }
                                         .padding(.vertical, 6)
                                     }

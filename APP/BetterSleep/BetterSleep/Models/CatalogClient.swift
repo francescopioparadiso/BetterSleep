@@ -6,12 +6,18 @@ actor CatalogClient {
     private let catalogURL = "http://127.0.0.1:8080"
 
     private var cachedUserServiceURL: String?
-    private var cacheTimestamp: Date?
+    private var cachedTimeSeriesURL: String?
+    private var cacheTimestampUser: Date?
+    private var cacheTimestampTS: Date?
     private let cacheTTL: TimeInterval = 60
+
+    private func fixEndpoint(_ endpoint: String) -> String {
+        endpoint.replacingOccurrences(of: "0.0.0.0", with: "127.0.0.1")
+    }
 
     func getUserServiceURL() async throws -> String {
         if let cached = cachedUserServiceURL,
-           let ts = cacheTimestamp,
+           let ts = cacheTimestampUser,
            Date().timeIntervalSince(ts) < cacheTTL {
             return cached
         }
@@ -20,15 +26,43 @@ actor CatalogClient {
         let (data, _) = try await URLSession.shared.data(from: url)
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var endpoint = json["endpoint"] as? String else {
+              let endpoint = json["endpoint"] as? String else {
             throw URLError(.badServerResponse)
         }
 
-        // Replace 0.0.0.0 so iOS can reach the service
-        endpoint = endpoint.replacingOccurrences(of: "0.0.0.0", with: "127.0.0.1")
+        let fixed = fixEndpoint(endpoint)
+        cachedUserServiceURL = fixed
+        cacheTimestampUser = Date()
+        return fixed
+    }
 
-        cachedUserServiceURL = endpoint
-        cacheTimestamp = Date()
-        return endpoint
+    func getTimeSeriesURL() async throws -> String {
+        if let cached = cachedTimeSeriesURL,
+           let ts = cacheTimestampTS,
+           Date().timeIntervalSince(ts) < cacheTTL {
+            return cached
+        }
+
+        let url = URL(string: "\(catalogURL)/getEndpointTimeSeries")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let endpoint = json["endpoint"] as? String else {
+            throw URLError(.badServerResponse)
+        }
+
+        let fixed = fixEndpoint(endpoint)
+        cachedTimeSeriesURL = fixed
+        cacheTimestampTS = Date()
+        return fixed
+    }
+
+    /// Fetch active sensors for a room directly from the Catalog
+    func getSensorsForRoom(roomID: String) async throws -> [Sensor] {
+        let url = URL(string: "\(catalogURL)/getSensorByRoom?roomID=\(roomID)")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let sensorsData = try JSONSerialization.data(withJSONObject: json?["sensors"] ?? [])
+        return try JSONDecoder().decode([Sensor].self, from: sensorsData)
     }
 }

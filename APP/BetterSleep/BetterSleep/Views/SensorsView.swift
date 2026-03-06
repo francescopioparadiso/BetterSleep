@@ -147,7 +147,7 @@ struct SensorDetailView: View {
     }
 
     private var chartPoints: [ChartDataPoint] {
-        sensorModel.chartData[sensor.id ?? 0] ?? []
+        sensorModel.chartData[sensor.sensorID] ?? []
     }
 
     private var yAxisBounds: ClosedRange<Double> {
@@ -172,7 +172,7 @@ struct SensorDetailView: View {
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: sensorModel.selectedTimeRange) { _, _ in
-                        sensorModel.loadFakeChartData(for: sensor)
+                        Task { await sensorModel.loadChartData(for: sensor) }
                     }
 
                     if sensorModel.isChartLoading {
@@ -265,7 +265,7 @@ struct SensorDetailView: View {
         // navigation title includes icon + sensor name
         .navigationTitle("\(sType.label)")
         .task {
-            sensorModel.loadFakeChartData(for: sensor)
+            await sensorModel.loadChartData(for: sensor)
         }
     }
 
