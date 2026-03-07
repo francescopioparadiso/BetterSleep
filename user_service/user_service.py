@@ -26,12 +26,42 @@ class UserService:
         self.db_conf = conf_user_service['Database']
         self.db = PostgresDB(self.db_conf)
         self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
+        self.MQTT_info = conf['MQTT']
+        self.mqtt_client_publish=None
+        self.init_mqtt_client()
 
         try:
             self.catalog.register()
         except Exception as e:
             logger.error(f'Failed to Register with Catalog: {e}')
             raise Exception
+
+    def init_mqtt_client(self):
+        client_id = self.MQTT_info['client_id']
+        broker = self.MQTT_info['broker']
+        port = self.MQTT_info['port']
+        try:
+            self.mqtt_client_publish = MyMQTT(client_id, broker, port, self)
+            self.startClient()
+        except Exception as e:
+            logger.error(f"Error initializing MQTT client: {e}")
+            self.catalog_client.unregister()
+            sys.exit(1)
+
+    def startClient(self):
+        self.mqtt_client.start()
+
+    def stopClient(self):
+        self.mqtt_client.stop()
+
+
+    def publish(self, topic, message):
+        if self.mqtt_client_publish:
+            self.mqtt_client_publish.publish(topic, message)
+        else:
+            logger.error("MQTT client not initialized, cannot publish message")
+
+
 
     # POST METHOD - Create new resources
     def POST(self, *uri, **params):

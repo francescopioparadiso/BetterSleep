@@ -1,6 +1,5 @@
 import json
 import sys
-import threading
 import logging
 import cherrypy
 import requests
@@ -10,13 +9,9 @@ from common.catalog_client import CatalogClient
 from common.MQTT.MyMQTT import MyMQTT
 from datetime import datetime
 
+from common.common import mqtt_to_regex
+
 logger = logging.getLogger(__name__)
-
-
-def mqtt_to_regex(self, topic):
-    topic = topic.replace("+", "[^/]+")
-    topic = topic.replace("#", ".*")
-    return "^" + topic + "$"
 
 
 class SleepCycleManager:

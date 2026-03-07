@@ -11,8 +11,10 @@
  "MQTT": {
       "broker": "localhost",
       "port": 1883,
-      "topic": "services/user"
-    },
+       "topic_publish": [
+      "UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/"
+      ]
+ },
   "Database": {
         "host": "localhost",
         "port": 5432,

@@ -13,7 +13,8 @@
         "House/+/Bedroom/+/sensor/+/+/data",
         "UserService/ChangePreference/#"
       ],
-      "topic_publish": ["House/{houseID}/Bedroom/{bedroomID}/actuator{device}",
+      "topic_publish": [
+      "House/{houseID}/Bedroom/{bedroomID}/actuator{device}",
       "House/{houseID}/Bedroom/{bedroomID}/heart_rate"
       ],
       "clientID": "TimeSeriesDBAdapterClientBetterSleepIoT"

@@ -17,3 +17,9 @@ def json_error_page(status, message, traceback, version):
         "status": status_code,
         "error": message
     })
+
+
+def mqtt_to_regex(self, topic):
+    topic = topic.replace("+", "[^/]+")
+    topic = topic.replace("#", ".*")
+    return "^" + topic + "$"
