@@ -12,6 +12,3 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
-
-# We don't set a CMD here because docker-compose will dictate 
-# whether this container runs the simulator or the subscriber.

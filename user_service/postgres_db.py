@@ -140,8 +140,20 @@ class PostgresDB:
     # --- ROOMS ---
     def insert_room(self, r):
         query = "INSERT INTO rooms (house_id, user_id, name) VALUES (%s, %s, %s) RETURNING id"
-        result = self._execute_query(query, (r['house_id'], r['user_id'], r['name']), fetch=True, single=True)
+        result = self._execute_query(query, (r['house_id'], r.get('user_id'), r['name']), fetch=True, single=True)
         return result['id'] if result else None
+
+    def assign_room(self, room_id, user_id):
+        query = "UPDATE rooms SET user_id = %s WHERE id = %s AND user_id IS NULL"
+        return self._execute_query(query, (user_id, room_id))
+
+    def unassign_room(self, room_id, user_id):
+        query = "UPDATE rooms SET user_id = NULL WHERE id = %s AND user_id = %s"
+        return self._execute_query(query, (room_id, user_id))
+
+    def unassign_user_from_house_rooms(self, user_id, house_id):
+        query = "UPDATE rooms SET user_id = NULL WHERE house_id = %s AND user_id = %s"
+        return self._execute_query(query, (house_id, user_id))
 
     def get_all_rooms(self):
         query = "SELECT * FROM rooms ORDER BY id"

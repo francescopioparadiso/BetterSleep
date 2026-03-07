@@ -119,6 +119,17 @@ enum SensorType: String, Codable, CaseIterable, Hashable {
         self == .heart_rate || self == .presence || self == .vibration
     }
 
+    var numericCode: Int {
+        switch self {
+        case .ambient_temp: return 0
+        case .humidity: return 1
+        case .presence: return 2
+        case .heart_rate: return 3
+        case .vibration: return 4
+        case .light: return 5
+        }
+    }
+
     var passiveDescription: String {
         switch self {
         case .heart_rate: return "Records HR while in bed"

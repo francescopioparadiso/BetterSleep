@@ -65,4 +65,14 @@ actor CatalogClient {
         let sensorsData = try JSONSerialization.data(withJSONObject: json?["sensors"] ?? [])
         return try JSONDecoder().decode([Sensor].self, from: sensorsData)
     }
+
+    /// Ask the user service to register default sensors for a room
+    func activateSensors(roomId: Int, houseId: Int) async throws {
+        let base = try await getUserServiceURL()
+        var req = URLRequest(url: URL(string: "\(base)/activateSensors")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["room_id": roomId, "house_id": houseId])
+        _ = try await URLSession.shared.data(for: req)
+    }
 }

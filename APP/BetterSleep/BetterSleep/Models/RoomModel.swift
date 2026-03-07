@@ -34,13 +34,12 @@ class RoomModel: ObservableObject {
     }
     
     func addRoom(name: String, houseId: Int) async {
-        guard let userId = currentUserId else { return }
         do {
             let base = try await baseURL()
             var req = URLRequest(url: URL(string: "\(base)/addRoom")!)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try JSONSerialization.data(withJSONObject: ["house_id": houseId, "user_id": userId, "name": name])
+            req.httpBody = try JSONSerialization.data(withJSONObject: ["house_id": houseId, "name": name])
             _ = try await URLSession.shared.data(for: req)
             await fetchRooms(for: houseId)
         } catch { print("Error adding room: \(error)") }
@@ -82,5 +81,35 @@ class RoomModel: ObservableObject {
                 print("Error updating room: \(error)")
             }
         }
+    }
+
+    func assignRoom(roomId: Int, houseId: Int) async {
+        guard let userId = currentUserId else { return }
+        do {
+            let base = try await baseURL()
+            var req = URLRequest(url: URL(string: "\(base)/assignRoom")!)
+            req.httpMethod = "PUT"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "room_id": roomId, "user_id": userId, "house_id": houseId
+            ])
+            _ = try await URLSession.shared.data(for: req)
+            await fetchRooms(for: houseId)
+        } catch { print("Error assigning room: \(error)") }
+    }
+
+    func unassignRoom(roomId: Int, houseId: Int) async {
+        guard let userId = currentUserId else { return }
+        do {
+            let base = try await baseURL()
+            var req = URLRequest(url: URL(string: "\(base)/unassignRoom")!)
+            req.httpMethod = "PUT"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "room_id": roomId, "user_id": userId
+            ])
+            _ = try await URLSession.shared.data(for: req)
+            await fetchRooms(for: houseId)
+        } catch { print("Error unassigning room: \(error)") }
     }
 }

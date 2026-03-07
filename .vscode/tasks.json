@@ -27,8 +27,24 @@
         },
         {
             "label": "🚀 START PROJECT",
-            "dependsOn": ["1. Database", "2. Catalog", "3. User Service"],
+            "dependsOn": ["1. Database", "2. Catalog", "3. User Service", "4. TimeSeries DB Adapter", "5. Simulator"],
             "dependsOrder": "parallel",
+            "problemMatcher": []
+        },
+        {
+            "label": "4. TimeSeries DB Adapter",
+            "type": "shell",
+            "command": "python3 time_series_db_adaptop.py",
+            "options": { "cwd": "${workspaceFolder}/time_series" },
+            "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "5. Simulator",
+            "type": "shell",
+            "command": "python3 fakesensor.py",
+            "options": { "cwd": "${workspaceFolder}/time_series" },
+            "presentation": { "group": "project", "panel": "dedicated" },
             "problemMatcher": []
         }
     ]

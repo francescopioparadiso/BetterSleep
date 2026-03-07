@@ -53,6 +53,14 @@ class TimeSeriesDB:
             logger.error(f"Error connecting to MongoDB: {e}")
             self.client_mongo = None
 
+    def health_check(self):
+        try:
+            self.client_mongo.admin.command('ping')
+            return True
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return False
+
     # --- LOGICA DI PARSING IN MONGO ---
 
     def _execute_query(self, filter_query):

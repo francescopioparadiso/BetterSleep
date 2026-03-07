@@ -22,15 +22,15 @@ func iconForRoom(_ name: String) -> String {
 }
 
 struct RoomsView: View {
+    @Environment(\.colorScheme) var colorScheme
+
     let house: House
     @StateObject private var roomModel = RoomModel()
     @StateObject private var invitationModel = InvitationModel()
     
     @State private var showingAddRoom = false
+    @State private var showingMembers = false
     @State private var newRoomName = ""
-    @State private var emailToInvite = ""
-    @State private var isSending = false
-    @State private var toastAnimation = Animation.bouncy(duration: 0.5)
     
     private var currentUserId: Int? {
         if let idString = UserDefaults.standard.string(forKey: "currentUserId"), let id = Int(idString) { return id }
@@ -52,188 +52,125 @@ struct RoomsView: View {
     private var pendingInvites: [Invitation] {
         invitationModel.currentHouseInvites.filter { $0.status == 0 }
     }
+
+    private var myRoom: Room? {
+        roomModel.rooms.first { $0.user_id == currentUserId }
+    }
+
+    private var availableRooms: [Room] {
+        roomModel.rooms.filter { $0.user_id == nil }
+    }
+
+    private var occupiedRooms: [Room] {
+        roomModel.rooms.filter { $0.user_id != nil && $0.user_id != currentUserId }
+    }
     
     var body: some View {
-        ZStack(alignment: .top) {
-            List {
-                // MARK: - Rooms
-                Section(header: Text("Rooms")) {
-                    if roomModel.rooms.isEmpty {
+        List {
+            // MARK: - My Room
+            Section(header: Text("My Room")) {
+                    if let room = myRoom {
+                        myRoomRow(room)
+                    } else {
                         HStack {
                             Spacer()
                             VStack(spacing: 8) {
-                                Image(systemName: "bed.double.circle")
+                                Image(systemName: "person.crop.circle.badge.questionmark")
                                     .font(.largeTitle)
                                     .foregroundStyle(.secondary)
-                                Text("No rooms yet")
+                                Text("No room assigned")
                                     .font(.subheadline)
+                                    .fontDesign(.rounded)
                                     .foregroundStyle(.secondary)
+                                Text("Swipe right on an available room to assign it to yourself")
+                                    .font(.caption)
+                                    .fontDesign(.rounded)
+                                    .foregroundStyle(.tertiary)
+                                    .multilineTextAlignment(.center)
                             }
                             .padding(.vertical, 20)
                             Spacer()
                         }
-                        .listRowBackground(Color.clear)
-                    } else {
-                        ForEach($roomModel.rooms) { $room in
-                            NavigationLink(destination: SensorsView(house: house, room: $room, roomModel: roomModel)) {
-                                HStack(spacing: 14) {
-                                    Image(systemName: iconForRoom(room.name))
-                                        .font(.title2)
-                                        .foregroundColor(.indigo)
-                                        .frame(width: 36)
-                                    
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(room.name)
-                                            .font(.system(size: 17, weight: .semibold, design: .rounded))
-                                        Text("6 sensors")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                .padding(.vertical, 6)
-                            }
+                    }
+                }
+
+            // MARK: - Available Rooms
+            Section(header: Text("Available Rooms")) {
+                if availableRooms.isEmpty {
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 8) {
+                            Image(systemName: "bed.double.circle")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                            Text("No available rooms")
+                                .font(.subheadline)
+                                .fontDesign(.rounded)
+                                .foregroundStyle(.secondary)
                         }
-                        .onDelete { offsets in
-                            Task {
-                                for index in offsets {
-                                    if let roomId = roomModel.rooms[index].id {
+                        .padding(.vertical, 20)
+                        Spacer()
+                    }
+                } else {
+                    ForEach(availableRooms) { room in
+                        roomRow(room)
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                Button {
+                                    Task {
+                                        guard let roomId = room.id else { return }
+                                        await roomModel.assignRoom(roomId: roomId, houseId: house.id!)
+                                    }
+                                } label: {
+                                    Label("Assign to Me", systemImage: "person.crop.circle.badge.checkmark")
+                                }
+                                .tint(.indigo)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    Task {
+                                        guard let roomId = room.id else { return }
                                         await roomModel.deleteRoom(roomId: roomId, houseId: house.id!)
                                     }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // MARK: - Members
-                Section(header: Text("Members")) {
-                    ForEach(sortedMembers) { member in
-                        HStack {
-                            Image(systemName: member.role == 0 ? "star.fill" : "person.fill")
-                                .foregroundColor(member.role == 0 ? .yellow : .blue)
-                                .frame(width: 30)
-                            
-                            VStack(alignment: .leading) {
-                                Text(member.email ?? "Unknown User")
-                                    .font(.body)
-                                Text(member.user_id == currentUserId ? "You" : "Housemate")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            
-                            Text(member.role == 0 ? "Owner" : "Guest")
-                                .font(.caption).bold()
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(member.role == 0 ? Color.yellow.opacity(0.2) : Color.gray.opacity(0.2))
-                                .foregroundColor(member.role == 0 ? .yellow : .primary)
-                                .cornerRadius(8)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if isCurrentUserOwner && member.user_id != currentUserId {
-                                Button(role: .destructive) {
-                                    Task {
-                                        if let id = member.id {
-                                            await invitationModel.removeMember(memberId: id)
-                                        }
-                                    }
                                 } label: {
-                                    Label("Remove", systemImage: "trash")
+                                    Label("Delete", systemImage: "trash")
                                 }
                             }
-                        }
                     }
-                    
-                    // Pending invites inline
-                    ForEach(pendingInvites) { invite in
-                        HStack {
-                            Image(systemName: "questionmark.circle.fill")
-                                .foregroundColor(.orange)
-                                .frame(width: 30)
-                            Text(invite.email)
-                                .foregroundColor(.primary)
-                            Spacer()
-                            Text("Pending")
-                                .font(.caption).bold()
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(Color.orange.opacity(0.2))
-                                .foregroundColor(.orange)
-                                .cornerRadius(8)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if isCurrentUserOwner {
-                                Button(role: .destructive) {
-                                    Task {
-                                        if let id = invite.id {
-                                            await invitationModel.deleteInvite(inviteId: id)
-                                            await invitationModel.fetchHouseDetails(for: house.id!)
-                                        }
-                                    }
-                                } label: {
-                                    Label("Cancel", systemImage: "xmark.circle")
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Invite row
-                    HStack {
-                        Image(systemName: "envelope.badge.fill")
-                            .foregroundColor(.blue)
-                            .frame(width: 30)
-                        TextField("Invite housemate via email...", text: $emailToInvite)
-                            .keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        
-                        if isSending {
-                            ProgressView()
-                        } else {
-                            Button(action: sendInvite) {
-                                Text("Send")
-                                    .font(.subheadline.weight(.semibold))
-                            }
-                            .disabled(emailToInvite.isEmpty || !emailToInvite.contains("@"))
-                            .buttonStyle(.borderedProminent)
-                            .tint(emailToInvite.isEmpty || !emailToInvite.contains("@") ? .gray : .blue)
-                        }
-                    }
-                    .padding(.vertical, 4)
                 }
             }
-            .listStyle(.insetGrouped)
-            
-            // MARK: - Dynamic Island Error Toast
-            if let errorMessage = invitationModel.errorMessage {
-                HStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                    Text(errorMessage)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .foregroundStyle(Color.red)
-                .background(Color.red.opacity(0.15))
-                .clipShape(.rect(cornerRadius: 24))
-                .shadow(color: Color.red, radius: 30, x: 0, y: 0)
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5)),
-                    removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5))
-                ))
-                .zIndex(1)
-                .onAppear {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                        withAnimation(toastAnimation) {
-                            invitationModel.errorMessage = nil
-                        }
+
+            // MARK: - Occupied Rooms
+            if !occupiedRooms.isEmpty {
+                Section(header: Text("Occupied Rooms")) {
+                    ForEach(occupiedRooms) { room in
+                        roomRow(room)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    Task {
+                                        guard let roomId = room.id else { return }
+                                        await roomModel.deleteRoom(roomId: roomId, houseId: house.id!)
+                                    }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                     }
                 }
             }
         }
-        .animation(toastAnimation, value: invitationModel.errorMessage)
+        .listStyle(.insetGrouped)
         .navigationTitle(house.name)
         .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showingMembers = true }) {
+                    Image(systemName: "person.2")
+                        .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(colorScheme == .dark ? Color.black.opacity(0.1) : Color.white)
+                .clipShape(.circle)
+            }
+
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: { showingAddRoom = true }) {
                     Image(systemName: "plus")
@@ -256,8 +193,270 @@ struct RoomsView: View {
             await roomModel.fetchRooms(for: houseId)
             await invitationModel.fetchHouseDetails(for: houseId)
         }
+        .sheet(isPresented: $showingMembers) {
+            MembersSheet(
+                house: house,
+                invitationModel: invitationModel,
+                sortedMembers: sortedMembers,
+                pendingInvites: pendingInvites,
+                isCurrentUserOwner: isCurrentUserOwner,
+                currentUserId: currentUserId
+            )
+        }
     }
     
+    // MARK: - Room Row Helpers
+    private func roomContent(_ room: Room) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: iconForRoom(room.name))
+                .font(.title2)
+                .foregroundColor(.indigo)
+                .frame(width: 36)
+            
+            VStack(alignment: .leading, spacing: 3) {
+                Text(room.name)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .fontDesign(.rounded)
+
+                if let uid = room.user_id {
+                    let label = uid == currentUserId ? "Assigned to you" : "Occupied"
+                    Text(label)
+                        .font(.caption)
+                        .fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Unassigned")
+                        .font(.caption)
+                        .fontDesign(.rounded)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func myRoomRow(_ room: Room) -> some View {
+        if let index = roomModel.rooms.firstIndex(where: { $0.id == room.id }) {
+            NavigationLink(destination: SensorsView(house: house, room: $roomModel.rooms[index], roomModel: roomModel)) {
+                roomContent(room)
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                Button {
+                    Task {
+                        guard let roomId = room.id else { return }
+                        await roomModel.unassignRoom(roomId: roomId, houseId: house.id!)
+                    }
+                } label: {
+                    Label("Unassign", systemImage: "person.crop.circle.badge.minus")
+                }
+                .tint(.orange)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    Task {
+                        guard let roomId = room.id else { return }
+                        await roomModel.deleteRoom(roomId: roomId, houseId: house.id!)
+                    }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private func roomRow(_ room: Room) -> some View {
+        NavigationLink(destination: {
+            if let index = roomModel.rooms.firstIndex(where: { $0.id == room.id }) {
+                SensorsView(house: house, room: $roomModel.rooms[index], roomModel: roomModel)
+            }
+        }) {
+            roomContent(room)
+        }
+    }
+}
+
+// MARK: - Members Sheet
+struct MembersSheet: View {
+    let house: House
+    @ObservedObject var invitationModel: InvitationModel
+    let sortedMembers: [HouseMember]
+    let pendingInvites: [Invitation]
+    let isCurrentUserOwner: Bool
+    let currentUserId: Int?
+
+    @State private var emailToInvite = ""
+    @State private var isSending = false
+    @State private var toastAnimation = Animation.bouncy(duration: 0.5)
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .top) {
+                List {
+                    // MARK: - Active Members
+                    Section(header: Text("Active Members")) {
+                        ForEach(sortedMembers) { member in
+                            HStack {
+                                Image(systemName: member.role == 0 ? "star.fill" : "person.fill")
+                                    .foregroundColor(member.role == 0 ? .yellow : .blue)
+                                    .frame(width: 30)
+
+                                VStack(alignment: .leading) {
+                                    Text(member.email ?? "Unknown User")
+                                        .font(.body)
+                                        .fontDesign(.rounded)
+                                    Text(member.user_id == currentUserId ? "You" : "Housemate")
+                                        .font(.caption)
+                                        .fontDesign(.rounded)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+
+                                Button {} label: {
+                                    Text(member.role == 0 ? "Owner" : "Guest")
+                                        .fontDesign(.rounded)
+                                }
+                                .buttonStyle(.glassProminent)
+                                .foregroundStyle(member.role == 0 ? Color.yellow : Color.blue)
+                                .tint((member.role == 0 ? Color.yellow : Color.blue).opacity(0.15))
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if isCurrentUserOwner && member.user_id != currentUserId {
+                                    Button(role: .destructive) {
+                                        Task {
+                                            if let id = member.id {
+                                                await invitationModel.removeMember(memberId: id)
+                                            }
+                                        }
+                                    } label: {
+                                        Label("Remove", systemImage: "trash")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // MARK: - Pending Members
+                    Section(header: Text("Pending Members")) {
+                        if pendingInvites.isEmpty {
+                            HStack {
+                                Spacer()
+                                Text("No pending invitations")
+                                    .font(.subheadline)
+                                    .fontDesign(.rounded)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                            .padding(.vertical, 20)
+                        } else {
+                            ForEach(pendingInvites) { invite in
+                                HStack {
+                                    Image(systemName: "questionmark.circle.fill")
+                                        .foregroundColor(.orange)
+                                        .frame(width: 30)
+                                    Text(invite.email)
+                                        .foregroundColor(.primary)
+
+                                    Spacer()
+
+                                    Button {} label: {
+                                        Text("Pending")
+                                            .fontDesign(.rounded)
+                                    }
+                                    .buttonStyle(.glassProminent)
+                                    .foregroundStyle(Color.orange)
+                                    .tint(Color.orange.opacity(0.15))
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if isCurrentUserOwner {
+                                        Button(role: .destructive) {
+                                            Task {
+                                                if let id = invite.id {
+                                                    await invitationModel.deleteInvite(inviteId: id)
+                                                    await invitationModel.fetchHouseDetails(for: house.id!)
+                                                }
+                                            }
+                                        } label: {
+                                            Label("Cancel", systemImage: "xmark.circle")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // MARK: - Invite
+                    Section(header: Text("Invite")) {
+                        HStack {
+                            Image(systemName: "envelope.badge.fill")
+                                .foregroundColor(.blue)
+                                .frame(width: 30)
+                            TextField("Invite housemate via email...", text: $emailToInvite)
+                                .keyboardType(.emailAddress)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+
+                            if isSending {
+                                ProgressView()
+                            } else {
+                                Button(action: sendInvite) {
+                                    Text("Send")
+                                        .fontDesign(.rounded)
+                                }
+                                .buttonStyle(.glassProminent)
+                                .disabled(emailToInvite.isEmpty || !emailToInvite.contains("@"))
+                                .tint((emailToInvite.isEmpty || !emailToInvite.contains("@") ? Color.gray : Color.blue).opacity(0.15))
+                                .foregroundStyle(emailToInvite.isEmpty || !emailToInvite.contains("@") ? Color.gray : Color.blue)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .listStyle(.insetGrouped)
+
+                // MARK: - Error Toast
+                if let errorMessage = invitationModel.errorMessage {
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(errorMessage)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .fontDesign(.rounded)
+                            .lineLimit(2)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .foregroundStyle(Color.white)
+                    .background(Color.red.opacity(0.8))
+                    .clipShape(.rect(cornerRadius: 24))
+                    .shadow(color: Color.red, radius: 30, x: 0, y: 0)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5)),
+                        removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5))
+                    ))
+                    .zIndex(1)
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                            withAnimation(toastAnimation) {
+                                invitationModel.errorMessage = nil
+                            }
+                        }
+                    }
+                }
+            }
+            .animation(toastAnimation, value: invitationModel.errorMessage)
+            .navigationTitle("Members")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .fontDesign(.rounded)
+                }
+            }
+        }
+    }
+
     private func sendInvite() {
         Task {
             isSending = true

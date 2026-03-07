@@ -29,10 +29,15 @@ class SensorModel: ObservableObject {
     @Published var selectedTimeRange: TimeRange = .today
 
     // MARK: - Fetch sensors for a room from the Catalog
-    func fetchSensors(for roomId: Int) async {
+    func fetchSensors(for roomId: Int, houseId: Int? = nil) async {
         isLoading = true
         do {
             self.sensors = try await CatalogClient.shared.getSensorsForRoom(roomID: String(roomId))
+            // If no sensors found and we have a houseId, activate them first
+            if self.sensors.isEmpty, let houseId = houseId {
+                try await CatalogClient.shared.activateSensors(roomId: roomId, houseId: houseId)
+                self.sensors = try await CatalogClient.shared.getSensorsForRoom(roomID: String(roomId))
+            }
         } catch {
             print("Error fetching sensors from catalog: \(error)")
         }
@@ -44,10 +49,25 @@ class SensorModel: ObservableObject {
         isChartLoading = true
         do {
             let tsURL = try await CatalogClient.shared.getTimeSeriesURL()
-            let url = URL(string: "\(tsURL)/getSensorById?sensor_id=\(sensor.sensorID)")!
-            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let roomID = sensor.roomID else {
+                print("[ChartData] Sensor \(sensor.sensorID) has no roomID")
+                isChartLoading = false
+                return
+            }
+            let sensorTypeCode = sensor.sensorType?.numericCode ?? 0
+            let url = URL(string: "\(tsURL)/getSensorByRoomAndType?room_id=\(roomID)&sensor_type=\(sensorTypeCode)")!
+            print("[ChartData] Fetching from: \(url.absoluteString)")
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("[ChartData] HTTP Status: \(httpResponse.statusCode)")
+                print("[ChartData] Content-Type: \(httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "nil")")
+            }
+            
+            print("[ChartData] Got response (\(data.count) bytes), parsing data...")
 
             let records = try JSONDecoder().decode([SenMLRecord].self, from: data)
+            print("[ChartData] Decoded \(records.count) SenML records")
 
             var points: [ChartDataPoint] = []
             for record in records {
@@ -82,7 +102,7 @@ class SensorModel: ObservableObject {
             let finalPoints: [ChartDataPoint]
             switch selectedTimeRange {
             case .today:
-                finalPoints = filteredPoints
+                finalPoints = aggregateEvery10Minutes(filteredPoints, calendar: calendar)
             case .week, .month:
                 finalPoints = aggregate(filteredPoints, by: .day, calendar: calendar)
             case .year, .all:
@@ -90,9 +110,13 @@ class SensorModel: ObservableObject {
             }
 
             chartData[sensor.sensorID] = finalPoints.sorted { $0.date < $1.date }
+            print("[ChartData] Stored \(finalPoints.count) final points for sensor \(sensor.sensorID)")
+        } catch let urlError as URLError {
+            print("[ChartData] URLError \(urlError.code.rawValue): \(urlError.localizedDescription)")
+            chartData[sensor.sensorID] = []
         } catch {
-            print("Error loading chart data from TimeSeries: \(error)")
-            // If TimeSeries fails, chart stays empty
+            print("[ChartData] ERROR loading chart data: \(error)")
+            print("[ChartData] Error type: \(type(of: error))")
             chartData[sensor.sensorID] = []
         }
         isChartLoading = false
@@ -117,7 +141,25 @@ class SensorModel: ObservableObject {
         }
         return buckets.map { date, values in
             let avg = values.reduce(0, +) / Double(values.count)
-            return ChartDataPoint(date: date, value: avg)
+            return ChartDataPoint(date: date, value: (avg * 10).rounded() / 10)
+        }
+    }
+
+    private func aggregateEvery10Minutes(_ points: [ChartDataPoint], calendar: Calendar) -> [ChartDataPoint] {
+        var buckets: [Date: [Double]] = [:]
+        for p in points {
+            let comps = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: p.date)
+            let minute = comps.minute ?? 0
+            let roundedMinute = (minute / 10) * 10
+            var adjustedComps = comps
+            adjustedComps.minute = roundedMinute
+            adjustedComps.second = 0
+            let key = calendar.date(from: adjustedComps) ?? p.date
+            buckets[key, default: []].append(p.value)
+        }
+        return buckets.map { date, values in
+            let avg = values.reduce(0, +) / Double(values.count)
+            return ChartDataPoint(date: date, value: (avg * 10).rounded() / 10)
         }
     }
 }

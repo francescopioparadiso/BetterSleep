@@ -23,14 +23,19 @@ struct ProfileView: View {
                                 
                                 // Display the email, falling back to "Account Settings" if empty
                                 Text(viewModel.userEmail.isEmpty ? "Account Settings" : viewModel.userEmail)
-                                    .font(.title2.weight(.semibold))
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                    .fontDesign(.rounded)
                             }
                             .frame(maxWidth: .infinity)
                             .listRowBackground(Color.clear)
                         }
                         
                         // MARK: - Sleep Schedule Settings
-                        Section(header: Text("Global Sleep Schedule").font(.subheadline.weight(.semibold))) {
+                        Section(header: Text("Global Sleep Schedule")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .fontDesign(.rounded)) {
                             HStack {
                                 Image(systemName: "moon.zzz.fill")
                                     .foregroundColor(.indigo)

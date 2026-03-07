@@ -24,9 +24,7 @@ def check_if_is_a_service(new_service):
 
 def check_if_is_a_sensor(new_sensor):
     """Validate that the sensor contains all required fields."""
-    required_fields = ['serviceID','name','type','endpoint','last_update']
-    if new_sensor.get('type') != 'sensor':
-        raise cherrypy.HTTPError(400, "Type must be 'sensor'")
+    required_fields = ['sensorID','name','type','last_update']
     require_fields(new_sensor, required_fields)
 
 def check_if_is_an_actuator(new_actuator):
@@ -193,8 +191,11 @@ class Catalog:
     def _put_update_sensor_last_update(self):
         """Update the last_update timestamp of a sensor."""
         updated_sensor = _load_json_body()
-        require_fields(updated_sensor, ['serviceID', 'last_update'])
-        success = self.db.update_sensor_last_update(updated_sensor['serviceID'], updated_sensor['last_update'])
+        sensor_id = updated_sensor.get('sensorID') or updated_sensor.get('serviceID')
+        require_fields(updated_sensor, ['last_update'])
+        if not sensor_id:
+            raise cherrypy.HTTPError(400, "Missing 'sensorID' or 'serviceID'")
+        success = self.db.update_sensor_last_update(sensor_id, updated_sensor['last_update'])
         if success:
             return json.dumps({"status": "success", "message": "Sensor last_update updated"})
         raise cherrypy.HTTPError(404, "The Sensor ID does not exist")

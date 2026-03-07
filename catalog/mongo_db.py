@@ -144,11 +144,11 @@ class MongoDBAdapter:
         # Elimina servizi
         result_services = self.db.services.delete_many({"last_update": {"$lt": cutoff_str}})
         total_deleted += result_services.deleted_count
-        # Elimina sensori
-        result_sensors = self.db.sensors.delete_many({"last_update": {"$lt": cutoff_str}})
+        # Elimina sensori (skip persistent ones)
+        result_sensors = self.db.sensors.delete_many({"last_update": {"$lt": cutoff_str}, "persistent": {"$ne": True}})
         total_deleted += result_sensors.deleted_count
-        # Elimina attuatori
-        result_actuators = self.db.actuators.delete_many({"last_update": {"$lt": cutoff_str}})
+        # Elimina attuatori (skip persistent ones)
+        result_actuators = self.db.actuators.delete_many({"last_update": {"$lt": cutoff_str}, "persistent": {"$ne": True}})
         total_deleted += result_actuators.deleted_count
         logger.info(f"Deleted {total_deleted} stale services/sensors/actuators (older than {cutoff_str})")
         return total_deleted

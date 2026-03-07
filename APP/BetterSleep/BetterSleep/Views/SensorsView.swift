@@ -47,9 +47,11 @@ struct SensorsView: View {
 
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(sensor.name)
-                                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                                            .font(.headline)
+                                            .fontDesign(.rounded)
                                         Text(sType.label)
                                             .font(.caption)
+                                            .fontDesign(.rounded)
                                             .foregroundColor(.secondary)
                                     }
                                 }
@@ -63,7 +65,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "moon.stars.fill").foregroundColor(.indigo)
                                             Text("Night: \(room.temperature_night ?? 18)°C")
-                                                .font(.subheadline).bold()
+                                                .font(.subheadline)
+                                                .fontWeight(.bold)
+                                                .fontDesign(.rounded)
                                         }
                                         Slider(
                                             value: Binding(
@@ -77,7 +81,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "sun.max.fill").foregroundColor(.orange)
                                             Text("Morning: \(room.temperature_morning ?? 22)°C")
-                                                .font(.subheadline).bold()
+                                                .font(.subheadline)
+                                                .fontWeight(.bold)
+                                                .fontDesign(.rounded)
                                         }
                                         Slider(
                                             value: Binding(
@@ -97,7 +103,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "moon.stars.fill").foregroundColor(.indigo)
                                             Text("Night: \(room.light_night ?? 0)%")
-                                                .font(.subheadline).bold()
+                                                .font(.subheadline)
+                                                .fontWeight(.bold)
+                                                .fontDesign(.rounded)
                                         }
                                         Slider(
                                             value: Binding(
@@ -111,7 +119,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "sun.max.fill").foregroundColor(.orange)
                                             Text("Morning: \(room.light_morning ?? 100)%")
-                                                .font(.subheadline).bold()
+                                                .font(.subheadline)
+                                                .fontWeight(.bold)
+                                                .fontDesign(.rounded)
                                         }
                                         Slider(
                                             value: Binding(
@@ -132,7 +142,7 @@ struct SensorsView: View {
         .navigationTitle(room.name)
         .task {
             guard let roomId = room.id else { return }
-            await sensorModel.fetchSensors(for: roomId)
+            await sensorModel.fetchSensors(for: roomId, houseId: house.id)
         }
     }
 }
@@ -167,7 +177,9 @@ struct SensorDetailView: View {
                     // Time range picker
                     Picker("Time Range", selection: $sensorModel.selectedTimeRange) {
                         ForEach(TimeRange.allCases, id: \.self) { range in
-                            Text(range.rawValue).tag(range)
+                            Text(range.rawValue)
+                                .fontDesign(.rounded)
+                                .tag(range)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -212,14 +224,34 @@ struct SensorDetailView: View {
                         }
                         .chartYScale(domain: yAxisBounds)
                         .chartXAxis {
-                            AxisMarks(values: .automatic(desiredCount: 6)) { value in
-                                AxisGridLine()
-                                AxisTick()
-                                if let date = value.as(Date.self) {
-                                    AxisValueLabel {
-                                        Text(formatAxisDate(date))
-                                            .font(.caption2)
-                                    }
+                            switch sensorModel.selectedTimeRange {
+                            case .today:
+                                AxisMarks(values: .stride(by: .hour, count: 4)) { value in
+                                    AxisGridLine()
+                                    AxisTick()
+                                    if let d = value.as(Date.self) { AxisValueLabel { Text(d, format: .dateTime.hour(.defaultDigits(amPM: .omitted)).minute())
+                                        .fontDesign(.rounded) } }
+                                }
+                            case .week:
+                                AxisMarks(values: .stride(by: .day, count: 1)) { value in
+                                    AxisGridLine()
+                                    AxisTick()
+                                    if let d = value.as(Date.self) { AxisValueLabel { Text(d, format: .dateTime.weekday(.abbreviated))
+                                        .fontDesign(.rounded) } }
+                                }
+                            case .month:
+                                AxisMarks(values: .stride(by: .day, count: 7)) { value in
+                                    AxisGridLine()
+                                    AxisTick()
+                                    if let d = value.as(Date.self) { AxisValueLabel { Text(d, format: .dateTime.day().month(.abbreviated))
+                                        .fontDesign(.rounded) } }
+                                }
+                            case .year, .all:
+                                AxisMarks(values: .stride(by: .month, count: 3)) { value in
+                                    AxisGridLine()
+                                    AxisTick()
+                                    if let d = value.as(Date.self) { AxisValueLabel { Text(d, format: .dateTime.month(.abbreviated))
+                                        .fontDesign(.rounded) } }
                                 }
                             }
                         }
@@ -245,6 +277,7 @@ struct SensorDetailView: View {
                         HStack {
                             Text(formatLogDate(point.date))
                                 .font(.subheadline)
+                                .fontDesign(.rounded)
                                 .foregroundColor(.secondary)
                                 .contentTransition(.numericText(value: point.date.timeIntervalSince1970))
                                 .animation(.snappy, value: point.date)
@@ -252,7 +285,8 @@ struct SensorDetailView: View {
                             Spacer()
                             
                             Text(sType.formatValue(point.value))
-                                .bold()
+                                .fontWeight(.bold)
+                                .fontDesign(.rounded)
                                 .foregroundColor(.primary)
                                 .contentTransition(.numericText(value: point.value))
                                 .animation(.snappy, value: point.value)
@@ -273,10 +307,12 @@ struct SensorDetailView: View {
     private var logHeader: some View {
         HStack {
             Text("\(chartPoints.count) records")
+                .fontDesign(.rounded)
                 .contentTransition(.numericText(value: Double(chartPoints.count)))
             Spacer()
             Text("Avg: \(sType.formatValue(averageValue))")
                 .font(.caption)
+                .fontDesign(.rounded)
                 .textCase(.none)
                 .contentTransition(.numericText(value: averageValue))
         }
@@ -291,26 +327,17 @@ struct SensorDetailView: View {
     }
 
     // MARK: - Date Formatters
-    private func formatAxisDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        switch sensorModel.selectedTimeRange {
-        case .today:  formatter.dateFormat = "HH:mm"
-        case .week:   formatter.dateFormat = "EEE d"
-        case .month:  formatter.dateFormat = "MMM d"
-        case .year:   formatter.dateFormat = "MMM yyyy"
-        case .all:    formatter.dateFormat = "MMM yyyy"
-        }
-        return formatter.string(from: date)
-    }
-
     private func formatLogDate(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.doesRelativeDateFormatting = true
         switch sensorModel.selectedTimeRange {
         case .today:
+            formatter.doesRelativeDateFormatting = true
             formatter.dateStyle = .medium
-            formatter.timeStyle = .medium
+            formatter.timeStyle = .short
+        case .year, .all:
+            formatter.dateFormat = "MMMM yyyy"
         default:
+            formatter.doesRelativeDateFormatting = true
             formatter.dateStyle = .medium
             formatter.timeStyle = .none
         }

@@ -36,7 +36,7 @@ create table invitations (
 create table rooms (
   id integer generated always as identity primary key,
   house_id integer references houses(id) on delete cascade,
-  user_id integer references users(id) on delete cascade,
+  user_id integer references users(id) on delete set null,
   name text,
   created_at timestamp with time zone default now(),
   temperature_night integer default 18,

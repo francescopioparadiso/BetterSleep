@@ -19,11 +19,14 @@ struct AuthView: View {
                 // MARK: - Header
                 VStack(spacing: 8) {
                     Text("BetterSleep")
-                        .font(.system(size: 42, weight: .heavy, design: .rounded))
+                        .font(.largeTitle)
+                        .fontWeight(.heavy)
+                        .fontDesign(.rounded)
                         .foregroundColor(.primary)
                     
                     Text("Your smart home sleep companion")
                         .font(.subheadline)
+                        .fontDesign(.rounded)
                         .foregroundColor(.secondary)
                 }
                 
@@ -68,6 +71,7 @@ struct AuthView: View {
                                 Spacer()
                                 Text("Sign In")
                                     .font(.headline)
+                                    .fontDesign(.rounded)
                                 Spacer()
                             }
                             .padding()
@@ -77,6 +81,7 @@ struct AuthView: View {
                         
                         HStack(spacing: 4) {
                             Text("Don't have an account?")
+                                .fontDesign(.rounded)
                                 .foregroundColor(.secondary)
                             
                             Button(action: {
@@ -87,6 +92,7 @@ struct AuthView: View {
                             }) {
                                 Text("Sign Up")
                                     .fontWeight(.semibold)
+                                    .fontDesign(.rounded)
                                     .foregroundColor(.blue)
                             }
                         }
@@ -104,7 +110,9 @@ struct AuthView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                     
                     Text(errorMessage)
-                        .font(.subheadline.weight(.medium))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .fontDesign(.rounded)
                         .lineLimit(2)
                 }
                 .padding(.horizontal, 16)

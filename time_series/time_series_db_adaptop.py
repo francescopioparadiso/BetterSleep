@@ -1,6 +1,9 @@
 import json
 import logging
 import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import cherrypy
 
@@ -89,29 +92,33 @@ class TimeSeriesDBAdapter:
 
 
 
+    def _json_response(self, data):
+        cherrypy.response.headers['Content-Type'] = 'application/json'
+        return json.dumps(data).encode('utf-8')
+
     def _get_sensor_by_room(self, params):
         room_id = params.get("room_id")
         if not room_id:
             raise cherrypy.HTTPError(400, "Missing 'room_id' parameter")
-        return self.db.get_sensor_by_room(room_id)
+        return self._json_response(self.db.get_sensor_by_room(room_id))
     def _get_sensor_by_type(self, params):
         sensor_type = params.get("sensor_type")
         if not sensor_type:
             raise cherrypy.HTTPError(400, "Missing 'sensor_type' parameter")
-        return self.db.get_sensor_by_type(sensor_type)
+        return self._json_response(self.db.get_sensor_by_type(sensor_type))
     def _get_sensor_by_room_and_type(self, params):
         room_id = params.get("room_id")
         sensor_type = params.get("sensor_type")
         if not room_id or not sensor_type:
             raise cherrypy.HTTPError(400, "Missing 'room_id' or 'sensor_type' parameter")
-        return self.db.get_sensor_by_room_and_type(room_id, sensor_type)
+        return self._json_response(self.db.get_sensor_by_room_and_type(room_id, sensor_type))
     def _get_sensor_by_id(self, params):
         sensor_id = params.get("sensor_id")
         if not sensor_id:
             raise cherrypy.HTTPError(400, "Missing 'sensor_id' parameter")
-        return self.db.get_sensor_by_id(sensor_id)
+        return self._json_response(self.db.get_sensor_by_id(sensor_id))
     def _get_all_sensors(self, params):
-        return self.db.get_all_sensors()
+        return self._json_response(self.db.get_all_sensors())
     def PUT(self, *uri, **params):
         pass
     def DELETE(self, *uri, **params):
