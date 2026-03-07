@@ -6,19 +6,23 @@
     "port": 9092,
     "type": "Manager"
   },
- "MQTT": {
-      "broker": "broker.hivemq.com",
-      "port": 1883,
-      "topic_subscribe": [
-        "House/+/Bedroom/+/sensor/+/+/data",
-        "UserService/ChangePreference/#"
-      ],
-      "topic_publish": [
+  "MQTT": {
+    "broker": "broker.hivemq.com",
+    "port": 1883,
+    "topic_subscribe": [
+      "House/+/Bedroom/+/sensor/+/+/data",
+      "UserService/ChangePreference/#"
+    ],
+    "topic_publish": [
       "House/{houseID}/Bedroom/{bedroomID}/actuator{device}",
       "House/{houseID}/Bedroom/{bedroomID}/heart_rate"
-      ],
-      "clientID": "SleepCycleManagerClientBetterSleep"
-    },
+    ],
+    "clientID": "SleepCycleManagerClientBetterSleep"
+  },
   "catalogURL": "http://localhost:8080",
-  "removeInterval": 10
+  "removeInterval": 10,
+  "phaseCheckIntervalSec": 30,
+  "transitionWindowMin": 30,
+  "transitionCurveExponent": 1.0,
+  "inactiveUserTtlSec": 10800
 }

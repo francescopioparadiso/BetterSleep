@@ -10,6 +10,7 @@ from common.MQTT.MyMQTT import MyMQTT
 from datetime import datetime
 
 from common.common import mqtt_to_regex, json_error_page
+from PhaseManager import PhaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +77,21 @@ class SleepCycleManager:
         self.user_service_endpoint = self.get_endpoint_user_service()
         self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']
         self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
+        transition_window_min = conf.get('transitionWindowMin', 30)
+        phase_check_interval = conf.get('phaseCheckIntervalSec', 60)
+        transition_curve_exponent = conf.get('transitionCurveExponent', 1.0)
         # - User cache: sleep-related data shared across all rooms (user can sleep in only one room at a time)
         # - Room cache: room-specific preferences (temperature, light settings)
         self.user_preferences_cache = {}  # {userid: {night_time, morning_time, is_sleeping, last_seen_bed}}
         self.room_preferences_cache = {}  # {bedroomid: {userid, houseid, temperature_night, temperature_morning, light_night, light_morning, actuators}}
         self.topic_publish = self.MQTT_info.get('topic_publish', )
+        self.phase_manager = PhaseManager(
+            manager_instance=self,
+            transition_window_min=transition_window_min,
+            check_interval=phase_check_interval,
+            transition_curve_exponent=transition_curve_exponent
+        )
+        self.phase_manager.start()
         self.init_mqtt_client()
 
     def get_endpoint_user_service(self):
@@ -116,6 +127,7 @@ class SleepCycleManager:
         self.mqtt_client.start()
 
     def stopClient(self):
+        self.phase_manager.stop()
         self.mqtt_client.stop()
 
     def publish(self, message, command_topic=None):
@@ -163,11 +175,19 @@ class SleepCycleManager:
         room_prefs = preferences.get('room_preferences', {})
 
         if sensor_type == "ambient_temp":
-            is_sleeping = user_prefs.get("is_sleeping", False)
-            desired_temperature = (
-                room_prefs.get("temperature_night") if is_sleeping
-                else room_prefs.get("temperature_morning")
-            )
+            desired_temperature = room_prefs.get("target_temperature")
+            if desired_temperature is None:
+                # Fallback if phase manager has not populated dynamic targets yet.
+                phase = room_prefs.get("phase")
+                if phase in ("WIND_DOWN", "SLEEP"):
+                    desired_temperature = room_prefs.get("temperature_night")
+                else:
+                    desired_temperature = room_prefs.get("temperature_morning")
+
+            if desired_temperature is None:
+                logger.warning(f"No target temperature available for room {bedroomid}")
+                return
+
             room_actuators = room_prefs.get("actuators", [])
             self.handle_temperature(message_received, room_actuators, desired_temperature, houseid, bedroomid)
             return
@@ -237,6 +257,25 @@ class SleepCycleManager:
             'user_preferences': self.user_preferences_cache.get(userid, {}),
             'room_preferences': room_prefs
         }
+    def change_target_temperature_light(self, bedroomid, target_temperature=None, target_light=None, phase=None):
+        room_cache = self.room_preferences_cache.get(bedroomid)
+        if not room_cache:
+            logger.warning(f"Room {bedroomid} not found in cache, cannot change target settings")
+            return
+
+        if target_temperature is not None:
+            room_cache["target_temperature"] = float(target_temperature)
+            logger.info(f"Updated target_temperature for room {bedroomid}: {room_cache['target_temperature']}")
+
+        if target_light is not None:
+            room_cache["target_light"] = float(target_light)
+            logger.info(f"Updated target_light for room {bedroomid}: {room_cache['target_light']}")
+
+        if phase is not None:
+            room_cache["phase"] = phase
+            userid = room_cache.get("userid")
+            if userid in self.user_preferences_cache:
+                self.user_preferences_cache[userid]["Phase"] = phase
 
     def _fetch_and_cache_room_preference(self, bedroomid):
         logger.info(f"Cache miss for room {bedroomid}, fetching from User Service")
@@ -266,6 +305,9 @@ class SleepCycleManager:
                 "temperature_morning": room_prefs.get("temperature_morning"),
                 "light_night": room_prefs.get("light_night"),
                 "light_morning": room_prefs.get("light_morning"),
+                "target_temperature": room_prefs.get("temperature_night"),
+                "target_light": room_prefs.get("light_night"),
+                "phase": "SLEEP",
                 "actuators": self.get_actuators_in_room(bedroomid)
             }
 
@@ -274,6 +316,7 @@ class SleepCycleManager:
                     "night_time": user_prefs.get("night_time"),
                     "morning_time": user_prefs.get("morning_time"),
                     "is_sleeping": False,
+                    "Phase": "SLEEP",
                     "last_seen_bed": None
                 }
                 logger.info(f"User cache updated for {userid}: {self.user_preferences_cache[userid]}")
