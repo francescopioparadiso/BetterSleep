@@ -7,12 +7,13 @@
     "type": "UserService"
   },
   "catalogURL": "http://localhost:8080",
-
  "MQTT": {
-      "broker": "localhost",
-      "port": 1883,
+      "client_id": "UserService_Publisher",
+      "broker": "broker.hivemq.com",
+    "port": 1883,
        "topic_publish": [
-      "UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/"
+      "UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/",
+         "UserService/ChangePreference/User/{userID}/"
       ]
  },
   "Database": {

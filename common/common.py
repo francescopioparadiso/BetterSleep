@@ -19,7 +19,15 @@ def json_error_page(status, message, traceback, version):
     })
 
 
-def mqtt_to_regex(self, topic):
+def mqtt_to_regex( topic):
     topic = topic.replace("+", "[^/]+")
     topic = topic.replace("#", ".*")
     return "^" + topic + "$"
+
+
+def _load_json_body():
+    body = cherrypy.request.body.read()
+    try:
+        return json.loads(body)
+    except Exception:
+        raise cherrypy.HTTPError(400, "Invalid JSON format")

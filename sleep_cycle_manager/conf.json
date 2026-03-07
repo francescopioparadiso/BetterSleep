@@ -17,7 +17,7 @@
       "House/{houseID}/Bedroom/{bedroomID}/actuator{device}",
       "House/{houseID}/Bedroom/{bedroomID}/heart_rate"
       ],
-      "clientID": "TimeSeriesDBAdapterClientBetterSleepIoT"
+      "clientID": "SleepCycleManagerClientBetterSleep"
     },
   "catalogURL": "http://localhost:8080",
   "removeInterval": 10

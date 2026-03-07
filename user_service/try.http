@@ -6,3 +6,32 @@ Content-Type: application/json
   "email": "incorvaia@email.com",
    "password": "12345678"
 }
+###
+POST http://localhost:9095/addHouse
+Content-Type: application/json
+
+{
+  "name": "House 001"
+  }
+
+###
+POST http://localhost:9095/addHouseMember
+Content-Type: application/json
+
+{
+  "house_id": 1,
+  "user_id": 1
+}
+
+###
+POST http://localhost:9095/addRoom
+Content-Type: application/json
+
+{
+  "house_id": 1,
+  "user_id": 1,
+  "name": "Bedroom 001"
+}
+
+###
+DELETE http://localhost:9095/removeRoom?id=1

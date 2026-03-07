@@ -173,3 +173,114 @@ class PostgresDB:
     def delete_room(self, room_id):
         query = "DELETE FROM rooms WHERE id = %s"
         return self._execute_query(query, (room_id,))
+
+    def get_user_room_info(self, user_id):
+        """Get the room and house information for a user."""
+        query = """
+            SELECT r.id as room_id, r.house_id, r.name as room_name
+            FROM rooms r
+            WHERE r.user_id = %s
+            LIMIT 1
+        """
+        return self._execute_query(query, (user_id,), fetch=True, single=True)
+
+    def get_room_info(self, room_id):
+        """Get room information including house_id and user_id."""
+        query = "SELECT id, house_id, user_id, name FROM rooms WHERE id = %s"
+        return self._execute_query(query, (room_id,), fetch=True, single=True)
+
+
+    def update_user_preferences(self, user):
+        """Update user preferences and return the changed fields."""
+        changed_fields = {}
+
+        if 'night_time' in user:
+            changed_fields['night_time'] = user['night_time']
+        if 'morning_time' in user:
+            changed_fields['morning_time'] = user['morning_time']
+
+        if not changed_fields:
+            return None
+
+        # Build dynamic update query
+        fields = []
+        values = []
+        for field, value in changed_fields.items():
+            fields.append(f"{field} = %s")
+            values.append(value)
+
+        query = f"UPDATE users SET {', '.join(fields)} WHERE id = %s"
+        values.append(user['id'])
+
+        success = self._execute_query(query, tuple(values))
+        return changed_fields if success else None
+    def update_room_preferences(self, room):
+        # Build dynamic query with only provided fields
+        fields = []
+        values = []
+
+        if 'temperature_night' in room:
+            fields.append("temperature_night = %s")
+            values.append(room['temperature_night'])
+        if 'temperature_morning' in room:
+            fields.append("temperature_morning = %s")
+            values.append(room['temperature_morning'])
+        if 'light_night' in room:
+            fields.append("light_night = %s")
+            values.append(room['light_night'])
+        if 'light_morning' in room:
+            fields.append("light_morning = %s")
+            values.append(room['light_morning'])
+
+        if not fields:
+            return False
+
+        query = f"UPDATE rooms SET {', '.join(fields)} WHERE id = %s"
+        values.append(room['id'])
+
+        return self._execute_query(query, tuple(values))
+
+    def get_user_room_preferences(self, bedroom_id):
+        """Get user and room preferences separately for two-level caching.
+
+        Returns a dictionary with 'user_preferences' and 'room_preferences' keys,
+        or None if the room or user is not found.
+        """
+        query = "SELECT temperature_night, temperature_morning, light_night, light_morning, user_id, house_id FROM rooms WHERE id = %s"
+        result1 = self._execute_query(query, (bedroom_id,), fetch=True, single=True)
+
+        if not result1:
+            logger.warning(f"Room {bedroom_id} not found")
+            return None
+
+        if not result1.get('user_id'):
+            logger.warning(f"Room {bedroom_id} has no assigned user")
+            return None
+
+        query2 = "SELECT night_time, morning_time FROM users WHERE id = %s"
+        result2 = self._execute_query(query2, (result1['user_id'],), fetch=True, single=True)
+
+        if not result2:
+            logger.warning(f"User {result1['user_id']} not found")
+            return None
+
+        # Separate user and room preferences for two-level caching
+        preferences = {
+            'user_preferences': {
+                'user_id': result1['user_id'],
+                'night_time': result2['night_time'],
+                'morning_time': result2['morning_time']
+            },
+            'room_preferences': {
+                'room_id': bedroom_id,
+                'house_id': result1['house_id'],
+                'user_id': result1['user_id'],
+                'temperature_night': result1['temperature_night'],
+                'temperature_morning': result1['temperature_morning'],
+                'light_night': result1['light_night'],
+                'light_morning': result1['light_morning']
+            }
+        }
+        return preferences
+
+

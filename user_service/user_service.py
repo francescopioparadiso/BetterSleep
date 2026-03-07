@@ -1,5 +1,9 @@
 import sys
 import os
+
+from common.MQTT.MyMQTT import MyMQTT
+from common.common import _load_json_body
+
 # This tells Python to add the parent directory to its searchable paths
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -26,8 +30,9 @@ class UserService:
         self.db_conf = conf_user_service['Database']
         self.db = PostgresDB(self.db_conf)
         self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
-        self.MQTT_info = conf['MQTT']
+        self.MQTT_info = conf_user_service['MQTT']
         self.mqtt_client_publish=None
+        self.topic_publish=self.MQTT_info.get('topic_publish', [])
         self.init_mqtt_client()
 
         try:
@@ -45,14 +50,14 @@ class UserService:
             self.startClient()
         except Exception as e:
             logger.error(f"Error initializing MQTT client: {e}")
-            self.catalog_client.unregister()
+            self.catalog.unregister()
             sys.exit(1)
 
     def startClient(self):
-        self.mqtt_client.start()
+        self.mqtt_client_publish.start()
 
     def stopClient(self):
-        self.mqtt_client.stop()
+        self.mqtt_client_publish.stop()
 
 
     def publish(self, topic, message):
@@ -84,7 +89,7 @@ class UserService:
         return handler()
 
     def _post_signup(self):
-        new_user = self._load_json_body()
+        new_user = _load_json_body()
         require_fields(new_user, ['email', 'password'])
         
         user_id = self.db.signup_user(new_user['email'], new_user['password'])
@@ -93,7 +98,7 @@ class UserService:
         raise cherrypy.HTTPError(409, "The User already exists")
 
     def _post_login(self):
-        credentials = self._load_json_body()
+        credentials = _load_json_body()
         require_fields(credentials, ['email', 'password'])
         
         clean_email = credentials['email'].strip()
@@ -109,7 +114,7 @@ class UserService:
 
     def _post_add_house(self):
         """Add a new house to the catalog."""
-        new_house = self._load_json_body()
+        new_house = _load_json_body()
         require_fields(new_house, ['name'])
 
         house_id = self.db.insert_house(new_house)
@@ -119,7 +124,7 @@ class UserService:
 
     def _post_add_invitation(self):
         """Add a new invitation to the catalog."""
-        new_invite = self._load_json_body()
+        new_invite = _load_json_body()
         require_fields(new_invite, ['house_id', 'email'])
 
         invite_id = self.db.insert_invitation(new_invite)
@@ -129,7 +134,7 @@ class UserService:
 
     def _post_add_house_member(self):
         """Add a new house member to the catalog."""
-        new_member = self._load_json_body()
+        new_member = _load_json_body()
         require_fields(new_member, ['house_id', 'user_id'])
 
         member_id = self.db.insert_house_member(new_member)
@@ -139,8 +144,8 @@ class UserService:
     
     def _post_add_room(self):
         """Add a new room to the catalog."""
-        new_room = self._load_json_body()
-        require_fields(new_room, ['house_id', 'name'])
+        new_room = _load_json_body()
+        require_fields(new_room, ['house_id', 'name','user_id'])
 
         room_id = self.db.insert_room(new_room)
         if room_id:
@@ -179,7 +184,7 @@ class UserService:
 
     def _post_activate_sensors(self):
         """Activate (register) sensors for an existing room that has none."""
-        body = self._load_json_body()
+        body = _load_json_body()
         require_fields(body, ['room_id', 'house_id'])
         self._register_default_sensors(body['room_id'], body['house_id'])
         return json.dumps({"status": "success", "message": "Sensors activated"})
@@ -195,6 +200,9 @@ class UserService:
             "updateRoom": self._put_update_room,
             "assignRoom": self._put_assign_room,
             "unassignRoom": self._put_unassign_room,
+            "updateUserPreferences": self._put_update_user_preferences,
+            "updateRoomPreferences": self._put_update_room_preferences,
+
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -203,17 +211,82 @@ class UserService:
 
     def _put_update_user(self):
         """Update an existing user in the catalog."""
-        updated_user = self._load_json_body()
+        updated_user = _load_json_body()
         require_fields(updated_user, ['id'])
 
         success = self.db.update_user(updated_user)
         if success:
             return json.dumps({"status": "success", "message": "User updated"})
         raise cherrypy.HTTPError(404, "User not found")
+    def _put_update_user_preferences(self):
+        """Update user preferences and notify sleep cycle manager."""
+        updated_preferences = _load_json_body()
+        require_fields(updated_preferences, ['user_id'])
+
+        user_id = updated_preferences['user_id']
+        logger.info(f"Updating preferences for user {user_id}: {updated_preferences}")
+
+        # Returns only the changed preferences
+        changed_preferences = self.db.update_user_preferences(updated_preferences)
+
+        if changed_preferences:
+            logger.info(f"Successfully updated preferences for user {user_id}")
+
+            # Publish MQTT message for user cache invalidation
+            # User preferences are global (not tied to a specific room)
+            topic = f"UserService/ChangePreference/User/{user_id}/Preference/"
+            message = json.dumps(changed_preferences)
+
+            try:
+                self.publish(topic, message)
+                logger.info(f"Published user preference change to {topic}: {message}")
+            except Exception as e:
+                logger.error(f"Failed to publish user preference change: {e}")
+
+            return json.dumps({"status": "success", "message": "User preferences updated"})
+        raise cherrypy.HTTPError(404, "User not found")
+    def _put_update_room_preferences(self):
+        """Update room preferences in the catalog."""
+        updated_preferences = _load_json_body()
+        require_fields(updated_preferences, ['room_id'])
+
+        room_id = updated_preferences['room_id']
+        logger.info(f"Updating preferences for room {room_id}: {updated_preferences}")
+
+        # Returns only the changed preferences
+        changed_preferences = self.db.update_room_preferences(updated_preferences)
+
+        if changed_preferences:
+            logger.info(f"Successfully updated preferences for room {room_id}")
+
+            # Get the room information for MQTT publishing
+            room_info = self.db.get_room_info(room_id)
+            if room_info:
+                house_id = room_info['house_id']
+                user_id = room_info.get('user_id')
+
+                if user_id:
+                    # Publish MQTT message for cache invalidation
+                    # Topic: UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
+                    topic = f"UserService/ChangePreference/House/{house_id}/Bedroom/{room_id}/User/{user_id}/Preference/"
+                    message = json.dumps(changed_preferences)
+
+                    try:
+                        self.publish(topic, message)
+                        logger.info(f"Published room preference change to {topic}: {message}")
+                    except Exception as e:
+                        logger.error(f"Failed to publish room preference change: {e}")
+                else:
+                    logger.warning(f"Room {room_id} has no assigned user, skipping MQTT publish")
+            else:
+                logger.warning(f"Room {room_id} not found, skipping MQTT publish")
+
+            return json.dumps({"status": "success", "message": "Room preferences updated"})
+        raise cherrypy.HTTPError(404, "Room not found")
 
     def _put_update_invitation(self):
         """Update an existing invitation in the catalog."""
-        updated_invite = self._load_json_body()
+        updated_invite = _load_json_body()
         require_fields(updated_invite, ['id'])
 
         success = self.db.update_invitation(updated_invite)
@@ -223,7 +296,7 @@ class UserService:
 
     def _put_update_room(self):
         """Update room settings (temperature/light night/morning)."""
-        updated_room = self._load_json_body()
+        updated_room = _load_json_body()
         require_fields(updated_room, ['id'])
 
         success = self.db.update_room(updated_room)
@@ -233,7 +306,7 @@ class UserService:
 
     def _put_assign_room(self):
         """Assign the current user to a room, unassigning them from any other room in the same house."""
-        body = self._load_json_body()
+        body = _load_json_body()
         require_fields(body, ['room_id', 'user_id', 'house_id'])
 
         # First unassign user from all rooms in this house
@@ -246,7 +319,7 @@ class UserService:
 
     def _put_unassign_room(self):
         """Unassign a user from a room (only the assigned user can do this)."""
-        body = self._load_json_body()
+        body = _load_json_body()
         require_fields(body, ['room_id', 'user_id'])
 
         success = self.db.unassign_room(body['room_id'], body['user_id'])
@@ -328,6 +401,7 @@ class UserService:
             "getAllUsers": self._get_all_users,
             "getAllRooms": self._get_all_rooms,
             "getAllInvitations": self._get_all_invitations,
+            "getUserRoomPreferences": self._get_user_room_preferences,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -359,13 +433,17 @@ class UserService:
         rooms = self.db.get_all_rooms()
         return json.dumps({"status": "success", "rooms": rooms}, default=str)
 
+    def _get_user_room_preferences(self, params):
+        """Get the room and user preferences for a given user."""
+        bedroom_id = params.get('bedroom_id')
+        if not bedroom_id:
+            raise cherrypy.HTTPError(400, "Missing 'bedroom_id' parameter")
+        preferences = self.db.get_user_room_preferences(bedroom_id)
+        if preferences:
+            return json.dumps({"status": "success", "preferences": preferences}, default=str)
+        raise cherrypy.HTTPError(404, "User or room not found")
 
-    def _load_json_body(self):
-        body = cherrypy.request.body.read()
-        try:
-            return json.loads(body)
-        except Exception:
-            raise cherrypy.HTTPError(400, "Invalid JSON format")
+
 
 def require_fields(payload, required_fields):
     if not all(field in payload for field in required_fields):
@@ -395,6 +473,7 @@ if __name__ == "__main__":
     cherrypy.config.update({
         'server.socket_host': full_conf['serviceInfo']['host'],
         'server.socket_port': full_conf['serviceInfo']['port'],
+        'error_page.default': json_error_page,
     })
 
     cherrypy.engine.subscribe('start', user_service.catalog.start_background_loop)
