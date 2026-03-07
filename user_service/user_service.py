@@ -234,7 +234,7 @@ class UserService:
 
             # Publish MQTT message for user cache invalidation
             # User preferences are global (not tied to a specific room)
-            topic = f"UserService/ChangePreference/User/{user_id}/Preference/"
+            topic = self.topic_publish[1].replace("{userID}", str(user_id))
             message = json.dumps(changed_preferences)
 
             try:
@@ -268,7 +268,7 @@ class UserService:
                 if user_id:
                     # Publish MQTT message for cache invalidation
                     # Topic: UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
-                    topic = f"UserService/ChangePreference/House/{house_id}/Bedroom/{room_id}/User/{user_id}/Preference/"
+                    topic = self.topic_publish[0].replace("{houseID}", str(house_id)).replace("{bedroomID}", str(room_id)).replace("{userID}", str(user_id))
                     message = json.dumps(changed_preferences)
 
                     try:
