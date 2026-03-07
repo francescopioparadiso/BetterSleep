@@ -9,8 +9,13 @@
  "MQTT": {
       "broker": "broker.hivemq.com",
       "port": 1883,
-      "topic_subscribe": "House/+/Bedroom/+/sensor/+/+/data",
-      "topic_publish": "House/+/Bedroom/+/actuator/+/+/command",
+      "topic_subscribe": [
+        "House/+/Bedroom/+/sensor/+/+/data",
+        "UserService/ChangePreference/#"
+      ],
+      "topic_publish": ["House/{houseID}/Bedroom/{bedroomID}/actuator{device}",
+      "House/{houseID}/Bedroom/{bedroomID}/heart_rate"
+      ],
       "clientID": "TimeSeriesDBAdapterClientBetterSleepIoT"
     },
   "catalogURL": "http://localhost:8080",
