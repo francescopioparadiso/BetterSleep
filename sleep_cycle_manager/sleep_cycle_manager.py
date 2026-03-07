@@ -14,8 +14,56 @@ from common.common import mqtt_to_regex, json_error_page
 logger = logging.getLogger(__name__)
 
 
+def _resolve_temperature_action(temp_value, desired_temperature, room_actuators):
+    if temp_value > desired_temperature:
+        if "fan" in room_actuators:
+            return "ON", "fan"
+        if "heater" in room_actuators:
+            return "OFF", "heater"
+        return None, None
+
+    if temp_value < desired_temperature:
+        if "fan" in room_actuators:
+            return "OFF", "fan"
+        if "heater" in room_actuators:
+            return "ON", "heater"
+        return None, None
+
+    if "fan" in room_actuators:
+        return "OFF", "fan"
+    if "heater" in room_actuators:
+        return "OFF", "heater"
+    return None, None
+
+
+def _build_command(action, device):
+    return {"action": action, "device": device, "timestamp": datetime.now().timestamp()}
+
+
+def _parse_sensor_topic(topic):
+    parts = topic.split("/")
+    if len(parts) < 7:
+        return None
+    return parts[1], parts[3], parts[5]
+
+
+def _parse_preference_topic(topic):
+    parts = topic.split("/")
+
+    # UserService/ChangePreference/User/{userID}/Preference/
+    if len(parts) >= 5 and parts[2] == "User":
+        return "user", parts[3]
+
+    # UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
+    if len(parts) >= 8 and parts[2] == "House":
+        return "room", parts[5]
+
+    return None, None
+
+
 class SleepCycleManager:
     exposed = True
+    SLEEP_DETECTION_SECONDS = 1800
 
     def __init__(self, conf):
         self.mqtt_client = None
@@ -32,7 +80,7 @@ class SleepCycleManager:
         # - Room cache: room-specific preferences (temperature, light settings)
         self.user_preferences_cache = {}  # {userid: {night_time, morning_time, is_sleeping, last_seen_bed}}
         self.room_preferences_cache = {}  # {bedroomid: {userid, houseid, temperature_night, temperature_morning, light_night, light_morning, actuators}}
-        self.topic_publish=self.MQTT_info.get('topic_publish', )
+        self.topic_publish = self.MQTT_info.get('topic_publish', )
         self.init_mqtt_client()
 
     def get_endpoint_user_service(self):
@@ -85,161 +133,155 @@ class SleepCycleManager:
             logger.error(f"Invalid JSON payload received on topic {topic}")
             return
 
-        for i, regex in enumerate(self.topic_subscribe_regex):
-            if regex.match(topic):
-                # i == 0 → sensor data
-                # i == 1 → user preference update
-                if i == 0:  # sensor data
-                    parts = topic.split("/")
-                    if len(parts) < 7:
-                        logger.warning(f"Malformed sensor topic: {topic}")
-                        return
-                    houseid = parts[1]
-                    bedroomid = parts[3]
-                    sensor_type = parts[5]
+        for index, regex in enumerate(self.topic_subscribe_regex):
+            if not regex.match(topic):
+                continue
 
-                    # Get separated preferences
-                    preferences = self.get_room_preference(bedroomid)
-                    if not preferences:
-                        logger.error(f"No preferences found for {bedroomid}, skipping message")
-                        return
+            if index == 0:
+                self._handle_sensor_topic(topic, message_received)
+                return
 
-                    user_prefs = preferences.get('user_preferences', {})
-                    room_prefs = preferences.get('room_preferences', {})
-
-                    if sensor_type == "ambient_temp":
-                        # Get is_sleeping from user preferences
-                        is_sleeping = user_prefs.get("is_sleeping", False)
-
-                        desired_temperature = (
-                            room_prefs.get("temperature_night") if is_sleeping
-                            else room_prefs.get("temperature_morning")
-                        )
-                        room_actuators = room_prefs.get("actuators", [])
-                        self.handle_temperature(message_received, room_actuators, desired_temperature, houseid,
-                                                bedroomid)
-                    elif sensor_type == "presence":
-                        self.handle_presence(message_received, user_prefs, room_prefs, houseid, bedroomid)
-                    return
-                elif i == 1:  # preference update
-                    parts = topic.split("/")
-
-                    # Check if it's a user preference update: UserService/ChangePreference/User/{userID}/Preference/
-                    if len(parts) >= 5 and parts[2] == "User":
-                        userid = parts[3]
-
-                        # Update user-level preferences (night_time, morning_time)
-                        if "night_time" in message_received or "morning_time" in message_received:
-                            if userid not in self.user_preferences_cache:
-                                logger.warning(f"User {userid} not found in cache, will fetch on next sensor event")
-                            else:
-                                if "night_time" in message_received:
-                                    self.user_preferences_cache[userid]["night_time"] = message_received["night_time"]
-                                    logger.info(f"Updated night_time for user {userid}: {message_received['night_time']}")
-
-                                if "morning_time" in message_received:
-                                    self.user_preferences_cache[userid]["morning_time"] = message_received["morning_time"]
-                                    logger.info(f"Updated morning_time for user {userid}: {message_received['morning_time']}")
-
-                                logger.info(f"Current user preferences for {userid}: {self.user_preferences_cache[userid]}")
-
-                    # Check if it's a room preference update: UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
-                    elif len(parts) >= 8 and parts[2] == "House":
-                        bedroomid = parts[5]
-                        userid = parts[7]
-
-                        # Update room-level preferences (temperature, light)
-                        if any(key in message_received for key in ["temperature_night", "temperature_morning", "light_night", "light_morning"]):
-                            if bedroomid not in self.room_preferences_cache:
-                                logger.warning(f"Room {bedroomid} not found in cache, will fetch on next sensor event")
-                            else:
-                                for key in ["temperature_night", "temperature_morning", "light_night", "light_morning"]:
-                                    if key in message_received:
-                                        self.room_preferences_cache[bedroomid][key] = message_received[key]
-                                        logger.info(f"Updated {key} for room {bedroomid}: {message_received[key]}")
-
-                                logger.info(f"Current room preferences for {bedroomid}: {self.room_preferences_cache[bedroomid]}")
-                    else:
-                        logger.warning(f"Malformed preference topic: {topic}")
-
-                    return
+            if index == 1:
+                self._handle_preference_topic(topic, message_received)
+                return
 
         logger.warning(f"Received message on unrecognized topic: {topic}")
 
+    def _handle_sensor_topic(self, topic, message_received):
+        sensor_data = _parse_sensor_topic(topic)
+        if not sensor_data:
+            logger.warning(f"Malformed sensor topic: {topic}")
+            return
+
+        houseid, bedroomid, sensor_type = sensor_data
+        preferences = self.get_room_preference(bedroomid)
+        if not preferences:
+            logger.error(f"No preferences found for {bedroomid}, skipping message")
+            return
+
+        user_prefs = preferences.get('user_preferences', {})
+        room_prefs = preferences.get('room_preferences', {})
+
+        if sensor_type == "ambient_temp":
+            is_sleeping = user_prefs.get("is_sleeping", False)
+            desired_temperature = (
+                room_prefs.get("temperature_night") if is_sleeping
+                else room_prefs.get("temperature_morning")
+            )
+            room_actuators = room_prefs.get("actuators", [])
+            self.handle_temperature(message_received, room_actuators, desired_temperature, houseid, bedroomid)
+            return
+
+        if sensor_type == "presence":
+            self.handle_presence(message_received, user_prefs, room_prefs, houseid, bedroomid)
+
+    def _handle_preference_topic(self, topic, message_received):
+        preference_kind, entity_id = _parse_preference_topic(topic)
+
+        if preference_kind == "user":
+            self._update_user_preferences(entity_id, message_received)
+            return
+
+        if preference_kind == "room":
+            self._update_room_preferences(entity_id, message_received)
+            return
+
+        logger.warning(f"Malformed preference topic: {topic}")
+
+    def _update_user_preferences(self, userid, message_received):
+        if "night_time" not in message_received and "morning_time" not in message_received:
+            return
+
+        user_cache = self.user_preferences_cache.get(userid)
+        if not user_cache:
+            logger.warning(f"User {userid} not found in cache, will fetch on next sensor event")
+            return
+
+        if "night_time" in message_received:
+            user_cache["night_time"] = message_received["night_time"]
+            logger.info(f"Updated night_time for user {userid}: {message_received['night_time']}")
+
+        if "morning_time" in message_received:
+            user_cache["morning_time"] = message_received["morning_time"]
+            logger.info(f"Updated morning_time for user {userid}: {message_received['morning_time']}")
+
+        logger.info(f"Current user preferences for {userid}: {user_cache}")
+
+    def _update_room_preferences(self, bedroomid, message_received):
+        updatable_keys = ["temperature_night", "temperature_morning", "light_night", "light_morning"]
+        if not any(key in message_received for key in updatable_keys):
+            return
+
+        room_cache = self.room_preferences_cache.get(bedroomid)
+        if not room_cache:
+            logger.warning(f"Room {bedroomid} not found in cache, will fetch on next sensor event")
+            return
+
+        for key in updatable_keys:
+            if key in message_received:
+                room_cache[key] = message_received[key]
+                logger.info(f"Updated {key} for room {bedroomid}: {message_received[key]}")
+
+        logger.info(f"Current room preferences for {bedroomid}: {room_cache}")
+
     def get_room_preference(self, bedroomid):
         if bedroomid not in self.room_preferences_cache:
-            logger.info(f"Cache miss for room {bedroomid}, fetching from User Service")
-            response = requests.get(f"{self.user_service_endpoint}/getUserRoomPreferences",
-                                    params={"bedroom_id": bedroomid})
-            """
-               Expected response format (new two-level structure):
-               {
-                 "preferences": {
-                   "user_preferences": {
-                     "user_id": 1,
-                     "night_time": "22:00",
-                     "morning_time": "07:00"
-                   },
-                   "room_preferences": {
-                     "room_id": "1",
-                     "house_id": "1",
-                     "user_id": 1,
-                     "temperature_night": 18,
-                     "temperature_morning": 22,
-                     "light_night": 0,
-                     "light_morning": 100
-                   }
-                 }
-               }
-            """
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    preferences = data.get("preferences", {})
+            self._fetch_and_cache_room_preference(bedroomid)
 
-                    user_prefs = preferences.get("user_preferences", {})
-                    room_prefs = preferences.get("room_preferences", {})
+        room_prefs = self.room_preferences_cache.get(bedroomid)
+        if not room_prefs:
+            return None
 
-                    userid = user_prefs.get("user_id") or room_prefs.get("user_id")
-                    houseid = room_prefs.get("house_id")
-
-                    # Populate room cache (room-specific preferences)
-                    self.room_preferences_cache[bedroomid] = {
-                        "userid": userid,
-                        "houseid": houseid,
-                        "temperature_night": room_prefs.get("temperature_night"),
-                        "temperature_morning": room_prefs.get("temperature_morning"),
-                        "light_night": room_prefs.get("light_night"),
-                        "light_morning": room_prefs.get("light_morning"),
-                        "actuators": self.get_actuators_in_room(bedroomid)
-                    }
-
-                    # Populate user cache (user-level preferences) if not already present
-                    if userid and userid not in self.user_preferences_cache:
-                        self.user_preferences_cache[userid] = {
-                            "night_time": user_prefs.get("night_time"),
-                            "morning_time": user_prefs.get("morning_time"),
-                            "is_sleeping": False,
-                            "last_seen_bed": None
-                        }
-                        logger.info(f"User cache updated for {userid}: {self.user_preferences_cache[userid]}")
-
-                    logger.info(f"Room cache updated for {bedroomid}: {self.room_preferences_cache[bedroomid]}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"Error decoding JSON for {bedroomid}: {e}")
-                    self.room_preferences_cache[bedroomid] = {}
-            else:
-                logger.error(
-                    f"Error in request to User Service for {bedroomid}: {response.status_code} - {response.text}")
-                self.room_preferences_cache[bedroomid] = {}
-
-        # Return separated data structure
+        userid = room_prefs.get("userid")
         return {
-            'user_preferences': self.user_preferences_cache.get(
-                self.room_preferences_cache[bedroomid].get("userid"), {}
-            ),
-            'room_preferences': self.room_preferences_cache[bedroomid]
+            'user_preferences': self.user_preferences_cache.get(userid, {}),
+            'room_preferences': room_prefs
         }
+
+    def _fetch_and_cache_room_preference(self, bedroomid):
+        logger.info(f"Cache miss for room {bedroomid}, fetching from User Service")
+        response = requests.get(
+            f"{self.user_service_endpoint}/getUserRoomPreferences",
+            params={"bedroom_id": bedroomid}
+        )
+
+        if response.status_code != 200:
+            logger.error(f"Error in request to User Service for {bedroomid}: {response.status_code} - {response.text}")
+            self.room_preferences_cache[bedroomid] = {}
+            return
+
+        try:
+            data = response.json()
+            preferences = data.get("preferences", {})
+            user_prefs = preferences.get("user_preferences", {})
+            room_prefs = preferences.get("room_preferences", {})
+
+            userid = user_prefs.get("user_id") or room_prefs.get("user_id")
+            houseid = room_prefs.get("house_id")
+
+            self.room_preferences_cache[bedroomid] = {
+                "userid": userid,
+                "houseid": houseid,
+                "temperature_night": room_prefs.get("temperature_night"),
+                "temperature_morning": room_prefs.get("temperature_morning"),
+                "light_night": room_prefs.get("light_night"),
+                "light_morning": room_prefs.get("light_morning"),
+                "actuators": self.get_actuators_in_room(bedroomid)
+            }
+
+            if userid and userid not in self.user_preferences_cache:
+                self.user_preferences_cache[userid] = {
+                    "night_time": user_prefs.get("night_time"),
+                    "morning_time": user_prefs.get("morning_time"),
+                    "is_sleeping": False,
+                    "last_seen_bed": None
+                }
+                logger.info(f"User cache updated for {userid}: {self.user_preferences_cache[userid]}")
+
+            logger.info(f"Room cache updated for {bedroomid}: {self.room_preferences_cache[bedroomid]}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON for {bedroomid}: {e}")
+            self.room_preferences_cache[bedroomid] = {}
 
     def get_actuators_in_room(self, bedroomid):
         response = requests.get(f"{self.catalog_url}/getActuatorsInRoom",
@@ -260,35 +302,21 @@ class SleepCycleManager:
 
     def handle_temperature(self, message_received, room_actuetor, desiderate_temperature, houseid, bedroomid):
         temp_value = message_received['e'][0]['v']
-        topic_to_publish = self.topic_publish[0].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
-        if temp_value > desiderate_temperature and "fan" in room_actuetor:
-            if "fan" in room_actuetor:
-                command = {"action": "ON", "device": "fan", "timestamp": str(datetime.now())}
-                self.publish(command, command_topic=f"{topic_to_publish}/fan")
-            elif "heater" in room_actuetor:
-                command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
-                self.publish(command, command_topic=f"{topic_to_publish}/heater")
+        room_actuators = room_actuetor
+        desired_temperature = desiderate_temperature
+        base_topic = self.topic_publish[0].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
 
-        elif temp_value < desiderate_temperature:
-            if "fan" in room_actuetor:
-                command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
-                self.publish(command, command_topic=f"{topic_to_publish}/fan")
-            elif "heater" in room_actuetor:
-                command = {"action": "ON", "device": "heater", "timestamp": str(datetime.now())}
-                self.publish(command, command_topic=f"{topic_to_publish}/heater")
-        else:
-            if "fan" in room_actuetor:
-                command = {"action": "OFF", "device": "fan", "timestamp": str(datetime.now())}
-                self.publish(command, command_topic=f"{topic_to_publish}/fan")
-            elif "heater" in room_actuetor:
-                command = {"action": "OFF", "device": "heater", "timestamp": str(datetime.now())}
-                self.publish(command, command_topic=f"{topic_to_publish}/heater")
+        action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuators)
+        if not action or not device:
+            return
+
+        self.publish(_build_command(action, device), command_topic=f"{base_topic}/{device}")
 
     def handle_presence(self, message_received, user_prefs, room_prefs, houseid, bedroomid):
+        _ = user_prefs  # Preserved for signature compatibility.
         presence_value = message_received['e'][0]['v']
         userid = room_prefs.get("userid")
 
-        # Ensure user is in user cache
         if not userid or userid not in self.user_preferences_cache:
             logger.warning(f"User {userid} not found in cache for room {bedroomid}")
             return
@@ -296,24 +324,25 @@ class SleepCycleManager:
         user_data = self.user_preferences_cache[userid]
         topic_to_publish = self.topic_publish[1].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
 
-        if presence_value == 1:
-            if user_data.get("last_seen_bed") is None:
-                user_data["last_seen_bed"] = datetime.now()
-                return
-            second_in_bed = (datetime.now() - user_data["last_seen_bed"]).total_seconds() if user_data.get(
-                "last_seen_bed") else 0
-            if not user_data.get("is_sleeping",
-                                 False) and second_in_bed >= 1800:  # user more than 30 minutes in bed we can consider him sleeping
-                user_data["is_sleeping"] = True
-                message = {"action": "START_SLEEPING", "timestamp": str(datetime.now())}
-                self.publish(message,
-                             command_topic=topic_to_publish)
-                logger.info(f"User {userid} is now sleeping in {bedroomid}")
-        else:
+        if presence_value != 1:
             user_data["last_seen_bed"] = None
             if user_data.get("is_sleeping", False):
                 user_data["is_sleeping"] = False
                 logger.info(f"User {userid} is now awake in {bedroomid}")
+            return
+
+        if user_data.get("last_seen_bed") is None:
+            user_data["last_seen_bed"] = datetime.now()
+            return
+
+        second_in_bed = (datetime.now() - user_data["last_seen_bed"]).total_seconds()
+        if user_data.get("is_sleeping", False) or second_in_bed < self.SLEEP_DETECTION_SECONDS:
+            return
+
+        user_data["is_sleeping"] = True
+        message = {"action": "START_SLEEPING", "timestamp": str(datetime.now())}
+        self.publish(message, command_topic=topic_to_publish)
+        logger.info(f"User {userid} is now sleeping in {bedroomid}")
 
 
 if __name__ == "__main__":
