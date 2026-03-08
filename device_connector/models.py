@@ -70,6 +70,7 @@ class BaseIoTComponent:
 
         # Handle topic_subscribe (from config)
         ts = self.MQTT_info.get("topic_subscribe")
+        print("topic_subscribe from config:", ts)
         if ts:
             # Convert single string to list for consistency
             ts_list = ts if isinstance(ts, list) else [ts]

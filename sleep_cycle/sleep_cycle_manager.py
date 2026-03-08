@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_temperature_action(temp_value, desired_temperature, room_actuators):
-    print(temp_value, desired_temperature, room_actuators)
     if temp_value > desired_temperature:
         if "fan" in room_actuators:
             return 1, "fan"
@@ -109,7 +108,6 @@ class SleepCycleManager:
         self.phase_manager.start()
         self.init_mqtt_client()
         self.get_ActiveRoomwithUser()
-        print(self.room_to_user_map)
 
     def get_endpoint_user_service(self):
         data, status, error = self.catalog_client.get(f"getEndpointUserService")
@@ -269,11 +267,10 @@ class SleepCycleManager:
         user_data = self._fetch_and_cache_room_preference(userid)
         if not user_data:
             return
-        print(user_data)
         logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
 
         if sensor_type == "ambient_temp":
-            desiderate_temp = user_data['config']['temperature_night'] if user_data.get('is_sleeping') else user_data['config']['temperature_morning']
+            desiderate_temp = user_data['live_targets']['temperature']  #!TODO make a check if the live target are empity
             room_actuators = user_data['config']['actuators']
             self.handle_temperature(msg, room_actuators, desiderate_temp, house_id, room_id)
         elif sensor_type == "presence":
@@ -313,8 +310,11 @@ class SleepCycleManager:
         if response.status_code == 200:
             try:
                 data = response.json()
-                actuators = data.get("actuators", [])
-                logger.info(f"Actuators in {room_id}: {actuators}")
+                actuatorslist=set()
+                for actuator in data.get("actuators", []):
+                    actuator_type = actuator.get("type")
+                    actuatorslist.add(actuator_type)
+                actuators=list(actuatorslist)
                 return actuators
             except json.JSONDecodeError as e:
                 logger.error(f"Error of decoding JSON for actuators in {room_id}: {e}")
@@ -324,23 +324,30 @@ class SleepCycleManager:
                 f"Error in request to Catalog for actuators in {bedroomid}: {response.status_code} - {response.text}")
             return []
 
-    def handle_temperature(self, message_received, room_actuetor, desiderate_temperature, houseid, bedroomid):
+    def handle_temperature(self, message_received, room_actuator, desired_temperature, houseid, bedroomid):
+
         temp_value = message_received['e'][0]['v']
-        room_actuators = room_actuetor
-        desired_temperature = desiderate_temperature
-        base_topic = self.topic_publish[0].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
-        action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuators)
+        action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuator)
+
         if not action or not device:
             return
 
-        command={"value": action, "timestamp": datetime.now().timestamp()}
-        logger.info(f"Temperature control decision for {bedroomid}: temp={temp_value}, desired={desired_temperature}, action={action} on {device}")
-        self.publish(command, command_topic=f"{base_topic}/{device}")
+        command = {
+            "value": action,
+            "timestamp": datetime.now().timestamp()
+        }
+        base_topic=self.topic_publish[0]
 
+        topic = base_topic.format(
+            houseID=houseid,
+            bedroomID=bedroomid,
+            device=device
+        )
+        self.publish(json.dumps(command), command_topic=topic)
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']
         topic_to_publish = self.topic_publish[1].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
-        finish_sleep_topic = f"Bedanalitics/userID/{userid}/FinishSleep"
+        finish_sleep_topic = f"BedAnalitics/userID/{userid}/FinishSleep"
 
         user_data = self.active_users_cache.get(userid)
         if not user_data:
@@ -380,8 +387,7 @@ class SleepCycleManager:
     def change_target_temperature_light(self, userid, target_temperature=None, target_light=None, phase=None):
         """
         Update the live targets for a user based on phase transitions.
-        Called by PhaseManager.
-        Sends commands to actuators (fan, heater, light) as needed.
+        Only update internal targets; do not send actuator commands.
         """
         user_data = self.active_users_cache.get(userid)
         if not user_data:
@@ -394,28 +400,6 @@ class SleepCycleManager:
             user_data["live_targets"]["light"] = target_light
         if phase is not None:
             user_data["live_targets"]["phase"] = phase
-
-        # Send actuator commands for temperature (fan/heater)
-        room_actuators = user_data['config'].get('actuators', [])
-        houseid = user_data['config'].get('houseID', '1')
-        bedroomid = user_data['config'].get('roomID', '1')
-        base_topic = self.topic_publish[0].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
-
-        # Fan/Heater logic (existing)
-        if target_temperature is not None:
-            action, device = _resolve_temperature_action(target_temperature, target_temperature, room_actuators)
-            if action is not None and device is not None:
-                logger.info(f"sending temperature command for {bedroomid}: target_temperature={target_temperature} in phase {phase}")
-                command = {"value": action, "timestamp": datetime.now().timestamp()}
-                self.publish(command, command_topic=f"{base_topic}/{device}")
-
-        # Light actuator logic (new)
-        if "light" in room_actuators and target_light is not None:
-            logger.info(f"sending light command for {bedroomid}: target_light={target_light} in phase {phase}")
-            command = {"value": target_light, "timestamp": datetime.now().timestamp(), "phase": phase}
-            self.publish(command, command_topic=f"{base_topic}/light")
-
-        logger.info(f"Updated targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
 
 
 if __name__ == "__main__":

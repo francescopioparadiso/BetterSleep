@@ -39,15 +39,15 @@ def test_high_temp_simulation(duration_seconds=60):
     # Actuator configs using variables
     c_light = create_config(
         CATALOG_URL, "1", "Light", "light", houseid, bedroomid, BROKER_IP, PORT,
-        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/light/1/command", is_sensor=False
+        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command", is_sensor=False
     )
     c_heater = create_config(
         CATALOG_URL, "2", "Heater", "heater", houseid, bedroomid, BROKER_IP, PORT,
-        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/heater/2/command", is_sensor=False
+        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/actuator/heater/command", is_sensor=False
     )
     c_fan = create_config(
         CATALOG_URL, "3", "Fan", "fan", houseid, bedroomid, BROKER_IP, PORT,
-        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/fan/3/command", is_sensor=False
+        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/actuator/fan/command", is_sensor=False
     )
     fan_actuator = FanActuator(c_fan)
     heater_actuator = HeaterActuator(c_heater)

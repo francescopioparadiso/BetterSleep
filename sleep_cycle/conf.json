@@ -14,7 +14,7 @@
       "UserService/ChangePreference/#"
     ],
     "topic_publish": [
-      "House/{houseID}/Bedroom/{bedroomID}/actuator{device}",
+      "House/{houseID}/Bedroom/{bedroomID}/actuator/{device}/command",
       "House/{houseID}/Bedroom/{bedroomID}/heart_rate"
     ],
     "clientID": "SleepCycleManagerClientBetterSleep"

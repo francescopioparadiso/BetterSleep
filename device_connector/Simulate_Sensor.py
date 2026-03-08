@@ -136,6 +136,7 @@ class FanActuator(Actuator):
     """Simulates a fan actuator."""
     def __init__(self, config):
         super().__init__(config)
+
     def notify(self, topic, payload):
         try:
             data = json.loads(payload)
