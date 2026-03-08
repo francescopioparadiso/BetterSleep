@@ -1,119 +1,148 @@
 import threading
 import time
 import json
+import random
+from datetime import datetime
 from models import Sensor, Actuator
 
-# SENSORS 
+# --- FUNZIONE HELPER PER CREARE LA CONFIGURAZIONE ---
+def create_config(catalog_url, comp_id, name, comp_type, house_id, room_id, topic_suffix, is_sensor=True):
+    """Crea il dizionario di config seguendo il pattern richiesto dal tuo compagno."""
+    id_key = "sensorID" if is_sensor else "ActuatorID"
+    # Costruisce il topic. Esempio: House/1/Bedroom/101/sensor/heartrate/data
+    topic_base = "sensor" if is_sensor else "actuator"
+    topic = f"House/{house_id}/Bedroom/{room_id}/{topic_base}/{topic_suffix}"
+    
+    return {
+        "catalogURL": catalog_url,
+        "removeInterval": 30,
+        "serviceInfo": {
+            id_key: comp_id,
+            "name": name,
+            "host": "0.0.0.0",
+            "port": 0, # Mettiamo 0 per sensori MQTT puri
+            "type": comp_type,
+            "roomID": room_id,
+            "houseID": house_id,
+            "mqtt_topic": topic
+        }
+    }
+
+# --- SENSORS ---
 
 class PresenceSensor(Sensor):
     def run(self):
         self.connect_mqtt()
         while True:
-            val = input(f"\n[{self.comp_id}] Enter Presence (1=In Bed, 0=Empty): ")
+            # Genera randomicamente 0 o 1
+            val = random.choice([0, 1])
             self.publish_data(val)
+            time.sleep(15) # Pubblica ogni 15 secondi
 
 class HeartRateSensor(Sensor):
-    def __init__(self, delay_minutes, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.presence_topic = f"House/{self.house_id}/Bedroom/{self.bedroom_id}/sensor/+/data/presence"
-        self.is_present = False
-        self.presence_start_time = None
+    def __init__(self, config, broker_ip="broker.hivemq.com"):
+        super().__init__(config, broker_ip)
+        self.is_sleeping = False
         
-        # Per fare test rapidi, se delay_minutes è molto piccolo (es. 0.1), si sbloccherà in pochi secondi.
-        # Usa 20 per il comportamento reale richiesto.
-        self.required_delay_seconds = delay_minutes * 60 
+        # Topic speciale per ricevere il comando START_SLEEPING
+        house = self.service_info.get("houseID")
+        room = self.service_info.get("roomID")
+        self.trigger_topic = f"House/{house}/Bedroom/{room}/heart_rate"
 
-    def on_presence_update(self, client, userdata, msg):
-        data = json.loads(msg.payload.decode())
-        val = str(data['value'])
-        
-        if val == "1" and not self.is_present:
-            # L'utente è appena entrato nel letto, avvio il timer
-            self.is_present = True
-            self.presence_start_time = time.time()
-            print(f"\n[{self.comp_id}] Presence detected. Starting {self.required_delay_seconds/60} min timer before HR transmission is allowed.")
-        elif val == "0":
-            # L'utente si è alzato, resetto tutto
-            self.is_present = False
-            self.presence_start_time = None
-            print(f"\n[{self.comp_id}] Bed is empty. HR transmission blocked.")
+    def on_trigger_message(self, client, userdata, msg):
+        try:
+            data = json.loads(msg.payload.decode())
+            if data.get("action") == "START_SLEEPING":
+                self.is_sleeping = True
+                print(f"\n[HEART RATE TRIGGER] Ricevuto START_SLEEPING! Inizio a inviare dati...\n")
+            elif data.get("action") == "STOP_SLEEPING":
+                self.is_sleeping = False
+                print(f"\n[HEART RATE TRIGGER] Ricevuto STOP_SLEEPING! Mi fermo.\n")
+        except json.JSONDecodeError:
+            pass
 
     def run(self):
         self.connect_mqtt()
-        self.client.subscribe(self.presence_topic)
-        self.client.on_message = self.on_presence_update
+        # Si iscrive al topic per ascoltare il comando dal Sleep Cycle Manager
+        self.client.subscribe(self.trigger_topic)
+        self.client.on_message = self.on_trigger_message
+        
+        print(f"[{self.comp_id}] In attesa del trigger '{self.trigger_topic}' per iniziare...")
         
         while True:
-            val = input(f"\n[{self.comp_id}] Enter Heart Rate: ")
-            
-            if self.is_present and self.presence_start_time:
-                elapsed = time.time() - self.presence_start_time
-                if elapsed >= self.required_delay_seconds:
-                    self.publish_data(val)
-                else:
-                    remaining = int(self.required_delay_seconds - elapsed)
-                    print(f"[{self.comp_id}] Blocked: Waiting {remaining} more seconds before starting HR transmission.")
-            else:
-                print(f"[{self.comp_id}] Blocked: User is not in bed.")
+            if self.is_sleeping:
+                # Genera un battito cardiaco realistico per quando si dorme
+                val = random.randint(55, 75)
+                self.publish_data(val)
+            time.sleep(5) # Controlla e pubblica ogni 5 secondi
+
+class BodyTemperatureSensor(Sensor):
+    def run(self):
+        self.connect_mqtt()
+        while True:
+            # Genera temperatura tra 36.0 e 37.5 con un decimale
+            val = round(random.uniform(36.0, 37.5), 1)
+            self.publish_data(val)
+            time.sleep(20)
 
 class VibrationSensor(Sensor):
     def run(self):
         self.connect_mqtt()
         while True:
-            val = input(f"\n[{self.comp_id}] Enter Vibration Level: ")
+            val = random.randint(0, 10) # Scala di vibrazione 0-10
             self.publish_data(val)
+            time.sleep(10)
 
-# ACTUATORS 
+# --- ACTUATORS ---
 
 class SmartLight(Actuator):
     def on_message(self, client, userdata, msg):
         data = json.loads(msg.payload.decode())
-        print(f"\n>> [ACTUATOR - LIGHT] Setting brightness to: {data['value']}\n")
+        print(f"\n>> [LUCE ATTUATA] Luminosità impostata a: {data.get('value')} <<\n")
 
 class Fan(Actuator):
     def on_message(self, client, userdata, msg):
         data = json.loads(msg.payload.decode())
-        print(f"\n>> [ACTUATOR - FAN] Status changed to: {data['value']}\n")
+        print(f"\n>> [VENTOLA ATTUATA] Stato modificato a: {data.get('value')} <<\n")
 
-class Heater(Actuator):
-    def on_message(self, client, userdata, msg):
-        data = json.loads(msg.payload.decode())
-        print(f"\n>> [ACTUATOR - HEATER] Status changed to: {data['value']}\n")
-
-# MAIN EXECUTION
+# --- MAIN EXECUTION ---
 
 if __name__ == "__main__":
-    CATALOG_URL = "http://127.0.0.1:8080" 
-    BROKER_IP = "broker.hivemq.com"     
-    H_ID, B_ID = "House01", "Bedroom01"
+    CATALOG_URL = "http://127.0.0.1:8080"
+    BROKER_IP = "broker.hivemq.com"
+    HOUSE = "1"
+    ROOM = "101"
 
-    # Inizializza Componenti
-    presence = PresenceSensor(H_ID, B_ID, "PRES_01", "presence", CATALOG_URL, BROKER_IP)
+    # 1. Creiamo le configurazioni usando la funzione helper
+    conf_pres = create_config(CATALOG_URL, "PRES_01", "Pressure Mat", "PresenceSensor", HOUSE, ROOM, "presence/data")
+    conf_hr = create_config(CATALOG_URL, "HR_01", "Wearable HR", "HeartRateSensor", HOUSE, ROOM, "heartrate/data")
+    conf_temp = create_config(CATALOG_URL, "BT_01", "Body Thermometer", "BodyTempSensor", HOUSE, ROOM, "bodytemp/data")
+    conf_vib = create_config(CATALOG_URL, "VIB_01", "Bed Vibration", "VibrationSensor", HOUSE, ROOM, "vibration/data")
     
-    # IMPORTANTE: Qui passi i minuti di ritardo (es. 20). 
-    # Ho messo 0.16 (circa 10 secondi) ma può essere cambiato
-    heart_rate = HeartRateSensor(0.16, H_ID, B_ID, "HR_01", "heartrate", CATALOG_URL, BROKER_IP)
-    
-    body_temp = BodyTemperatureSensor(H_ID, B_ID, "BT_01", "body_temperature", CATALOG_URL, BROKER_IP)
-    vibration = VibrationSensor(H_ID, B_ID, "VIB_01", "vibration", CATALOG_URL, BROKER_IP)
-    
-    light = SmartLight(H_ID, B_ID, "LIGHT_01", CATALOG_URL, BROKER_IP)
-    fan = Fan(H_ID, B_ID, "FAN_01", CATALOG_URL, BROKER_IP)
-    heater = Heater(H_ID, B_ID, "HEAT_01", CATALOG_URL, BROKER_IP)
+    conf_light = create_config(CATALOG_URL, "LIGHT_01", "Smart Light", "LightActuator", HOUSE, ROOM, "light/command", is_sensor=False)
+    conf_fan = create_config(CATALOG_URL, "FAN_01", "Room Fan", "FanActuator", HOUSE, ROOM, "fan/command", is_sensor=False)
 
-    # Avvia Attuatori
+    # 2. Inizializziamo i componenti passandogli le configurazioni
+    presence = PresenceSensor(conf_pres, BROKER_IP)
+    heart_rate = HeartRateSensor(conf_hr, BROKER_IP)
+    body_temp = BodyTemperatureSensor(conf_temp, BROKER_IP)
+    vibration = VibrationSensor(conf_vib, BROKER_IP)
+    
+    light = SmartLight(conf_light, BROKER_IP)
+    fan = Fan(conf_fan, BROKER_IP)
+
+    # 3. Avvia Attuatori
     light.start()
     fan.start()
-    heater.start()
 
-    # Avvia Sensori (Thread separati per lo standard input)
+    # 4. Avvia Sensori in background
     threading.Thread(target=presence.run, daemon=True).start()
     threading.Thread(target=heart_rate.run, daemon=True).start()
     threading.Thread(target=body_temp.run, daemon=True).start()
     threading.Thread(target=vibration.run, daemon=True).start()
 
-    print("--- BetterSleep Device Connector Started ---")
+    print("--- Sensori e Attuatori in esecuzione automatica ---")
     try:
         while True: time.sleep(1)
     except KeyboardInterrupt:
-        print("Shutting down...")
+        print("Spegnimento in corso...")
