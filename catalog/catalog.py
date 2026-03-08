@@ -31,9 +31,7 @@ def check_if_is_a_sensor(new_sensor):
 
 def check_if_is_an_actuator(new_actuator):
     """Validate that the actuator contains all required fields."""
-    required_fields = ['serviceID','name','type','endpoint','last_update']
-    if new_actuator.get('type') != 'actuator':
-        raise cherrypy.HTTPError(400, "Type must be 'actuator'")
+    required_fields = ['ActuatorID','name','type','endpoint','last_update']
     require_fields(new_actuator, required_fields)
 
 def require_fields(payload, required_fields):
@@ -272,7 +270,6 @@ class Catalog:
             "getEndpointUserService": self._get_endpoint_user_service,
             "getSensorByRoom": self._get_sensor_by_room,
             "getActuatorByRoom": self._get_actuator_by_room
-            ,
 
         }
         handler = handlers.get(uri[0])
@@ -356,7 +353,7 @@ class Catalog:
             raise cherrypy.HTTPError(500, "Internal Server Error")
     def _get_actuator_by_room(self, params):
         """Get actuators by roomID."""
-        room_id = params.get('roomID')
+        room_id = params.get('room_id')
         if not room_id:
             raise cherrypy.HTTPError(400, "Missing 'roomID' parameter")
         try:

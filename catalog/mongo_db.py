@@ -228,12 +228,12 @@ class MongoDBAdapter:
     def insert_actuator(self,new_actuator):
         try:
             logger.debug(f"Attempting to insert actuator: {new_actuator}")
-            # Check for duplicate actuatorID
-            if self.db.actuators.find_one({"actuatorID": new_actuator["actuatorID"]}):
-                logger.warning(f"Actuator ID {new_actuator['actuatorID']} already exists (pre-check)")
+            # Check for duplicate ActuatorID
+            if self.db.actuators.find_one({"ActuatorID": new_actuator["ActuatorID"]}):
+                logger.warning(f"Actuator ID {new_actuator['ActuatorID']} already exists (pre-check)")
                 return False
             result = self.db.actuators.insert_one(new_actuator)
-            logger.info(f"Actuator {new_actuator['actuatorID']} inserted successfully with ID: {result.inserted_id}")
+            logger.info(f"Actuator {new_actuator['ActuatorID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Actuator data saved - last_update: {new_actuator.get('last_update')}, inserted_at: {new_actuator.get('inserted_at')}")
             return True
         except Exception as e:
@@ -244,7 +244,7 @@ class MongoDBAdapter:
         try:
             # Forza la conversione a stringa per evitare mismatch
             actuator_id = str(actuator_id)
-            result = self.db.actuators.delete_one({"actuatorID": actuator_id})
+            result = self.db.actuators.delete_one({"ActuatorID": actuator_id})
             if result.deleted_count > 0:
                 logger.info(f"Actuator {actuator_id} deleted successfully")
                 return True
@@ -259,7 +259,7 @@ class MongoDBAdapter:
             logger.debug(f"Updating actuator {actuator_id} last_update to: {last_update} (type: {type(last_update).__name__})")
 
             result = self.db.actuators.update_one(
-                {"actuatorID": actuator_id},
+                {"ActuatorID": actuator_id},
                 {"$set": {"last_update": last_update}}
             )
             if result.matched_count > 0:
@@ -279,9 +279,13 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error retrieving sensors for room {room_id}: {e}")
             return []
+
     def get_actuator_by_room(self, room_id):
         try:
-            actuators = list(self.db.actuators.find({"roomID": room_id}))
+            actuators = list(self.db.actuators.find(
+                {"roomID": room_id},
+                {"_id": 0}  # exclude MongoDB _id
+            ))
             logger.debug(f"Retrieved {len(actuators)} actuators for room {room_id} from database")
             return actuators
         except Exception as e:

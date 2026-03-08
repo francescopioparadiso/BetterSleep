@@ -31,7 +31,7 @@ class BaseIoTComponent:
             self.id_key = "ActuatorID"
             self.type_device = 2
             self.category = "actuator"
-
+        print(self.service_info)
         self.comp_id = self.service_info.get(self.id_key)
 
         # 2. Setup Topics
@@ -44,6 +44,7 @@ class BaseIoTComponent:
             remove_interval=self.remove_interval,
             type_device=self.type_device
         )
+
         self.catalog.register()
         self.catalog.start_background_loop()
         self.init_mqtt_client()

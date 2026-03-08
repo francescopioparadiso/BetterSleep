@@ -10,7 +10,7 @@ import json
 import random
 import logging
 
-from models import Sensor
+from device_connector.models import Sensor, Actuator , BaseIoTComponent
 
 # -------------------- LOGGING SETUP --------------------
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 # -------------------- CONFIG GENERATOR --------------------
 def create_config(
     catalog_url,
-    comp_id,
+    identify,
     name,
     comp_type,
     house_id,
@@ -36,7 +36,7 @@ def create_config(
         "catalogURL": catalog_url,
         "removeInterval": 30,
         "serviceInfo": {
-            id_key: int(comp_id),
+            id_key: str(identify),
             "name": name,
             "type": comp_type,
             "houseID": house_id,
@@ -109,6 +109,40 @@ class VibrationSensor(Sensor):
             self.publish_data(val)
             time.sleep(10)
 
+# -------------------- ACTUATOR CLASSES --------------------
+class LightActuator(Actuator):
+    """Simulates a light actuator."""
+    def __init__(self, config):
+        super().__init__(config)
+    def notify(self, topic, payload):
+        try:
+            data = json.loads(payload)
+            state = data.get("state")
+            print(f"\n[LIGHT ACTUATOR] Received command: {state}\n")
+        except Exception as e:
+            print("Invalid command", e)
+class HeaterActuator(Actuator):
+    """Simulates a heater actuator."""
+    def __init__(self, config):
+        super().__init__(config)
+    def notify(self, topic, payload):
+        try:
+            data = json.loads(payload)
+            state = data.get("state")
+            print(f"\n[HEATER ACTUATOR] Received command: {state}\n")
+        except Exception as e:
+            print("Invalid command", e)
+class FanActuator(Actuator):
+    """Simulates a fan actuator."""
+    def __init__(self, config):
+        super().__init__(config)
+    def notify(self, topic, payload):
+        try:
+            data = json.loads(payload)
+            state = data.get("state")
+            print(f"\n[FAN ACTUATOR] Received command: {state}\n")
+        except Exception as e:
+            print("Invalid command", e)
 # -------------------- MAIN LOGIC --------------------
 if __name__ == "__main__":
     CATALOG_URL = "http://127.0.0.1:8080"
@@ -117,7 +151,7 @@ if __name__ == "__main__":
     HOUSE = "1"
     ROOM = "1"
     # Topic templates (resolved automatically by BaseIoTComponent)
-    PUB_TEMPLATE = "House/{houseID}/Bedroom/{roomID}/sensor/{sensorID}/{type}/data"
+    PUB_TEMPLATE = "House/{houseID}/Bedroom/{roomID}/sensor/{type}/{sensorID}/data"
     HR_SUB_TOPIC = "House/{houseID}/Bedroom/{roomID}/heart_rate"
     # Configurations
     c_pres = create_config(
@@ -132,12 +166,20 @@ if __name__ == "__main__":
     c_vib = create_config(
         CATALOG_URL, "4", "Vibration", "vibration", HOUSE, ROOM, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE
     )
+    c_light = create_config(
+        CATALOG_URL, "5", "Light", "light", HOUSE, ROOM, BROKER_IP, PORT,
+        topic_publish=PUB_TEMPLATE,
+        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/light"
+        , is_sensor=False
+    )
     # Device instances
     presence = PresenceSensor(c_pres)
     heart_rate = HeartRateSensor(c_hr)
     body_temp = TemperatureSensor(c_temp)
     vibration = VibrationSensor(c_vib)
-    devices = [presence, heart_rate, body_temp, vibration]
+    light_actuator = LightActuator(c_light)
+    # Add actuators to devices list
+    devices = [presence, heart_rate, body_temp, vibration, light_actuator]
     # Start threads
     for d in devices:
         threading.Thread(target=d.run, daemon=True).start()
@@ -146,7 +188,6 @@ if __name__ == "__main__":
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-
         print("\nShutting down devices...\n")
 
         for d in devices:

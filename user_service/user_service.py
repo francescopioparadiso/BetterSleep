@@ -485,11 +485,6 @@ class UserService:
 
         # Flatten legacy nested payload shape.
         merged_preferences = preferences.get('user_preferences', preferences)
-
-        actuators = self.catalog.get(f"getRoomActuators?room_id={bedroom_id}")
-        if actuators and actuators[0] == 200:
-            merged_preferences['actuators'] = actuators[1].get('actuators', [])
-
         return json.dumps({"status": "success", "preferences": merged_preferences}, default=str)
 
     def _get_active_room(self, params):

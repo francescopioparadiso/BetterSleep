@@ -13,7 +13,7 @@ from datetime import datetime
 
 from common.common import mqtt_to_regex, json_error_page
 from PhaseManager import PhaseManager
-
+from mockfase import MockPhaseManager
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_temperature_action(temp_value, desired_temperature, room_actuators):
+    print(temp_value, desired_temperature, room_actuators)
     if temp_value > desired_temperature:
         if "fan" in room_actuators:
             return 1, "fan"
@@ -73,7 +74,7 @@ class SleepCycleManager:
     exposed = True
     SLEEP_DETECTION_SECONDS = 10
 
-    def __init__(self, conf):
+    def __init__(self, conf,Debug=False):
         self.mqtt_client = None
         self.catalog_url = conf['catalogURL']
         self.service_info = conf['serviceInfo']
@@ -90,12 +91,21 @@ class SleepCycleManager:
         self.active_users_cache = {}  # {userid: {data_unificata}}
         self.room_to_user_map = {}  # {bedroomid: userid} -> Il nostro Gatekeeper
         self.topic_publish = self.MQTT_info.get('topic_publish', )
-        self.phase_manager = PhaseManager(
-            manager_instance=self,
-            transition_window_min=transition_window_min,
-            check_interval=phase_check_interval,
-            transition_curve_exponent=transition_curve_exponent
-        )
+        self.debug=Debug
+        if not self.debug:
+            self.phase_manager = PhaseManager(
+                manager_instance=self,
+                transition_window_min=transition_window_min,
+                check_interval=phase_check_interval,
+                transition_curve_exponent=transition_curve_exponent
+            )
+        else:
+            self.phase_manager = MockPhaseManager(
+                manager_instance=self,
+                transition_window_min=transition_window_min,
+                check_interval=phase_check_interval,
+                transition_curve_exponent=transition_curve_exponent
+            )
         self.phase_manager.start()
         self.init_mqtt_client()
         self.get_ActiveRoomwithUser()
@@ -165,6 +175,7 @@ class SleepCycleManager:
                     del self.room_to_user_map[old_r]
 
         # 3. Update Unified Cache
+
         self.active_users_cache[u_id] = {
             "active_room_id": r_id,
             "house_id": pref.get('house_id'),  # Keep as string
@@ -176,7 +187,7 @@ class SleepCycleManager:
                 "temperature_morning": float(pref.get('temperature_morning', 22.0)),
                 "light_night": float(pref.get('light_night', 0.0)),
                 "light_morning": float(pref.get('light_morning', 100.0)),
-                "actuators": pref.get('actuators', [])
+                "actuators": self.get_actuators_in_room(r_id)
             },
             "live_targets": {
                 "temperature": None,
@@ -250,16 +261,16 @@ class SleepCycleManager:
 
         house_id = parts[1]
         room_id = parts[3]
-        sensor_type = parts[5]  # Changed from parts[4] to parts[5] due to 'sensor' in path
+        sensor_type = parts[5]
 
         userid = self.room_to_user_map.get(room_id)
         if userid is None:
             return  # ignore events for rooms without an active user for the night
-
-        logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
         user_data = self._fetch_and_cache_room_preference(userid)
         if not user_data:
             return
+        print(user_data)
+        logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
 
         if sensor_type == "ambient_temp":
             desiderate_temp = user_data['config']['temperature_night'] if user_data.get('is_sleeping') else user_data['config']['temperature_morning']
@@ -296,17 +307,17 @@ class SleepCycleManager:
         logger.info(f"Current user preferences for {userid}: {user_cache}")
 
 
-    def get_actuators_in_room(self, bedroomid):
+    def get_actuators_in_room(self, room_id):
         response = requests.get(f"{self.catalog_url}/getActuatorByRoom",
-                                params={"bedroomid": bedroomid})
+                                params={"room_id": room_id})
         if response.status_code == 200:
             try:
                 data = response.json()
                 actuators = data.get("actuators", [])
-                logger.info(f"Actuators in {bedroomid}: {actuators}")
+                logger.info(f"Actuators in {room_id}: {actuators}")
                 return actuators
             except json.JSONDecodeError as e:
-                logger.error(f"Error of decoding JSON for actuators in {bedroomid}: {e}")
+                logger.error(f"Error of decoding JSON for actuators in {room_id}: {e}")
                 return []
         else:
             logger.error(
@@ -318,12 +329,12 @@ class SleepCycleManager:
         room_actuators = room_actuetor
         desired_temperature = desiderate_temperature
         base_topic = self.topic_publish[0].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
-
         action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuators)
         if not action or not device:
             return
 
         command={"value": action, "timestamp": datetime.now().timestamp()}
+        logger.info(f"Temperature control decision for {bedroomid}: temp={temp_value}, desired={desired_temperature}, action={action} on {device}")
         self.publish(command, command_topic=f"{base_topic}/{device}")
 
     def handle_presence(self, message_received, userid, houseid, bedroomid):
@@ -370,6 +381,7 @@ class SleepCycleManager:
         """
         Update the live targets for a user based on phase transitions.
         Called by PhaseManager.
+        Sends commands to actuators (fan, heater, light) as needed.
         """
         user_data = self.active_users_cache.get(userid)
         if not user_data:
@@ -383,7 +395,27 @@ class SleepCycleManager:
         if phase is not None:
             user_data["live_targets"]["phase"] = phase
 
-        logger.debug(f"Updated targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
+        # Send actuator commands for temperature (fan/heater)
+        room_actuators = user_data['config'].get('actuators', [])
+        houseid = user_data['config'].get('houseID', '1')
+        bedroomid = user_data['config'].get('roomID', '1')
+        base_topic = self.topic_publish[0].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
+
+        # Fan/Heater logic (existing)
+        if target_temperature is not None:
+            action, device = _resolve_temperature_action(target_temperature, target_temperature, room_actuators)
+            if action is not None and device is not None:
+                logger.info(f"sending temperature command for {bedroomid}: target_temperature={target_temperature} in phase {phase}")
+                command = {"value": action, "timestamp": datetime.now().timestamp()}
+                self.publish(command, command_topic=f"{base_topic}/{device}")
+
+        # Light actuator logic (new)
+        if "light" in room_actuators and target_light is not None:
+            logger.info(f"sending light command for {bedroomid}: target_light={target_light} in phase {phase}")
+            command = {"value": target_light, "timestamp": datetime.now().timestamp(), "phase": phase}
+            self.publish(command, command_topic=f"{base_topic}/light")
+
+        logger.info(f"Updated targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
 
 
 if __name__ == "__main__":
