@@ -106,6 +106,11 @@ class TimeSeriesDB:
                     document["room_id"] = int(parts[1])
                     document["sensor_id"] = int(parts[2])
                     document["sensor_type"] = int(parts[3])
+                    # 0 ambient_temp
+                    # 1 humidity
+                    # 2 presence
+                    # 3 heart_rate
+                    # 4 vibration
                 except (ValueError, IndexError):
                     logger.warning(f"Invalid bn format: {data['bn']}")
 

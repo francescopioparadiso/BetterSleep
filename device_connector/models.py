@@ -100,21 +100,35 @@ class BaseIoTComponent:
         self.catalog.unregister()
         self.mqtt_client.stop()
 
+    def publish(self, message, command_topic=None):
+        try:
+            self.mqtt_client.myPublish(command_topic, json.dumps(message))
+            logger.info(f"Published message to {command_topic}: {message}")
+        except Exception as e:
+            logger.error(f"Error publishing message: {e}")
+
 class Sensor(BaseIoTComponent):
+
+    def __init__(self, config, sensor_type):
+        super().__init__(config)
+        self.sensor_type = sensor_type
+
     def publish_data(self, value, unit=None):
-        # Improved SenML-ish payload
+
+        house_id = self.service_info.get("houseID")
+        room_id = self.service_info.get("roomID")
+        sensor_id = self.service_info.get("sensorID")
+
         payload = {
-            "bn": f"{self.category}_{self.comp_id}",
+            "bn": f"{house_id}:{room_id}:{sensor_id}:{self.sensor_type}",
             "e": [{
                 "v": value,
                 "u": unit,
                 "t": time.time()
             }]
         }
-        self.publish(self.topic_publish, payload)
-        logger.debug(f"[SENSOR {self.comp_id}] Sent {value} to {self.topic_publish}")
 
-
+        self.publish(payload, command_topic=self.topic_publish)
 class Actuator(BaseIoTComponent):
     def notify(self, topic, payload):
         try:

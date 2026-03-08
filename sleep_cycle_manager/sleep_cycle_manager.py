@@ -215,7 +215,7 @@ class SleepCycleManager:
 
     def publish(self, message, command_topic=None):
         try:
-            self.mqtt_client.publish(command_topic, json.dumps(message))
+            self.mqtt_client.myPublish(command_topic, json.dumps(message))
             logger.info(f"Published message to {command_topic}: {message}")
         except Exception as e:
             logger.error(f"Error publishing message: {e}")
