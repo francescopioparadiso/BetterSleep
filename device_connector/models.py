@@ -3,6 +3,7 @@ import sys
 import os
 import time
 import json
+import random
 
 # Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -16,112 +17,112 @@ logger = logging.getLogger(__name__)
 class BaseIoTComponent:
     def __init__(self, config):
         self.config = config
-
-        # Catalog configuration
         self.catalog_url = config.get("catalogURL", "http://localhost:8080")
         self.service_info = config.get("serviceInfo", {})
         self.remove_interval = config.get("removeInterval", 30)
+        self.MQTT_info = config.get("MQTT", {})
 
-        # Determine device type
+        # 1. Identify Device Type
         if "sensorID" in self.service_info:
             self.id_key = "sensorID"
-        elif "actuatorID" in self.service_info:
-            self.id_key = "actuatorID"
-        else:
-            raise ValueError("serviceInfo must contain 'sensorID' or 'actuatorID'")
+            self.type_device = 1
+            self.category = "sensor"
+        elif "ActuatorID" in self.service_info:
+            self.id_key = "ActuatorID"
+            self.type_device = 2
+            self.category = "actuator"
 
         self.comp_id = self.service_info.get(self.id_key)
 
-        # MQTT configuration
-        self.MQTT_info = config["MQTT"]
+        # 2. Setup Topics
+        self._setup_topics()
 
-        # Topics
-        self.topic_publish = self.service_info.get("mqtt_topic")
-        self.topic_subscribe_raw = self.service_info.get("mqtt_subscribe", [])
-
-        # Catalog client
+        # 3. Catalog and MQTT
         self.catalog = CatalogClient(
             catalog_url=self.catalog_url,
             service_info=self.service_info,
             remove_interval=self.remove_interval,
-            type_device=self.id_key
+            type_device=self.type_device
         )
-
         self.catalog.register()
         self.catalog.start_background_loop()
-
-        # MQTT
         self.init_mqtt_client()
+
+    def _setup_topics(self):
+        """Resolves placeholders in topics from config or generates defaults."""
+        # Mapping for string formatting
+        mapping = {
+            "houseID": str(self.service_info.get("houseID", "")),
+            "roomID": str(self.service_info.get("roomID", "")),
+            "sensorID": str(self.service_info.get("sensorID", "")),
+            "ActuatorID": str(self.service_info.get("ActuatorID", "")),
+            "type": str(self.service_info.get("type", ""))
+        }
+
+        # Handle topic_publish
+        tp = self.MQTT_info.get("topic_publish")
+        if tp:
+            self.topic_publish = tp.format(**mapping)
+        else:
+            # Fallback to your base pattern
+            self.topic_publish = f"House/{mapping['houseID']}/Bedroom/{mapping['roomID']}/{self.category}/{self.comp_id}/{mapping['type']}/data"
+
+        # Handle topic_subscribe (from config)
+        ts = self.MQTT_info.get("topic_subscribe")
+        if ts:
+            # Convert single string to list for consistency
+            ts_list = ts if isinstance(ts, list) else [ts]
+            # Resolve placeholders for every topic in the list
+            self.topic_subscribe_list = [t.format(**mapping) for t in ts_list]
+        else:
+            self.topic_subscribe_list = []
 
     def init_mqtt_client(self):
         try:
-            client_id = self.MQTT_info["clientID"]
+            # Ensure clientID exists
+            client_id = self.MQTT_info.get("clientID") or f"{self.category}_{self.comp_id}_{random.randint(0, 1000)}"
             broker = self.MQTT_info["broker"]
             port = self.MQTT_info["port"]
 
             self.mqtt_client = MyMQTT(client_id, broker, port, self)
             self.mqtt_client.start()
 
-            for topic in self.topic_subscribe_raw:
+            # Subscribe to all resolved topics
+            for topic in self.topic_subscribe_list:
                 self.mqtt_client.mySubscribe(topic)
-
-            logger.info(f"{self.comp_id} connected to MQTT and subscribed to {self.topic_subscribe_raw}")
+                logger.info(f"[{self.comp_id}] Subscribed to: {topic}")
 
         except Exception as e:
-            logger.error(f"MQTT initialization error: {e}")
-            self.catalog.unregister()
+            logger.error(f"MQTT init failed: {e}")
             sys.exit(1)
 
-    def publish(self, topic, payload):
-        self.mqtt_client.myPublish(topic, json.dumps(payload))
-
     def stop(self):
-        try:
-            self.catalog.unregister()
-            self.mqtt_client.stop()
-        except Exception as e:
-            logger.error(f"Error stopping component: {e}")
-
+        self.catalog.unregister()
+        self.mqtt_client.stop()
 
 class Sensor(BaseIoTComponent):
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.subtype = self.service_info.get("type", "generic")
-
-    def publish_data(self, value, unit="raw"):
+    def publish_data(self, value, unit=None):
+        # Improved SenML-ish payload
         payload = {
-            "timestamp": time.time(),
-            "value": value,
-            "unit": unit #!TODO this need to be SenML compliant
+            "bn": f"{self.category}_{self.comp_id}",
+            "e": [{
+                "v": value,
+                "u": unit,
+                "t": time.time()
+            }]
         }
-
         self.publish(self.topic_publish, payload)
-
-        logger.info(
-            f"[SENSOR {self.comp_id}] Published {value} {unit} -> {self.topic_publish}"
-        )
+        logger.debug(f"[SENSOR {self.comp_id}] Sent {value} to {self.topic_publish}")
 
 
 class Actuator(BaseIoTComponent):
-
-    def __init__(self, config):
-        super().__init__(config)
-
     def notify(self, topic, payload):
-        """
-        Called by MyMQTT when a message is received
-        """
         try:
             data = json.loads(payload)
+            self.on_command(topic, data)
         except json.JSONDecodeError:
-            logger.error("Invalid JSON received")
-            return
-
-        self.on_command(topic, data)
+            logger.error(f"[{self.comp_id}] Invalid JSON: {payload}")
 
     def on_command(self, topic, data):
-        """
-        Override this in subclasses
-        """
-        logger.info(f"[ACTUATOR {self.comp_id}] Received command: {data}")
+        # To be overridden
+        pass

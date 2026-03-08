@@ -26,6 +26,7 @@ class CatalogClient:
         self.service_info = service_info
         self.remove_interval = remove_interval
         self.type = type_device
+        self.id_key = "serviceID" if type_device == 0 else "sensorID" if type_device == 1 else "ActuatorID"
 
     def request(self, method, endpoint, **kwargs):
         """Make a request to the catalog and return (data, status_code, error_message).
@@ -80,9 +81,8 @@ class CatalogClient:
         return self.request('delete', endpoint, **kwargs)
 
     def register(self):
-        idName = 'serviceID' if self.type == 0 else 'sensorID' if self.type == 1 else 'ActuatorID'
         service = {
-            idName: self.service_info[idName],
+            self.id_key: str(self.service_info[ self.id_key ]),
             "name": self.service_info['name'],
             "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
             "type": self.service_info.get('type', 'generic'),
@@ -105,8 +105,9 @@ class CatalogClient:
 
     def update(self):
         """Logic to update this service's info to the Catalog."""
+
         service = {
-            "serviceID": self.service_info['serviceID'],
+            self.id_key  : self.service_info[ self.id_key ],
             "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         endpoint = "updateServiceLastUpdate" if self.type == 0 else "updateSensorLastUpdate" if self.type == 1 else "updateActuatorLastUpdate"

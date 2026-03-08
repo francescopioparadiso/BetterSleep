@@ -240,7 +240,7 @@ class Catalog:
 
     def _delete_remove_sensor(self, params):
         """Delete a sensor by serviceID."""
-        service_id = params.get('serviceID')
+        service_id = params.get('sensorID')
         if not service_id:
             raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
         success = self.db.delete_sensor(service_id)
@@ -249,7 +249,7 @@ class Catalog:
         raise cherrypy.HTTPError(404, "Sensor not found")
     def _delete_remove_actuator(self, params):
         """Delete an actuator by serviceID."""
-        actuator_id = params.get('serviceID')
+        actuator_id = params.get('ActuatorID')
         if not actuator_id:
             raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
         success = self.db.delete_actuator(actuator_id)

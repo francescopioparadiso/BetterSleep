@@ -293,7 +293,6 @@ class SleepCycleManager:
             user_cache["morning_time"] = message_received["morning_time"]
             logger.info(f"Updated morning_time for user {userid}: {message_received['morning_time']}")
 
-
         logger.info(f"Current user preferences for {userid}: {user_cache}")
 
 
@@ -330,18 +329,28 @@ class SleepCycleManager:
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']
         topic_to_publish = self.topic_publish[1].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
+        finish_sleep_topic = f"Bedanalitics/userID/{userid}/FinishSleep"
 
         user_data = self.active_users_cache.get(userid)
         if not user_data:
             logger.warning(f"User {userid} not found in cache for presence handling")
             return
 
+        # Track when user leaves bed
         if presence_value != 1:
-            user_data["live_targets"]["last_seen_bed"] = None
-            if user_data.get("is_sleeping", False):
-                user_data["is_sleeping"] = False
-                logger.info(f"User {userid} is now awake in {bedroomid}")
+            if user_data["live_targets"].get("last_left_bed") is None:
+                user_data["live_targets"]["last_left_bed"] = datetime.now()
+            else:
+                seconds_out_of_bed = (datetime.now() - user_data["live_targets"]["last_left_bed"]).total_seconds()
+                if user_data.get("is_sleeping", False) and seconds_out_of_bed >= self.SLEEP_DETECTION_SECONDS:
+                    user_data["is_sleeping"] = False
+                    user_data["live_targets"]["last_seen_bed"] = None
+                    user_data["live_targets"]["last_left_bed"] = None
+                    self.publish({"action": "FINISH_SLEEP", "timestamp": str(datetime.now())}, command_topic=finish_sleep_topic)
+                    logger.info(f"User {userid} finished sleep in {bedroomid}")
             return
+        else:
+            user_data["live_targets"]["last_left_bed"] = None
 
         if user_data["live_targets"].get("last_seen_bed") is None:
             user_data["live_targets"]["last_seen_bed"] = datetime.now()
@@ -352,8 +361,9 @@ class SleepCycleManager:
             return
 
         user_data["is_sleeping"] = True
-        message = {"action": "START_SLEEPING", "timestamp": str(datetime.now())}
-        self.publish(message, command_topic=topic_to_publish)
+        topic_heart=f"House/{houseID}/Bedroom/{bedroomID}/heart_rate"
+        message = {"action": 1, "timestamp": str(datetime.now())}
+        self.publish(message, command_topic=topic_heart)
         logger.info(f"User {userid} is now sleeping in {bedroomid}")
 
     def change_target_temperature_light(self, userid, target_temperature=None, target_light=None, phase=None):
