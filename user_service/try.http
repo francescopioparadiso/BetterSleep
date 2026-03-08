@@ -34,4 +34,11 @@ Content-Type: application/json
 }
 
 ###
-DELETE http://localhost:9095/removeRoom?id=1
+PUT http://localhost:9095/setActiveRoom
+Content-Type: application/json
+
+{
+  "user_id": 1,
+  "room_id": 1,
+  "house_id": 1
+}

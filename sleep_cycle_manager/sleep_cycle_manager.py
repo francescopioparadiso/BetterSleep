@@ -14,6 +14,11 @@ from datetime import datetime
 from common.common import mqtt_to_regex, json_error_page
 from PhaseManager import PhaseManager
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +71,7 @@ def _parse_preference_topic(topic):
 
 class SleepCycleManager:
     exposed = True
-    SLEEP_DETECTION_SECONDS = 1800
+    SLEEP_DETECTION_SECONDS = 10
 
     def __init__(self, conf):
         self.mqtt_client = None
@@ -111,20 +116,23 @@ class SleepCycleManager:
 
     def get_ActiveRoomwithUser(self):
         """
-        Fetches the current associations from the database.
-        Only stores the RoomID -> UserID mapping.
+        Fetches active associations and normalizes them to RoomID -> UserID mapping.
+        Accepts either {room_id: user_id} or {user_id: room_id} from user service.
         """
         try:
             res = requests.get(f"{self.user_service_endpoint}/getActiveRoomsWithUser")
-            if res.status_code == 200:
-                # The response is a map like {"45": 123, "12": 456} #it's a dict python convert to json and we want to convert back to dict with int keys and values
-
-                data = res.json()
-                print (f"Data received from user service: {data}")
-
-                logger.info(f"Association map synchronized: {self.room_to_user_map}")
-            else:
+            if res.status_code != 200:
                 logger.error(f"Failed to sync associations: {res.status_code}")
+                return
+
+            data = res.json()
+            raw_map = data.get("active_rooms", data)
+            normalized_map = {}
+            print(raw_map)
+
+
+            self.room_to_user_map = raw_map
+            logger.info(f"Association map synchronized: {self.room_to_user_map}")
         except Exception as e:
             logger.error(f"Exception during association sync: {e}")
 
@@ -134,11 +142,14 @@ class SleepCycleManager:
             return None
 
         data = res.json()
-        # Everything is now inside 'preferences'
-        pref = data.get('preferences', {})
+        pref = data.get("preferences", {})
+
+        # Backward compatibility with nested response shape from user_service/postgres_db.
+        if "user_preferences" in pref:
+            pref = pref.get("user_preferences", {})
 
         u_id = int(userid)
-        r_id = int(pref.get('room_id', 0))
+        r_id = int(pref.get("room_id", 0))
 
         # 1. Cleanup: If the user changed rooms, remove them from the old room mapping
         if u_id in self.active_users_cache:
@@ -228,29 +239,33 @@ class SleepCycleManager:
         logger.warning(f"Received message on unrecognized topic: {topic}")
 
     def _handle_sensor_topic(self, topic, msg):
-        # House/{houseid}/Bedroom/{roomid}/{sensor_type}
+        # House/{houseid}/Bedroom/{roomid}/sensor/{sensor_type}/{sensorid}/data
         parts = topic.split("/")
-        if len(parts) < 5: return
-
-        try:
-            house_id = int(parts[1])
-            room_id = int(parts[3])
-            sensor_type = parts[4]
-        except ValueError:
+        if len(parts) < 8:
+            logger.warning(f"Invalid sensor topic format: {topic}")
             return
+
+        house_id = parts[1]
+        room_id = parts[3]
+        sensor_type = parts[5]  # Changed from parts[4] to parts[5] due to 'sensor' in path
+
         userid = self.room_to_user_map.get(room_id)
-        if userid is None: return # ignore events for rooms without an active user for the night
+        if userid is None:
+            return  # ignore events for rooms without an active user for the night
+
+        logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
         user_data = self._fetch_and_cache_room_preference(userid)
         if not user_data:
             return
+
         if sensor_type == "ambient_temp":
             desiderate_temp = user_data['config']['temperature_night'] if user_data.get('is_sleeping') else user_data['config']['temperature_morning']
             room_actuators = user_data['config']['actuators']
-            self.handle_temperature(msg, room_actuators, desiderate_temp, str(house_id), str(room_id))
+            self.handle_temperature(msg, room_actuators, desiderate_temp, house_id, room_id)
         elif sensor_type == "presence":
-            self.handle_presence(msg, userid, str(house_id), str(room_id))
+            self.handle_presence(msg, userid, house_id, room_id)
         else:
-            logger.warning(f"Unhandled sensor type '{sensor_type}' in topic {topic}")
+            logger.debug(f"Ignoring sensor type '{sensor_type}' in topic {topic}")
     def _handle_preference_topic(self, topic, message_received):
         preference_kind, entity_id = _parse_preference_topic(topic)
 
@@ -361,6 +376,7 @@ class SleepCycleManager:
 
 
 if __name__ == "__main__":
+    logger.setLevel(logging.DEBUG)
     try:
         with open("conf.json", "r") as f:
             full_conf = json.load(f)
