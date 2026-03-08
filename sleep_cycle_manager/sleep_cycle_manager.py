@@ -20,22 +20,22 @@ logger = logging.getLogger(__name__)
 def _resolve_temperature_action(temp_value, desired_temperature, room_actuators):
     if temp_value > desired_temperature:
         if "fan" in room_actuators:
-            return "ON", "fan"
+            return 1, "fan"
         if "heater" in room_actuators:
-            return "OFF", "heater"
+            return 0, "heater"
         return None, None
 
     if temp_value < desired_temperature:
         if "fan" in room_actuators:
-            return "OFF", "fan"
+            return 0, "fan"
         if "heater" in room_actuators:
-            return "ON", "heater"
+            return 1, "heater"
         return None, None
 
     if "fan" in room_actuators:
-        return "OFF", "fan"
+        return 0, "fan"
     if "heater" in room_actuators:
-        return "OFF", "heater"
+        return 1, "heater"
     return None, None
 
 
@@ -309,7 +309,8 @@ class SleepCycleManager:
         if not action or not device:
             return
 
-        self.publish(_build_command(action, device), command_topic=f"{base_topic}/{device}")
+        command={"value": action, "timestamp": datetime.now().timestamp()}
+        self.publish(command, command_topic=f"{base_topic}/{device}")
 
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']

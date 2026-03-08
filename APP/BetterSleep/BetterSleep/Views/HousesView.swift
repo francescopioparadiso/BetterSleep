@@ -32,10 +32,19 @@ private func flagForHouse(_ name: String) -> String {
 
 struct HouseView: View {
     @StateObject private var viewModel = HouseModel()
+    @StateObject private var roomModel = RoomModel()
     
     @State private var showingAddHouse = false
     @State private var newHouseName = ""
     @State private var showingProfile = false
+    @State private var activeRoomsByHouse: [Int: Bool] = [:]
+    
+    private var currentUserId: Int? {
+        if let idString = UserDefaults.standard.string(forKey: "currentUserId"), let id = Int(idString) {
+            return id
+        }
+        return nil
+    }
     
     var body: some View {
         NavigationView {
@@ -96,8 +105,16 @@ struct HouseView: View {
                                 ForEach(viewModel.houses) { house in
                                     NavigationLink(destination: RoomsView(house: house)) {
                                         HStack(spacing: 14) {
-                                            Text(flagForHouse(house.name))
-                                                .font(.largeTitle)
+                                            if activeRoomsByHouse[house.id ?? 0] == true {
+                                                Image(systemName: "star.fill")
+                                                    .font(.title)
+                                                    .foregroundColor(.yellow)
+                                                    .padding(6)
+                                                    .shadow(color: .yellow, radius: 20, x: 0, y: 0)
+                                            } else {
+                                                Text(flagForHouse(house.name))
+                                                    .font(.title)
+                                            }
                                             
                                             Text(house.name)
                                                 .font(.headline)
@@ -150,7 +167,40 @@ struct HouseView: View {
             .task {
                 await viewModel.fetchHouses()
                 await viewModel.fetchPendingInvites()
+                if let userId = currentUserId {
+                    await fetchActiveRooms(for: userId)
+                }
             }
+            .onAppear {
+                Task {
+                    if let userId = currentUserId {
+                        await fetchActiveRooms(for: userId)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func fetchActiveRooms(for userId: Int) async {
+        do {
+            let base = try await CatalogClient.shared.getUserServiceURL()
+            let url = URL(string: "\(base)/getActiveRoom?user_id=\(userId)")!
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            
+            // Reset active rooms first
+            await MainActor.run {
+                activeRoomsByHouse.removeAll()
+            }
+            
+            if let activeRoomData = json?["active_room"] as? [String: Any],
+               let houseId = activeRoomData["house_id"] as? Int {
+                await MainActor.run {
+                    activeRoomsByHouse[houseId] = true
+                }
+            }
+        } catch {
+            print("Error fetching active room: \(error)")
         }
     }
 }

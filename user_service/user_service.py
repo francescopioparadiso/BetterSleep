@@ -329,23 +329,33 @@ class UserService:
         raise cherrypy.HTTPError(403, "Only the assigned user can unassign from this room")
 
     def _put_set_active_room(self):
-        """Set a room as active for a user, deactivating all other rooms for that user across all houses."""
+        """Set a room as active for a user, or deactivate all rooms if active=false."""
         body = _load_json_body()
         require_fields(body, ['room_id', 'user_id'])
 
         room_id = body['room_id']
         user_id = body['user_id']
-        logger.info(f"Setting room {room_id} as active for user {user_id}")
-
-        # First deactivate all other rooms for this user across all houses
-        self.db.deactivate_user_rooms(user_id)
+        active = body.get('active', True)  # Default to True if not specified
         
-        # Then activate the requested room
-        success = self.db.set_room_active(room_id, user_id)
-        if success:
-            logger.info(f"Room {room_id} is now active for user {user_id}")
-            return json.dumps({"status": "success", "message": "Room set as active"})
-        raise cherrypy.HTTPError(404, "Room not found or not assigned to user")
+        if active:
+            logger.info(f"Setting room {room_id} as active for user {user_id}")
+            # First deactivate all other rooms for this user across all houses
+            self.db.deactivate_user_rooms(user_id)
+            
+            # Then activate the requested room
+            success = self.db.set_room_active(room_id, user_id)
+            if success:
+                logger.info(f"Room {room_id} is now active for user {user_id}")
+                return json.dumps({"status": "success", "message": "Room set as active"})
+            raise cherrypy.HTTPError(404, "Room not found or not assigned to user")
+        else:
+            logger.info(f"Deactivating room {room_id} for user {user_id}")
+            # Just deactivate the room
+            success = self.db._execute_query("UPDATE rooms SET active = FALSE WHERE id = %s AND user_id = %s", (room_id, user_id))
+            if success:
+                logger.info(f"Room {room_id} is now deactivated")
+                return json.dumps({"status": "success", "message": "Room deactivated"})
+            raise cherrypy.HTTPError(404, "Room not found or not assigned to user")
 
     # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):

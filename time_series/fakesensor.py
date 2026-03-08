@@ -71,16 +71,29 @@ class SensorSimulator:
         self.mqtt.stop()
         self.mongo.close()
 
-    def _fetch_rooms(self):
-        """Fetch all rooms from the user service."""
+    def _fetch_rooms(self, backfill_new=False, backfill_days=365):
+        """Fetch all rooms from the user service. If backfill_new=True, backfill any newly discovered rooms."""
         try:
             resp = requests.get(f"{USER_SERVICE_URL}/getAllRooms", timeout=5)
             resp.raise_for_status()
             data = resp.json()
-            self.rooms = data.get('rooms', [])
+            new_rooms = data.get('rooms', [])
+
+            if backfill_new:
+                existing_ids = {r['id'] for r in self.rooms}
+                added_rooms = [r for r in new_rooms if r['id'] not in existing_ids]
+            else:
+                added_rooms = []
+
+            self.rooms = new_rooms
             logger.info(f"Found {len(self.rooms)} rooms")
             for r in self.rooms:
                 logger.info(f"  Room {r['id']}: '{r['name']}' (house {r['house_id']})")
+
+            if added_rooms:
+                logger.info(f"Detected {len(added_rooms)} new room(s), backfilling {backfill_days} days...")
+                self._backfill_rooms(added_rooms, days=backfill_days)
+
         except Exception as e:
             logger.error(f"Failed to fetch rooms: {e}")
             logger.info("Using default room config: house_id=1, room_id=1")
@@ -183,9 +196,9 @@ class SensorSimulator:
     # Backfill (direct MongoDB insert)
     # ---------------------------------------------------------------
 
-    def backfill(self, days=7):
-        """Insert historical data directly into MongoDB."""
-        logger.info(f"Backfilling {days} days of historical data...")
+    def _backfill_rooms(self, rooms, days=365):
+        """Insert historical data directly into MongoDB for the given list of rooms."""
+        logger.info(f"Backfilling {days} days of historical data for {len(rooms)} room(s)...")
         collection = self.db["measurements"]
         now = datetime.now()
         current = now - timedelta(days=days)
@@ -196,7 +209,7 @@ class SensorSimulator:
         recent_cutoff = now - timedelta(days=7)
 
         while current < now:
-            for room in self.rooms:
+            for room in rooms:
                 rid, hid = room['id'], room['house_id']
                 for stype in SENSOR_TYPES:
                     val = self.generate_value(stype, current, room)
@@ -229,6 +242,11 @@ class SensorSimulator:
 
         logger.info(f"Backfill complete: {total} records inserted")
 
+    def backfill(self, days=365):
+        """Refresh room list and backfill historical data for all rooms."""
+        self._fetch_rooms()
+        self._backfill_rooms(self.rooms, days=days)
+
     # ---------------------------------------------------------------
     # Live streaming (MQTT publish)
     # ---------------------------------------------------------------
@@ -237,8 +255,14 @@ class SensorSimulator:
         """Continuously publish live sensor data via MQTT."""
         logger.info(f"Starting live data stream (every {interval}s)...")
         logger.info("Press Ctrl+C to stop")
+        iteration = 0
         try:
             while True:
+                # Refresh rooms every 60 seconds; backfill any newly created rooms
+                iteration += 1
+                if iteration % 6 == 0:
+                    self._fetch_rooms(backfill_new=True)
+                
                 now = datetime.now()
                 for room in self.rooms:
                     rid, hid = room['id'], room['house_id']

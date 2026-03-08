@@ -63,7 +63,10 @@ struct SensorsView: View {
                                 VStack(alignment: .leading, spacing: 16) {
                                     VStack(alignment: .leading, spacing: 4) {
                                         HStack {
-                                            Image(systemName: "moon.stars.fill").foregroundColor(.indigo)
+                                            Image(systemName: "moon.stars.fill")
+                                                .foregroundColor(.indigo)
+                                                .shadow(color: .indigo, radius: 20, x: 0, y: 0)
+
                                             Text("Night: \(room.temperature_night ?? 18)°C")
                                                 .font(.subheadline)
                                                 .fontWeight(.bold)
@@ -79,7 +82,9 @@ struct SensorsView: View {
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
                                         HStack {
-                                            Image(systemName: "sun.max.fill").foregroundColor(.orange)
+                                            Image(systemName: "sun.max.fill")
+                                                .foregroundColor(.orange)
+                                                .shadow(color: .orange, radius: 20, x: 0, y: 0)
                                             Text("Morning: \(room.temperature_morning ?? 22)°C")
                                                 .font(.subheadline)
                                                 .fontWeight(.bold)
@@ -101,7 +106,9 @@ struct SensorsView: View {
                                 VStack(alignment: .leading, spacing: 16) {
                                     VStack(alignment: .leading, spacing: 4) {
                                         HStack {
-                                            Image(systemName: "moon.stars.fill").foregroundColor(.indigo)
+                                            Image(systemName: "moon.stars.fill")
+                                                .foregroundColor(.indigo)
+                                                .shadow(color: .indigo, radius: 20, x: 0, y: 0)
                                             Text("Night: \(room.light_night ?? 0)%")
                                                 .font(.subheadline)
                                                 .fontWeight(.bold)
@@ -117,7 +124,9 @@ struct SensorsView: View {
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
                                         HStack {
-                                            Image(systemName: "sun.max.fill").foregroundColor(.orange)
+                                            Image(systemName: "sun.max.fill")
+                                                .foregroundColor(.orange)
+                                                .shadow(color: .orange, radius: 20, x: 0, y: 0)
                                             Text("Morning: \(room.light_morning ?? 100)%")
                                                 .font(.subheadline)
                                                 .fontWeight(.bold)
@@ -129,7 +138,8 @@ struct SensorsView: View {
                                                 set: { room.light_morning = Int($0); roomModel.updateRoomDebounced(room) }
                                             ),
                                             in: 0...100, step: 5
-                                        ).tint(.orange)
+                                        )
+                                        .tint(.orange)
                                     }
                                 }
                             }

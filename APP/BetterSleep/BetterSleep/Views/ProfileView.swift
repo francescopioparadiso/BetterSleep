@@ -19,7 +19,8 @@ struct ProfileView: View {
                                 Image(systemName: "person.crop.circle.fill")
                                     .font(.system(size: 80))
                                     .foregroundColor(.blue)
-                                    .padding(.top, 20)
+                                    .shadow(color: .blue, radius: 30, x: 0, y: 0)
+                                    .padding(.top, 48)
                                 
                                 // Display the email, falling back to "Account Settings" if empty
                                 Text(viewModel.userEmail.isEmpty ? "Account Settings" : viewModel.userEmail)

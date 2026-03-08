@@ -32,6 +32,12 @@
             "problemMatcher": []
         },
         {
+            "label": "🚀 START PROJECT + SETUP",
+            "dependsOn": ["1. Database", "2. Catalog", "3. User Service", "4. TimeSeries DB Adapter", "5. Simulator", "6. Setup Database"],
+            "dependsOrder": "parallel",
+            "problemMatcher": []
+        },
+        {
             "label": "4. TimeSeries DB Adapter",
             "type": "shell",
             "command": "python3 time_series_db_adaptop.py",
@@ -44,6 +50,14 @@
             "type": "shell",
             "command": "python3 fakesensor.py",
             "options": { "cwd": "${workspaceFolder}/time_series" },
+            "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "6. Setup Database",
+            "type": "shell",
+            "command": "python3 setup_db.py",
+            "options": { "cwd": "${workspaceFolder}" },
             "presentation": { "group": "project", "panel": "dedicated" },
             "problemMatcher": []
         }

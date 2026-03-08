@@ -1,5 +1,17 @@
 import SwiftUI
 
+// MARK: - View Extension for conditional modifications
+extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+
 func iconForRoom(_ name: String) -> String {
     let n = name.lowercased()
     if n.contains("bed")    { return "bed.double.fill" }
@@ -211,24 +223,24 @@ struct RoomsView: View {
     // MARK: - Room Row Helpers
     private func roomContent(_ room: Room) -> some View {
         HStack(spacing: 14) {
-            Image(systemName: iconForRoom(room.name))
-                .font(.title2)
-                .foregroundColor(.indigo)
-                .frame(width: 36)
+            if room.active {
+                Image(systemName: "star.fill")
+                    .font(.title)
+                    .padding(6)
+                    .foregroundColor(.yellow)
+                    .shadow(color: .yellow, radius: 20, x: 0, y: 0)
+            } else {
+                Image(systemName: iconForRoom(room.name))
+                    .font(.title)
+                    .foregroundColor(.indigo)
+                    .shadow(color: .indigo, radius: 20, x: 0, y: 0)
+            }
             
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(room.name)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .fontDesign(.rounded)
-                    
-                    if room.active {
-                        Image(systemName: "star.fill")
-                            .font(.caption)
-                            .foregroundColor(.yellow)
-                    }
-                }
+                Text(room.name)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .fontDesign(.rounded)
 
                 if let uid = room.user_id {
                     let label = uid == currentUserId ? "Assigned to you" : "Occupied"
@@ -256,11 +268,11 @@ struct RoomsView: View {
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 Button {
                     Task {
-                        guard let roomId = room.id else { return }
+                        guard let roomId = room.id, let houseId = house.id else { return }
                         if room.active {
-                            await roomModel.deactivateRoom(roomId: roomId, houseId: house.id!)
+                            await roomModel.deactivateRoom(roomId: roomId, houseId: houseId)
                         } else {
-                            await roomModel.setActiveRoom(roomId: roomId, houseId: house.id!)
+                            await roomModel.setActiveRoom(roomId: roomId, houseId: houseId)
                         }
                     }
                 } label: {
@@ -271,8 +283,8 @@ struct RoomsView: View {
             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                 Button {
                     Task {
-                        guard let roomId = room.id else { return }
-                        await roomModel.unassignRoom(roomId: roomId, houseId: house.id!)
+                        guard let roomId = room.id, let houseId = house.id else { return }
+                        await roomModel.unassignRoom(roomId: roomId, houseId: houseId)
                     }
                 } label: {
                     Label("Unassign", systemImage: "person.crop.circle.badge.minus")
@@ -282,8 +294,8 @@ struct RoomsView: View {
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) {
                     Task {
-                        guard let roomId = room.id else { return }
-                        await roomModel.deleteRoom(roomId: roomId, houseId: house.id!)
+                        guard let roomId = room.id, let houseId = house.id else { return }
+                        await roomModel.deleteRoom(roomId: roomId, houseId: houseId)
                     }
                 } label: {
                     Label("Delete", systemImage: "trash")

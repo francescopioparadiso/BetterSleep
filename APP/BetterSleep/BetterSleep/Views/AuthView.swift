@@ -37,6 +37,7 @@ struct AuthView: View {
                             Image(systemName: "envelope.fill")
                                 .foregroundColor(.gray)
                                 .frame(width: 24)
+                                
                             
                             TextField("Email address", text: $email)
                                 .textInputAutocapitalization(.never)

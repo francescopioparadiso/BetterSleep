@@ -6,25 +6,27 @@ from datetime import datetime
 from models import Sensor, Actuator
 
 # --- FUNZIONE HELPER PER CREARE LA CONFIGURAZIONE ---
-def create_config(catalog_url, comp_id, name, comp_type, house_id, room_id, topic_suffix, is_sensor=True):
+def create_config(catalog_url, comp_id, name, comp_type, house_id, room_id,broker,port,topic_subscribe=None, topic_publish=None, is_sensor=True, clintId=None):
     id_key = "sensorID" if is_sensor else "ActuatorID"
-    # Costruisce il topic. Esempio: House/1/Bedroom/101/sensor/heartrate/data
-    topic_base = "sensor" if is_sensor else "actuator"
-    topic = f"House/{house_id}/Bedroom/{room_id}/{topic_base}/{topic_suffix}"
-    
+
     return {
         "catalogURL": catalog_url,
         "removeInterval": 30,
         "serviceInfo": {
             id_key: comp_id,
             "name": name,
-            "host": "0.0.0.0",
-            "port": 0, # Mettiamo 0 per sensori MQTT puri
             "type": comp_type,
-            "roomID": room_id,
             "houseID": house_id,
-            "mqtt_topic": topic
+            "roomID": room_id,
+        },
+        "MQTT": {
+            "broker": broker,
+            "port": port,
+            "topic_subscribe": topic_subscribe if not is_sensor else None, # Solo gli attuatori si iscrivono a un topic
+            "topic_publish": topic_publish if is_sensor else None, # Solo i sensori pubblicano su un topic
+            "clientID": clintId
         }
+
     }
 
 # --- SENSORS ---
@@ -93,16 +95,16 @@ class VibrationSensor(Sensor):
             time.sleep(10)
 
 # ACTUATORS 
+class Fan(Actuator):
+    def on_message(self, client, userdata, msg):
+        data = json.loads(msg.payload.decode())
+        print(f"\n>> [VENTOLA ATTUATA] Stato modificato a: {data.get('value')} <<\n")
 
 class SmartLight(Actuator):
     def on_message(self, client, userdata, msg):
         data = json.loads(msg.payload.decode())
         print(f"\n>> [LUCE ATTUATA] Luminosità impostata a: {data.get('value')} <<\n")
 
-class Fan(Actuator):
-    def on_message(self, client, userdata, msg):
-        data = json.loads(msg.payload.decode())
-        print(f"\n>> [VENTOLA ATTUATA] Stato modificato a: {data.get('value')} <<\n")
 
 # MAIN EXECUTION
 
@@ -110,29 +112,21 @@ if __name__ == "__main__":
     CATALOG_URL = "http://127.0.0.1:8080"
     BROKER_IP = "broker.hivemq.com"
     HOUSE = "1"
-    ROOM = "101"
+    ROOM = "1"
 
     # 1. Creiamo le configurazioni usando la funzione helper
-    conf_pres = create_config(CATALOG_URL, "PRES_01", "Pressure Mat", "PresenceSensor", HOUSE, ROOM, "presence/data")
-    conf_hr = create_config(CATALOG_URL, "HR_01", "Wearable HR", "HeartRateSensor", HOUSE, ROOM, "heartrate/data")
-    conf_temp = create_config(CATALOG_URL, "BT_01", "Body Thermometer", "BodyTempSensor", HOUSE, ROOM, "bodytemp/data")
-    conf_vib = create_config(CATALOG_URL, "VIB_01", "Bed Vibration", "VibrationSensor", HOUSE, ROOM, "vibration/data")
+    conf_pres = create_config(2, CATALOG_URL, "presence_1", "Presence Sensor", "presence", HOUSE, ROOM, BROKER_IP, 1883, topic_publish=f"House/{HOUSE}/Bedroom/{ROOM}/presence")
+    conf_hr = create_config(3, CATALOG_URL, "heart_rate_1", "Heart Rate Sensor", "heart_rate", HOUSE, ROOM, BROKER_IP, 1883, topic_publish=f"House/{HOUSE}/Bedroom/{ROOM}/heart_rate")
+    conf_temp = create_config(4, CATALOG_URL, "temp_1", "Body Temperature Sensor", "body_temperature", HOUSE, ROOM, BROKER_IP, 1883, topic_publish=f"House/{HOUSE}/Bedroom/{ROOM}/body_temperature")
+    conf_vib = create_config(5, CATALOG_URL, "vibration_1", "Vibration Sensor", "vibration", HOUSE, ROOM, BROKER_IP, 1883, topic_publish=f"House/{HOUSE}/Bedroom/{ROOM}/vibration")
     
-    conf_light = create_config(CATALOG_URL, "LIGHT_01", "Smart Light", "LightActuator", HOUSE, ROOM, "light/command", is_sensor=False)
-    conf_fan = create_config(CATALOG_URL, "FAN_01", "Room Fan", "FanActuator", HOUSE, ROOM, "fan/command", is_sensor=False)
-
     # 2. Inizializziamo i componenti passandogli le configurazioni
     presence = PresenceSensor(conf_pres, BROKER_IP)
     heart_rate = HeartRateSensor(conf_hr, BROKER_IP)
     body_temp = BodyTemperatureSensor(conf_temp, BROKER_IP)
     vibration = VibrationSensor(conf_vib, BROKER_IP)
     
-    light = SmartLight(conf_light, BROKER_IP)
-    fan = Fan(conf_fan, BROKER_IP)
-
-    # 3. Avvia Attuatori
-    light.start()
-    fan.start()
+    # fan
 
     # 4. Avvia Sensori in background
     threading.Thread(target=presence.run, daemon=True).start()
