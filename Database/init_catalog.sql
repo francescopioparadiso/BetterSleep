@@ -42,6 +42,6 @@ create table rooms (
   temperature_night integer default 18,
   temperature_morning integer default 22,
   light_night integer default 0,
-  light_morning integer default 100
+  light_morning integer default 100,
+  active BOOLEAN DEFAULT FALSE
 );
-

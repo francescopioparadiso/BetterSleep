@@ -1,7 +1,13 @@
+import sys
+import os
+
+# Add parent directory to path so we can import from common/
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import time
 import json
 import paho.mqtt.client as mqtt
-from catalog_client import CatalogClient
+from common.catalog_client import CatalogClient
 
 class BaseIoTComponent:
     def __init__(self, config, comp_type_code, broker_ip="broker.hivemq.com"):

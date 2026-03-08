@@ -1,9 +1,11 @@
 import json
+import os
 import sys
 import logging
 import cherrypy
 import requests
 import re
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
 from common.MQTT.MyMQTT import MyMQTT
@@ -115,9 +117,10 @@ class SleepCycleManager:
         try:
             res = requests.get(f"{self.user_service_endpoint}/getActiveRoomsWithUser")
             if res.status_code == 200:
-                # The response is a map like {"45": 123, "12": 456}
-                raw_data = res.json()
-                self.room_to_user_map = {int(room_id): int(user_id) for room_id, user_id in raw_data.items()}
+                # The response is a map like {"45": 123, "12": 456} #it's a dict python convert to json and we want to convert back to dict with int keys and values
+
+                data = res.json()
+                print (f"Data received from user service: {data}")
 
                 logger.info(f"Association map synchronized: {self.room_to_user_map}")
             else:

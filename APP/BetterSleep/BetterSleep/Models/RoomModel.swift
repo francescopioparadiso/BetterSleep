@@ -112,4 +112,57 @@ class RoomModel: ObservableObject {
             await fetchRooms(for: houseId)
         } catch { print("Error unassigning room: \(error)") }
     }
+
+    func setActiveRoom(roomId: Int, houseId: Int) async {
+        guard let userId = currentUserId else { return }
+        do {
+            let base = try await baseURL()
+            var req = URLRequest(url: URL(string: "\(base)/setActiveRoom")!)
+            req.httpMethod = "PUT"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "room_id": roomId, "user_id": userId
+            ])
+            _ = try await URLSession.shared.data(for: req)
+            await fetchRooms(for: houseId)
+        } catch { print("Error setting active room: \(error)") }
+    }
+
+    func deactivateRoom(roomId: Int, houseId: Int) async {
+        guard let userId = currentUserId else { return }
+        do {
+            let base = try await baseURL()
+            var req = URLRequest(url: URL(string: "\(base)/setActiveRoom")!)
+            req.httpMethod = "PUT"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            // Send empty/null to deactivate - backend will set active to false
+            req.httpBody = try JSONSerialization.data(withJSONObject: [
+                "room_id": roomId, "user_id": userId, "active": false
+            ])
+            _ = try await URLSession.shared.data(for: req)
+            await fetchRooms(for: houseId)
+        } catch { print("Error deactivating room: \(error)") }
+    }
+
+    func fetchActiveRoom(for userId: Int) async {
+        do {
+            let base = try await baseURL()
+            let url = URL(string: "\(base)/getActiveRoom?user_id=\(userId)")!
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            
+            if let activeRoomData = json?["active_room"] as? [String: Any],
+               let activeRoomId = activeRoomData["id"] as? Int {
+                // Mark the active room
+                if let index = self.rooms.firstIndex(where: { $0.id == activeRoomId }) {
+                    self.rooms[index].active = true
+                }
+            } else {
+                // No active room - deactivate all
+                for i in self.rooms.indices {
+                    self.rooms[i].active = false
+                }
+            }
+        } catch { print("Error fetching active room: \(error)") }
+    }
 }

@@ -23,6 +23,7 @@ struct Room: Identifiable, Codable, Hashable {
     var temperature_morning: Int?
     var light_night: Int?
     var light_morning: Int?
+    var active: Bool = false
 }
 
 struct Invitation: Identifiable, Codable, Hashable {

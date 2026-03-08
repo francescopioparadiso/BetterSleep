@@ -284,3 +284,30 @@ class PostgresDB:
         return preferences
 
 
+    def get_all_active_rooms_with_user(self):
+        """Get all rooms that have an assigned user, along with their preferences."""
+        query = """
+            SELECT user_id, id from rooms
+            WHERE user_id IS NOT NULL
+        """
+        result= self._execute_query(query, fetch=True)
+        active_rooms = dict()
+        for room in result:
+            active_rooms[room['user_id']] = room['id']
+
+        return active_rooms
+
+    def deactivate_user_rooms(self, user_id):
+        """Deactivate all rooms for a user across all houses."""
+        query = "UPDATE rooms SET active = FALSE WHERE user_id = %s"
+        return self._execute_query(query, (user_id,))
+
+    def set_room_active(self, room_id, user_id):
+        """Set a room as active for a user (verify user is assigned to room)."""
+        query = "UPDATE rooms SET active = TRUE WHERE id = %s AND user_id = %s"
+        return self._execute_query(query, (room_id, user_id))
+
+    def get_active_room(self, user_id):
+        """Get the currently active room for a user."""
+        query = "SELECT * FROM rooms WHERE user_id = %s AND active = TRUE LIMIT 1"
+        return self._execute_query(query, (user_id,), fetch=True, single=True)

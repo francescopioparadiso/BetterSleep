@@ -1,18 +1,18 @@
 import sys
 import os
 
-from common.MQTT.MyMQTT import MyMQTT
-from common.common import _load_json_body
-
 # This tells Python to add the parent directory to its searchable paths
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from common.MQTT.MyMQTT import MyMQTT
+from common.common import _load_json_body, json_error_page
 
 import json
 import logging
 from datetime import datetime
 import cherrypy
 from postgres_db import PostgresDB
-from common import catalog_client  # <--- Now this will work!
+from common import catalog_client  
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ class UserService:
     def _post_add_room(self):
         """Add a new room to the catalog."""
         new_room = _load_json_body()
-        require_fields(new_room, ['house_id', 'name','user_id'])
+        require_fields(new_room, ['house_id', 'name'])
 
         room_id = self.db.insert_room(new_room)
         if room_id:
@@ -200,6 +200,7 @@ class UserService:
             "updateRoom": self._put_update_room,
             "assignRoom": self._put_assign_room,
             "unassignRoom": self._put_unassign_room,
+            "setActiveRoom": self._put_set_active_room,
             "updateUserPreferences": self._put_update_user_preferences,
             "updateRoomPreferences": self._put_update_room_preferences,
 
@@ -327,6 +328,25 @@ class UserService:
             return json.dumps({"status": "success", "message": "Room unassigned"})
         raise cherrypy.HTTPError(403, "Only the assigned user can unassign from this room")
 
+    def _put_set_active_room(self):
+        """Set a room as active for a user, deactivating all other rooms for that user across all houses."""
+        body = _load_json_body()
+        require_fields(body, ['room_id', 'user_id'])
+
+        room_id = body['room_id']
+        user_id = body['user_id']
+        logger.info(f"Setting room {room_id} as active for user {user_id}")
+
+        # First deactivate all other rooms for this user across all houses
+        self.db.deactivate_user_rooms(user_id)
+        
+        # Then activate the requested room
+        success = self.db.set_room_active(room_id, user_id)
+        if success:
+            logger.info(f"Room {room_id} is now active for user {user_id}")
+            return json.dumps({"status": "success", "message": "Room set as active"})
+        raise cherrypy.HTTPError(404, "Room not found or not assigned to user")
+
     # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):
         if not uri:
@@ -402,6 +422,8 @@ class UserService:
             "getAllRooms": self._get_all_rooms,
             "getAllInvitations": self._get_all_invitations,
             "getUserRoomPreferences": self._get_user_room_preferences,
+            "getActiveRoom": self._get_active_room,
+            "getActiveRoomsWithUser": self._get_all_active_room_associeted_user,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -443,24 +465,29 @@ class UserService:
             return json.dumps({"status": "success", "preferences": preferences}, default=str)
         raise cherrypy.HTTPError(404, "User or room not found")
 
+    def _get_active_room(self, params):
+        """Get the currently active room for a user."""
+        user_id = params.get('user_id')
+        if not user_id:
+            raise cherrypy.HTTPError(400, "Missing 'user_id' parameter")
+        
+        active_room = self.db.get_active_room(user_id)
+        if active_room:
+            return json.dumps({"status": "success", "active_room": active_room}, default=str)
+        return json.dumps({"status": "success", "active_room": None}, default=str)
+    
+    
+    def _get_all_active_room_associeted_user(self):
+        """Get all active rooms with the associated user information."""
+        active_rooms = self.db.get_all_active_rooms_with_user()
+        return json.dumps({"status": "success", "active_rooms": active_rooms}, default=str)
+
 
 
 def require_fields(payload, required_fields):
     if not all(field in payload for field in required_fields):
         raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 
-def json_error_page(status, message, traceback, version):
-    """Override CherryPy HTTPError to return JSON instead of HTML."""
-    cherrypy.response.headers["Content-Type"] = "application/json"
-    try:
-        status_code = int(status.split(" ")[0])
-    except (ValueError, IndexError):
-        status_code = 500
-
-    return json.dumps({
-        "status": status_code,
-        "error": message
-    })
 
 if __name__ == "__main__":
     with open("conf.json") as f:

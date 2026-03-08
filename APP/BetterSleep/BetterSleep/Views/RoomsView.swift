@@ -192,6 +192,9 @@ struct RoomsView: View {
             guard let houseId = house.id else { return }
             await roomModel.fetchRooms(for: houseId)
             await invitationModel.fetchHouseDetails(for: houseId)
+            if let currentUserId = currentUserId {
+                await roomModel.fetchActiveRoom(for: currentUserId)
+            }
         }
         .sheet(isPresented: $showingMembers) {
             MembersSheet(
@@ -214,10 +217,18 @@ struct RoomsView: View {
                 .frame(width: 36)
             
             VStack(alignment: .leading, spacing: 3) {
-                Text(room.name)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .fontDesign(.rounded)
+                HStack(spacing: 6) {
+                    Text(room.name)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .fontDesign(.rounded)
+                    
+                    if room.active {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                            .foregroundColor(.yellow)
+                    }
+                }
 
                 if let uid = room.user_id {
                     let label = uid == currentUserId ? "Assigned to you" : "Occupied"
@@ -243,6 +254,21 @@ struct RoomsView: View {
                 roomContent(room)
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                Button {
+                    Task {
+                        guard let roomId = room.id else { return }
+                        if room.active {
+                            await roomModel.deactivateRoom(roomId: roomId, houseId: house.id!)
+                        } else {
+                            await roomModel.setActiveRoom(roomId: roomId, houseId: house.id!)
+                        }
+                    }
+                } label: {
+                    Label(room.active ? "Deactivate" : "Make Active", systemImage: room.active ? "star.slash.fill" : "star.fill")
+                }
+                .tint(room.active ? .gray : .yellow)
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
                 Button {
                     Task {
                         guard let roomId = room.id else { return }
