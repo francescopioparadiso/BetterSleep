@@ -298,7 +298,7 @@ class SleepCycleManager:
 
 
     def get_actuators_in_room(self, bedroomid):
-        response = requests.get(f"{self.catalog_url}/getActuatorsInRoom",
+        response = requests.get(f"{self.catalog_url}/getActuatorByRoom",
                                 params={"bedroomid": bedroomid})
         if response.status_code == 200:
             try:
@@ -377,7 +377,7 @@ class SleepCycleManager:
 
 
 if __name__ == "__main__":
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     try:
         with open("conf.json", "r") as f:
             full_conf = json.load(f)
