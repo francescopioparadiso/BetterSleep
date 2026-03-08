@@ -279,6 +279,14 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error retrieving sensors for room {room_id}: {e}")
             return []
+    def get_actuator_by_room(self, room_id):
+        try:
+            actuators = list(self.db.actuators.find({"roomID": room_id}))
+            logger.debug(f"Retrieved {len(actuators)} actuators for room {room_id} from database")
+            return actuators
+        except Exception as e:
+            logger.error(f"Error retrieving actuators for room {room_id}: {e}")
+            return []
     # ================================================================
     # CONNECTION MANAGEMENT
     # ================================================================

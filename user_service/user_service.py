@@ -466,14 +466,31 @@ class UserService:
         return json.dumps({"status": "success", "rooms": rooms}, default=str)
 
     def _get_user_room_preferences(self, params):
-        """Get the room and user preferences for a given user."""
+        """Get merged user+room preferences for a user (or for a bedroom, for backward compatibility)."""
+        user_id = params.get('user_id')
         bedroom_id = params.get('bedroom_id')
+
+        if user_id:
+            active_room = self.db.get_active_room(user_id)
+            if not active_room:
+                raise cherrypy.HTTPError(404, "Active room not found for user")
+            bedroom_id = active_room.get('id')
+
         if not bedroom_id:
-            raise cherrypy.HTTPError(400, "Missing 'bedroom_id' parameter")
+            raise cherrypy.HTTPError(400, "Missing 'user_id' or 'bedroom_id' parameter")
+
         preferences = self.db.get_user_room_preferences(bedroom_id)
-        if preferences:
-            return json.dumps({"status": "success", "preferences": preferences}, default=str)
-        raise cherrypy.HTTPError(404, "User or room not found")
+        if not preferences:
+            raise cherrypy.HTTPError(404, "User or room not found")
+
+        # Flatten legacy nested payload shape.
+        merged_preferences = preferences.get('user_preferences', preferences)
+
+        actuators = self.catalog.get(f"getRoomActuators?room_id={bedroom_id}")
+        if actuators and actuators[0] == 200:
+            merged_preferences['actuators'] = actuators[1].get('actuators', [])
+
+        return json.dumps({"status": "success", "preferences": merged_preferences}, default=str)
 
     def _get_active_room(self, params):
         """Get the currently active room for a user."""
@@ -487,7 +504,7 @@ class UserService:
         return json.dumps({"status": "success", "active_room": None}, default=str)
     
     
-    def _get_all_active_room_associeted_user(self):
+    def _get_all_active_room_associeted_user(self, params):
         """Get all active rooms with the associated user information."""
         active_rooms = self.db.get_all_active_rooms_with_user()
         return json.dumps({"status": "success", "active_rooms": active_rooms}, default=str)
