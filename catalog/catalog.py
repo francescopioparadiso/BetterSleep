@@ -4,6 +4,8 @@ import logging
 import cherrypy
 import threading
 import time
+
+from common.common import json_error_page
 from mongo_db import MongoDBAdapter
 
 # Configure logging with DEBUG level
@@ -269,6 +271,8 @@ class Catalog:
             "getEndpointTimeSeries": self._get_endpoint_Time_series_DB,
             "getEndpointUserService": self._get_endpoint_user_service,
             "getSensorByRoom": self._get_sensor_by_room,
+            "getActuatorByRoom": self._get_actuator_by_room
+            ,
 
         }
         handler = handlers.get(uri[0])
@@ -350,18 +354,22 @@ class Catalog:
         except Exception as e:
             print(f"Error retrieving sensors for room {room_id}: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
-def json_error_page(status, message, traceback, version):
-    """Override CherryPy HTTPError to return JSON instead of HTML."""
-    cherrypy.response.headers["Content-Type"] = "application/json"
-    try:
-        status_code = int(status.split(" ")[0])
-    except (ValueError, IndexError):
-        status_code = 500
+    def _get_actuator_by_room(self, params):
+        """Get actuators by roomID."""
+        room_id = params.get('roomID')
+        if not room_id:
+            raise cherrypy.HTTPError(400, "Missing 'roomID' parameter")
+        try:
+            actuators = self.db.get_actuator_by_room(room_id)
+            actuators_json = []
+            for actuator in actuators:
+                actuator['_id'] = str(actuator.get('_id', ''))
+                actuators_json.append(actuator)
+            return json.dumps({"status": "success", "count": len(actuators), "actuators": actuators_json})
+        except Exception as e:
+            print(f"Error retrieving actuators for room {room_id}: {e}")
+            raise cherrypy.HTTPError(500, "Internal Server Error")
 
-    return json.dumps({
-        "status": status_code,
-        "error": message
-    })
 
 if __name__ == "__main__":
     # CherryPy Configuration

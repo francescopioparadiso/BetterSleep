@@ -269,12 +269,9 @@ class PostgresDB:
             'user_preferences': {
                 'user_id': result1['user_id'],
                 'night_time': result2['night_time'],
-                'morning_time': result2['morning_time']
-            },
-            'room_preferences': {
+                'morning_time': result2['morning_time'],
                 'room_id': bedroom_id,
                 'house_id': result1['house_id'],
-                'user_id': result1['user_id'],
                 'temperature_night': result1['temperature_night'],
                 'temperature_morning': result1['temperature_morning'],
                 'light_night': result1['light_night'],
@@ -288,7 +285,7 @@ class PostgresDB:
         """Get all rooms that have an assigned user, along with their preferences."""
         query = """
             SELECT user_id, id from rooms
-            WHERE user_id IS NOT NULL
+            WHERE user_id IS NOT NULL AND active = TRUE
         """
         result= self._execute_query(query, fetch=True)
         active_rooms = dict()

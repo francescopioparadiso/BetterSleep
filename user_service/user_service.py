@@ -461,6 +461,9 @@ class UserService:
         if not bedroom_id:
             raise cherrypy.HTTPError(400, "Missing 'bedroom_id' parameter")
         preferences = self.db.get_user_room_preferences(bedroom_id)
+        actuators=self.catalog.get(f"getRoomActuators?room_id={bedroom_id}")
+        if actuators and actuators[0] == 200:
+            preferences['actuators'] = actuators[1].get('actuators', [])
         if preferences:
             return json.dumps({"status": "success", "preferences": preferences}, default=str)
         raise cherrypy.HTTPError(404, "User or room not found")
