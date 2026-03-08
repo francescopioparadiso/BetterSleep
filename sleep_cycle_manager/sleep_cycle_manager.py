@@ -99,6 +99,7 @@ class SleepCycleManager:
         self.phase_manager.start()
         self.init_mqtt_client()
         self.get_ActiveRoomwithUser()
+        print(self.room_to_user_map)
 
     def get_endpoint_user_service(self):
         data, status, error = self.catalog_client.get(f"getEndpointUserService")
@@ -117,7 +118,7 @@ class SleepCycleManager:
     def get_ActiveRoomwithUser(self):
         """
         Fetches active associations and normalizes them to RoomID -> UserID mapping.
-        Accepts either {room_id: user_id} or {user_id: room_id} from user service.
+        User service returns {user_id: room_id}, we need {room_id: user_id}.
         """
         try:
             res = requests.get(f"{self.user_service_endpoint}/getActiveRoomsWithUser")
@@ -126,12 +127,16 @@ class SleepCycleManager:
                 return
 
             data = res.json()
-            raw_map = data.get("active_rooms", data)
+            # Get the active_rooms dict which has {user_id: room_id} structure
+            active_rooms_map = data.get("active_rooms", {})
+
+            # Normalize to {room_id: user_id} for our internal use
             normalized_map = {}
-            print(raw_map)
+            for user_id, room_id in active_rooms_map.items():
+                # Keep as strings - no conversion needed
+                normalized_map[str(room_id)] = user_id
 
-
-            self.room_to_user_map = raw_map
+            self.room_to_user_map = normalized_map
             logger.info(f"Association map synchronized: {self.room_to_user_map}")
         except Exception as e:
             logger.error(f"Exception during association sync: {e}")
@@ -148,8 +153,8 @@ class SleepCycleManager:
         if "user_preferences" in pref:
             pref = pref.get("user_preferences", {})
 
-        u_id = int(userid)
-        r_id = int(pref.get("room_id", 0))
+        u_id = userid  # Keep as string
+        r_id = pref.get("room_id")  # Keep as string
 
         # 1. Cleanup: If the user changed rooms, remove them from the old room mapping
         if u_id in self.active_users_cache:
@@ -159,11 +164,10 @@ class SleepCycleManager:
                 if self.room_to_user_map[old_r] == u_id:
                     del self.room_to_user_map[old_r]
 
-
         # 3. Update Unified Cache
         self.active_users_cache[u_id] = {
             "active_room_id": r_id,
-            "house_id": int(pref.get('house_id', 0)),
+            "house_id": pref.get('house_id'),  # Keep as string
             "night_time": pref.get('night_time'),
             "morning_time": pref.get('morning_time'),
             "is_sleeping": pref.get('is_sleeping', False),
@@ -219,7 +223,6 @@ class SleepCycleManager:
     def notify(self, topic, payload):
         try:
             message_received = json.loads(payload)
-            logger.info(f"Received message on topic {topic}: {message_received}")
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON payload received on topic {topic}")
             return
@@ -264,8 +267,6 @@ class SleepCycleManager:
             self.handle_temperature(msg, room_actuators, desiderate_temp, house_id, room_id)
         elif sensor_type == "presence":
             self.handle_presence(msg, userid, house_id, room_id)
-        else:
-            logger.debug(f"Ignoring sensor type '{sensor_type}' in topic {topic}")
     def _handle_preference_topic(self, topic, message_received):
         preference_kind, entity_id = _parse_preference_topic(topic)
 
@@ -280,7 +281,6 @@ class SleepCycleManager:
         if "night_time" not in message_received and "morning_time" not in message_received:
             return
 
-        userid = int(userid)
         user_cache = self.active_users_cache.get(userid)
         if not user_cache:
             logger.warning(f"User {userid} not found in cache, will fetch on next sensor event")
