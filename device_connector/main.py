@@ -7,7 +7,6 @@ from models import Sensor, Actuator
 
 # --- FUNZIONE HELPER PER CREARE LA CONFIGURAZIONE ---
 def create_config(catalog_url, comp_id, name, comp_type, house_id, room_id, topic_suffix, is_sensor=True):
-    """Crea il dizionario di config seguendo il pattern richiesto dal tuo compagno."""
     id_key = "sensorID" if is_sensor else "ActuatorID"
     # Costruisce il topic. Esempio: House/1/Bedroom/101/sensor/heartrate/data
     topic_base = "sensor" if is_sensor else "actuator"
@@ -93,7 +92,7 @@ class VibrationSensor(Sensor):
             self.publish_data(val)
             time.sleep(10)
 
-# --- ACTUATORS ---
+# ACTUATORS 
 
 class SmartLight(Actuator):
     def on_message(self, client, userdata, msg):
@@ -105,7 +104,7 @@ class Fan(Actuator):
         data = json.loads(msg.payload.decode())
         print(f"\n>> [VENTOLA ATTUATA] Stato modificato a: {data.get('value')} <<\n")
 
-# --- MAIN EXECUTION ---
+# MAIN EXECUTION
 
 if __name__ == "__main__":
     CATALOG_URL = "http://127.0.0.1:8080"
