@@ -61,15 +61,12 @@ class PhaseManager:
         now = datetime.now()
         now_min = now.hour * 60 + now.minute
 
-        for bedroom_id, room_prefs in self.manager.room_preferences_cache.items():
-            user_id = room_prefs.get("userid")
-            user_prefs = self.manager.user_preferences_cache.get(user_id)
-
-            if not user_prefs or not room_prefs:
+        for userid, user_data in self.manager.active_users_cache.items():
+            if not user_data:
                 continue
 
-            night_min = _parse_to_min(user_prefs.get("night_time"))
-            morn_min = _parse_to_min(user_prefs.get("morning_time"))
+            night_min = _parse_to_min(user_data.get("night_time"))
+            morn_min = _parse_to_min(user_data.get("morning_time"))
             if night_min is None or morn_min is None:
                 continue
 
@@ -78,24 +75,24 @@ class PhaseManager:
 
             if _is_in_range(now_min, wind_down_start, night_min):
                 progress = _get_progress(now_min, wind_down_start, night_min)
-                self._apply_transition(bedroom_id, room_prefs, "WIND_DOWN", progress)
+                self._apply_transition(userid, user_data, "WIND_DOWN", progress)
                 continue
 
             if _is_in_range(now_min, wake_up_start, morn_min):
                 progress = _get_progress(now_min, wake_up_start, morn_min)
-                self._apply_transition(bedroom_id, room_prefs, "WAKE_UP", progress)
+                self._apply_transition(userid, user_data, "WAKE_UP", progress)
                 continue
 
             if _is_in_range(now_min, night_min, morn_min):
-                self._apply_static_phase(bedroom_id, room_prefs, "SLEEP")
+                self._apply_static_phase(userid, user_data, "SLEEP")
             else:
-                self._apply_static_phase(bedroom_id, room_prefs, "DAY")
+                self._apply_static_phase(userid, user_data, "DAY")
 
-    def _apply_static_phase(self, bedroom_id, room_prefs, phase):
-        t_night = float(room_prefs.get("temperature_night", 18.0))
-        t_morn = float(room_prefs.get("temperature_morning", 22.0))
-        l_night = float(room_prefs.get("light_night", 0.0))
-        l_morn = float(room_prefs.get("light_morning", 100.0))
+    def _apply_static_phase(self, userid, user_data, phase):
+        t_night = float(user_data['config'].get("temperature_night", 18.0))
+        t_morn = float(user_data['config'].get("temperature_morning", 22.0))
+        l_night = float(user_data['config'].get("light_night", 0.0))
+        l_morn = float(user_data['config'].get("light_morning", 100.0))
 
         if phase == "SLEEP":
             target_t = t_night
@@ -105,7 +102,7 @@ class PhaseManager:
             target_l = l_morn
 
         self.manager.change_target_temperature_light(
-            bedroom_id,
+            userid,
             target_temperature=target_t,
             target_light=target_l,
             phase=phase
@@ -116,11 +113,11 @@ class PhaseManager:
         exponent = self.transition_curve_exponent
         return p ** exponent
 
-    def _apply_transition(self, bedroom_id, room_prefs, phase, progress):
-        t_night = float(room_prefs.get("temperature_night", 18.0))
-        t_morn = float(room_prefs.get("temperature_morning", 22.0))
-        l_night = float(room_prefs.get("light_night", 0.0))
-        l_morn = float(room_prefs.get("light_morning", 100.0))
+    def _apply_transition(self, userid, user_data, phase, progress):
+        t_night = float(user_data['config'].get("temperature_night", 18.0))
+        t_morn = float(user_data['config'].get("temperature_morning", 22.0))
+        l_night = float(user_data['config'].get("light_night", 0.0))
+        l_morn = float(user_data['config'].get("light_morning", 100.0))
 
         curved_progress = self._curve_progress(progress)
 
@@ -132,7 +129,7 @@ class PhaseManager:
             target_l = l_night + (l_morn - l_night) * curved_progress
 
         self.manager.change_target_temperature_light(
-            bedroom_id,
+            userid,
             target_temperature=target_t,
             target_light=target_l,
             phase=phase
