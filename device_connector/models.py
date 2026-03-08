@@ -102,7 +102,7 @@ class BaseIoTComponent:
 
     def publish(self, message, command_topic=None):
         try:
-            self.mqtt_client.myPublish(command_topic, json.dumps(message))
+            self.mqtt_client.myPublish(command_topic, message)
             logger.info(f"Published message to {command_topic}: {message}")
         except Exception as e:
             logger.error(f"Error publishing message: {e}")
@@ -112,9 +112,18 @@ class Sensor(BaseIoTComponent):
     def __init__(self, config, sensor_type):
         super().__init__(config)
         self.sensor_type = sensor_type
+        sensortype = {
+            0: "Temperature",
+            1: "Humidity",
+            2: "Presence",
+            3: "Heart Rate",
+            4: "Vibration"
+        }
+
+        # then in your class
+        self.sensor_type_long = sensortype.get(sensor_type, "Unknown")
 
     def publish_data(self, value, unit=None):
-
         house_id = self.service_info.get("houseID")
         room_id = self.service_info.get("roomID")
         sensor_id = self.service_info.get("sensorID")
@@ -122,6 +131,7 @@ class Sensor(BaseIoTComponent):
         payload = {
             "bn": f"{house_id}:{room_id}:{sensor_id}:{self.sensor_type}",
             "e": [{
+                "n" : self.sensor_type_long,
                 "v": value,
                 "u": unit,
                 "t": time.time()
