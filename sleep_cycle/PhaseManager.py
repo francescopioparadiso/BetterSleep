@@ -28,11 +28,12 @@ def _get_progress(p, s, e):
 
 
 class PhaseManager:
-    def __init__(self, manager_instance, transition_window_min=30, check_interval=60, transition_curve_exponent=1.0):
+    def __init__(self, manager_instance, transition_window_min=30, check_interval=60, transition_curve_exponent=1.0, prefer_fan=True):
         self.manager = manager_instance  # Reference to SleepCycleManager
         self.window = transition_window_min
         self.interval = check_interval
         self.transition_curve_exponent = float(transition_curve_exponent)
+        self.prefer_fan = prefer_fan  # New flag: True=fan, False=heater
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -122,11 +123,12 @@ class PhaseManager:
         curved_progress = self._curve_progress(progress)
 
         if phase == "WIND_DOWN":
-            target_t = t_morn + (t_night - t_morn) * curved_progress
-            target_l = l_morn + (l_night - l_morn) * curved_progress
+            target_t = t_night
+            target_l= l_night
         else:  # WAKE_UP
-            target_t = t_night + (t_morn - t_night) * curved_progress
-            target_l = l_night + (l_morn - l_night) * curved_progress
+            target_t = t_morn
+            target_l = l_morn
+
 
         self.manager.change_target_temperature_light(
             userid,

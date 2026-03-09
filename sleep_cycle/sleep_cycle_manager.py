@@ -17,8 +17,14 @@ from mockfase import MockPhaseManager
 # Configure logging
 
 
-def _resolve_temperature_action(temp_value, desired_temperature, room_actuators):
+def _resolve_temperature_action(temp_value, desired_temperature, room_actuators, prefer_fan=True):
+    # prefer_fan: True = use fan if possible, False = use heater if possible
     if temp_value > desired_temperature:
+        if prefer_fan and "fan" in room_actuators:
+            return 1, "fan"
+        if not prefer_fan and "heater" in room_actuators:
+            return 0, "heater"
+        # fallback
         if "fan" in room_actuators:
             return 1, "fan"
         if "heater" in room_actuators:
@@ -26,12 +32,21 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators)
         return None, None
 
     if temp_value < desired_temperature:
-        if "fan" in room_actuators:
+        if not prefer_fan and "heater" in room_actuators:
+            return 1, "heater"
+        if prefer_fan and "fan" in room_actuators:
             return 0, "fan"
+        # fallback
         if "heater" in room_actuators:
             return 1, "heater"
+        if "fan" in room_actuators:
+            return 0, "fan"
         return None, None
 
+    if prefer_fan and "fan" in room_actuators:
+        return 0, "fan"
+    if not prefer_fan and "heater" in room_actuators:
+        return 1, "heater"
     if "fan" in room_actuators:
         return 0, "fan"
     if "heater" in room_actuators:
@@ -332,7 +347,9 @@ class SleepCycleManager:
         if desired_temperature is None:
             self.logger.warning(f"Desired temperature is None for room {bedroomid}, skipping temperature handling.")
             return
-        action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuator)
+        # Use prefer_fan flag from phase_manager if available
+        prefer_fan = getattr(self.phase_manager, 'prefer_fan', True)
+        action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuator, prefer_fan=prefer_fan)
         if not action or not device:
             return
 
@@ -392,13 +409,13 @@ class SleepCycleManager:
     def change_target_temperature_light(self, userid, target_temperature=None, target_light=None, phase=None):
         """
         Update the live targets for a user based on phase transitions.
-        Only update internal targets; do not send actuator commands.
+        Always send the correct brightness value (0-100) to the light actuator.
         """
         user_data = self.active_users_cache.get(userid)
         if not user_data:
             self.logger.warning(f"User {userid} not found in cache for target update")
             return
-
+        self.logger.INFO(f"Updating targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
         if target_temperature is not None:
             user_data["live_targets"]["temperature"] = target_temperature
         if target_light is not None:
@@ -406,8 +423,24 @@ class SleepCycleManager:
         if phase is not None:
             user_data["live_targets"]["phase"] = phase
 
+        # Always send the new light value if provided
+        if target_light is not None:
+            houseid = user_data.get("house_id")
+            bedroomid = user_data.get("active_room_id")
+            topic = f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command"
+            value = int(round(target_light))
+            command = {"action": "SET", "value": value}
+            self.publish(command, command_topic=topic)
+            self.logger.info(f"Sent SET command to light actuator: value={value}, phase={phase}, topic={topic}")
 
 if __name__ == "__main__":
+    # Configure logging before any usage
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
     try:
         with open("conf.json", "r") as f:
             full_conf = json.load(f)
@@ -424,12 +457,6 @@ if __name__ == "__main__":
     # Configure the dispatcher to use GET/POST/PUT/DELETE methods
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
 
     try:
         sleep_cycle_manager = SleepCycleManager(full_conf, Debug=False, logger=logger)

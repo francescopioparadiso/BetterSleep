@@ -125,12 +125,18 @@ class LightActuator(Actuator):
     """Simulates a light actuator."""
     def __init__(self, config):
         super().__init__(config)
+        self.value=0
     def notify(self, topic, payload):
         try:
 
             data = json.loads(payload)
+
             action = data.get("action")
-            logger.info(f"[LIGHT ACTUATOR] Received command: {action}")
+            value= data.get("value")
+            if action == "SET":
+                self.value = value
+
+            logger.info(f"[LiGH ACTUATOR] Received command: {action} with value: {value}")
         except Exception as e:
             logger.error(f"[LIGHT ACTUATOR] Error processing command on topic '{topic}': {e}")
 
@@ -138,11 +144,17 @@ class HeaterActuator(Actuator):
     """Simulates a heater actuator."""
     def __init__(self, config):
         super().__init__(config)
+        self.state = "OFF"
+
     def notify(self, topic, payload):
         try:
-            data = json.loads(payload)
-            state = data.get("action")
-            logger.info(f"[HEATER ACTUATOR] Received command: {state}")
+            data= json.loads(payload)
+            action = data.get("action")
+            if action:
+                self.state = "ON"
+            else:
+                self.state = "OFF"
+            logger.info(f"[HEATER ACTUATOR] Received command: {action}, Fan state: {self.state}")
         except Exception as e:
             logger.error(f"[HEATER ACTUATOR] Error processing command on topic '{topic}': {e}")
 
