@@ -188,6 +188,7 @@ class SleepCycleManager:
 
         previous_cache = self.active_users_cache.get(u_id, {})
         previous_live_targets = previous_cache.get("live_targets", {})
+        previous_live_light = previous_cache.get("live_light")
 
         self.active_users_cache[u_id] = {
             "active_room_id": r_id,
@@ -208,7 +209,8 @@ class SleepCycleManager:
                 "phase": previous_live_targets.get("phase"),
                 "last_seen_bed": previous_live_targets.get("last_seen_bed"),
                 "last_left_bed": previous_live_targets.get("last_left_bed")
-            }
+            },
+            "live_light": previous_live_light
         }
 
         # 4. Map the room to the user
@@ -303,7 +305,8 @@ class SleepCycleManager:
         elif sensor_type == "light":
             try:
                 current_light = float(msg['e'][0]['v'])
-                user_data['live_targets']['light'] = current_light
+                # Keep real sensor brightness separate from commanded transition targets.
+                user_data['live_light'] = current_light
             except Exception:
                 self.logger.warning(f"Invalid light payload for user {userid}: {msg}")
 

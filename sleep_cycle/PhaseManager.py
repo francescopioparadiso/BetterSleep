@@ -92,20 +92,21 @@ class PhaseManager:
     def _apply_static_phase(self, userid, user_data, phase):
         t_night = float(user_data['config'].get("temperature_night", 18.0))
         t_morn = float(user_data['config'].get("temperature_morning", 22.0))
-        l_night = float(user_data['config'].get("light_night", 0.0))
-        l_morn = float(user_data['config'].get("light_morning", 100.0))
 
         if phase == "SLEEP":
             target_t = t_night
-            target_l = l_night
         else:
             target_t = t_morn
-            target_l = l_morn
 
+        # Clear the transition snapshot so the next transition captures a fresh value
+        user_data.get("live_targets", {}).pop("transition_start_light", None)
+
+        # Static phases only control temperature, not light.
+        # Light is left at whatever the actuator currently reports.
         self.manager.change_target_temperature_light(
             userid,
             target_temperature=target_t,
-            target_light=target_l,
+            target_light=None,
             phase=phase
         )
 
@@ -121,18 +122,31 @@ class PhaseManager:
         l_morn = float(user_data['config'].get("light_morning", 100.0))
 
         curved_progress = self._curve_progress(progress)
+        live_targets = user_data.get("live_targets", {})
 
-        # Always interpolate between fixed config endpoints.
-        # WIND_DOWN: morning values -> night values  (e.g. light 100 -> 0)
-        # WAKE_UP:   night values  -> morning values  (e.g. light 0 -> 100)
+        # Capture the actual light value ONCE when the transition begins.
+        # Priority: real sensor reading -> last target -> config fallback.
+        if "transition_start_light" not in live_targets:
+            current_light = user_data.get("live_light")
+            if current_light is None:
+                current_light = live_targets.get("light")
+
+            if current_light is not None:
+                live_targets["transition_start_light"] = max(0.0, min(100.0, float(current_light)))
+            else:
+                # Fallback: use config defaults if no actual value received yet
+                live_targets["transition_start_light"] = l_morn if phase == "WIND_DOWN" else l_night
+
+        start_l = live_targets["transition_start_light"]
+
+        # Temperature always interpolates between config endpoints
         if phase == "WIND_DOWN":
-            start_t, end_t = t_morn, t_night
-            start_l, end_l = l_morn, l_night
+            target_t = t_morn
+            end_l = l_night
         else:  # WAKE_UP
-            start_t, end_t = t_night, t_morn
-            start_l, end_l = l_night, l_morn
+            target_t=t_night
+            end_l = l_morn
 
-        target_t = start_t + ((end_t - start_t) * curved_progress)
         target_l = start_l + ((end_l - start_l) * curved_progress)
 
         logger.info(f"[{phase}] progress={progress:.3f}, curved={curved_progress:.3f}, "

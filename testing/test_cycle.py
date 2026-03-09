@@ -65,7 +65,7 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     fan_actuator = FanActuator(c_fan)
     heater_actuator = HeaterActuator(c_heater)
     light_actuator = LightActuator(c_light)
-    light_actuator.value = 100
+    light_actuator.value = 50
     light_actuator._publish_state()
 
     devices = [temp_sensor, presence_sensor, fan_actuator, heater_actuator, light_actuator]
