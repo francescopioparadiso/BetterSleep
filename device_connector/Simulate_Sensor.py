@@ -125,18 +125,33 @@ class LightActuator(Actuator):
     """Simulates a light actuator."""
     def __init__(self, config):
         super().__init__(config)
-        self.value=0
+        self.value = 0
+
+    def _publish_state(self):
+        payload = {
+            "bn": f"{self.service_info.get('houseID')}:{self.service_info.get('roomID')}:{self.service_info.get('ActuatorID')}:light",
+            "e": [{
+                "n": "LightLevel",
+                "v": self.value,
+                "u": "%",
+                "t": time.time()
+            }]
+        }
+        self.publish(payload, command_topic=self.topic_publish)
+
     def notify(self, topic, payload):
         try:
-
             data = json.loads(payload)
 
             action = data.get("action")
-            value= data.get("value")
-            if action == "SET":
-                self.value = value
+            value = data.get("value")
+            if action == "SET" and value is not None:
+                next_value = int(value)
+                if next_value != self.value:
+                    self.value = next_value
+                    self._publish_state()
 
-            logger.info(f"[LiGH ACTUATOR] Received command: {action} with value: {value}")
+            logger.info(f"[LIGHT ACTUATOR] Received command: {action} with value: {value}")
         except Exception as e:
             logger.error(f"[LIGHT ACTUATOR] Error processing command on topic '{topic}': {e}")
 
@@ -202,9 +217,9 @@ if __name__ == "__main__":
     )
     c_light = create_config(
         CATALOG_URL, "5", "Light", "light", HOUSE, ROOM, BROKER_IP, PORT,
-        topic_publish=PUB_TEMPLATE,
-        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/light"
-        , is_sensor=False
+        topic_publish="House/{houseID}/Bedroom/{roomID}/sensor/light/{ActuatorID}/data",
+        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/actuator/light/command",
+        is_sensor=False
     )
     # Device instances
     presence = PresenceSensor(c_pres)

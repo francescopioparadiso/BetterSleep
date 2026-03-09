@@ -59,7 +59,7 @@ class PhaseManager:
             self._stop_event.wait(self.interval)
 
     def _check_all_rooms(self):
-        now = datetime.now()
+        now = self.get_current_time()
         now_min = now.hour * 60 + now.minute
 
         for userid, user_data in self.manager.active_users_cache.items():
@@ -122,13 +122,21 @@ class PhaseManager:
 
         curved_progress = self._curve_progress(progress)
 
+        # Always interpolate between fixed config endpoints.
+        # WIND_DOWN: morning values -> night values  (e.g. light 100 -> 0)
+        # WAKE_UP:   night values  -> morning values  (e.g. light 0 -> 100)
         if phase == "WIND_DOWN":
-            target_t = t_night
-            target_l= l_night
+            start_t, end_t = t_morn, t_night
+            start_l, end_l = l_morn, l_night
         else:  # WAKE_UP
-            target_t = t_morn
-            target_l = l_morn
+            start_t, end_t = t_night, t_morn
+            start_l, end_l = l_night, l_morn
 
+        target_t = start_t + ((end_t - start_t) * curved_progress)
+        target_l = start_l + ((end_l - start_l) * curved_progress)
+
+        logger.info(f"[{phase}] progress={progress:.3f}, curved={curved_progress:.3f}, "
+                    f"light: {start_l:.0f} -> {target_l:.1f} -> {end_l:.0f}")
 
         self.manager.change_target_temperature_light(
             userid,
@@ -136,3 +144,7 @@ class PhaseManager:
             target_light=target_l,
             phase=phase
         )
+
+    def get_current_time(self):
+        """Clock source, overridable by MockPhaseManager for deterministic tests."""
+        return datetime.now()

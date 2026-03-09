@@ -186,12 +186,15 @@ class SleepCycleManager:
 
         # 3. Update Unified Cache
 
+        previous_cache = self.active_users_cache.get(u_id, {})
+        previous_live_targets = previous_cache.get("live_targets", {})
+
         self.active_users_cache[u_id] = {
             "active_room_id": r_id,
             "house_id": pref.get('house_id'),  # Keep as string
             "night_time": pref.get('night_time'),
             "morning_time": pref.get('morning_time'),
-            "is_sleeping": pref.get('is_sleeping', False),
+            "is_sleeping": pref.get('is_sleeping', previous_cache.get('is_sleeping', False)),
             "config": {
                 "temperature_night": float(pref.get('temperature_night', 18.0)),
                 "temperature_morning": float(pref.get('temperature_morning', 22.0)),
@@ -200,10 +203,11 @@ class SleepCycleManager:
                 "actuators": self.get_actuators_in_room(r_id)
             },
             "live_targets": {
-                "temperature": None,
-                "light": None,
-                "phase": None,
-                "last_seen_bed": None
+                "temperature": previous_live_targets.get("temperature"),
+                "light": previous_live_targets.get("light"),
+                "phase": previous_live_targets.get("phase"),
+                "last_seen_bed": previous_live_targets.get("last_seen_bed"),
+                "last_left_bed": previous_live_targets.get("last_left_bed")
             }
         }
 
@@ -276,7 +280,10 @@ class SleepCycleManager:
         userid = self.room_to_user_map.get(room_id)
         if userid is None:
             return  # ignore events for rooms without an active user for the night
-        user_data = self._fetch_and_cache_room_preference(userid)
+
+        user_data = self.active_users_cache.get(userid)
+        if not user_data:
+            user_data = self._fetch_and_cache_room_preference(userid)
         if not user_data:
             return
         self.logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
@@ -293,6 +300,13 @@ class SleepCycleManager:
             self.handle_temperature(msg, room_actuators, desiderate_temp, house_id, room_id)
         elif sensor_type == "presence":
             self.handle_presence(msg, userid, house_id, room_id)
+        elif sensor_type == "light":
+            try:
+                current_light = float(msg['e'][0]['v'])
+                user_data['live_targets']['light'] = current_light
+            except Exception:
+                self.logger.warning(f"Invalid light payload for user {userid}: {msg}")
+
     def _handle_preference_topic(self, topic, message_received):
         preference_kind, entity_id = _parse_preference_topic(topic)
 
@@ -409,13 +423,17 @@ class SleepCycleManager:
     def change_target_temperature_light(self, userid, target_temperature=None, target_light=None, phase=None):
         """
         Update the live targets for a user based on phase transitions.
-        Always send the correct brightness value (0-100) to the light actuator.
+        Publish light commands only when rounded brightness changes.
         """
         user_data = self.active_users_cache.get(userid)
         if not user_data:
             self.logger.warning(f"User {userid} not found in cache for target update")
             return
-        self.logger.INFO(f"Updating targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
+
+        self.logger.info(f"Updating targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
+
+        previous_light = user_data["live_targets"].get("light")
+
         if target_temperature is not None:
             user_data["live_targets"]["temperature"] = target_temperature
         if target_light is not None:
@@ -423,15 +441,19 @@ class SleepCycleManager:
         if phase is not None:
             user_data["live_targets"]["phase"] = phase
 
-        # Always send the new light value if provided
         if target_light is not None:
+            new_value = int(round(max(0.0, min(100.0, float(target_light)))))
+            old_value = None if previous_light is None else int(round(previous_light))
+
+            if old_value == new_value:
+                return
+
             houseid = user_data.get("house_id")
             bedroomid = user_data.get("active_room_id")
             topic = f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command"
-            value = int(round(target_light))
-            command = {"action": "SET", "value": value}
+            command = {"action": "SET", "value": new_value}
             self.publish(command, command_topic=topic)
-            self.logger.info(f"Sent SET command to light actuator: value={value}, phase={phase}, topic={topic}")
+            self.logger.info(f"Sent SET command to light actuator: value={new_value}, phase={phase}, topic={topic}")
 
 if __name__ == "__main__":
     # Configure logging before any usage

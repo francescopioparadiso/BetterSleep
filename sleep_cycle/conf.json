@@ -21,7 +21,7 @@
   },
   "catalogURL": "http://localhost:8080",
   "removeInterval": 10,
-  "phaseCheckIntervalSec": 30,
+  "phaseCheckIntervalSec": 10,
   "transitionWindowMin": 30,
   "transitionCurveExponent": 1.0,
   "inactiveUserTtlSec": 10800

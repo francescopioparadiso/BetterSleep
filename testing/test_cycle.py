@@ -4,13 +4,13 @@ import os
 import time
 import threading
 import logging
+from datetime import datetime
 
 # Path setups
 logging.basicConfig(filename='test_cycle.log', level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../sleep_cycle')))
-import logging
 from sleep_cycle.sleep_cycle_manager import SleepCycleManager
 # Fixed imports including Actuators
 from device_connector.Simulate_Sensor import create_config , FanActuator, HeaterActuator, LightActuator, TemperatureSensor,PresenceSensor
@@ -51,6 +51,7 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     # Actuator configs
     c_light = create_config(
         CATALOG_URL, "1", "Light", "light", houseid, bedroomid, BROKER_IP, PORT,
+        topic_publish="House/{houseID}/Bedroom/{roomID}/sensor/light/{ActuatorID}/data",
         topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command", is_sensor=False
     )
     c_heater = create_config(
@@ -64,15 +65,16 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     fan_actuator = FanActuator(c_fan)
     heater_actuator = HeaterActuator(c_heater)
     light_actuator = LightActuator(c_light)
-    light_actuator.value=50
+    light_actuator.value = 100
+    light_actuator._publish_state()
 
     devices = [temp_sensor, presence_sensor, fan_actuator, heater_actuator, light_actuator]
 
     stop_event = threading.Event()
 
     total_minutes = 600  # 10 ore virtuali
-    steps = total_minutes  # 1 step = 1 minuto virtuale
-    real_step_seconds = duration_seconds / steps  # 600/600 = 1 secondo reale per step
+    steps = 600  # Each step = 1 simulated minute
+    real_step_seconds = duration_seconds / steps  # 600/600 = 1 second per simulated minute
 
     def get_virtual_time(step):
         hour = (21 + (step // 60)) % 24
@@ -87,14 +89,28 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
 
     def simulation_loop():
         print("--- Simulazione Notte Accelerata ---")
+        print("Wind-down phase: 21:30 - 22:00 (30 minutes)")
+        print("Night phase: 22:00 - 07:00")
+        print("Wake-up phase: 06:30 - 07:00 (30 minutes)")
+        print()
+        # In debug mode use deterministic virtual-time checks (1 loop step = 1 minute).
+        if hasattr(manager, "phase_manager") and hasattr(manager.phase_manager, "fast_forward"):
+            manager.phase_manager.stop()
+            # Start at 21:00 — wind-down begins at 21:30 (30 min before night_time)
+            manager.phase_manager.fake_time = datetime(2026, 3, 9, 21, 0)
+
         for step in range(steps):
+            if hasattr(manager, "phase_manager") and hasattr(manager.phase_manager, "fast_forward"):
+                manager.phase_manager.fast_forward(1)
+                manager.phase_manager._check_all_rooms()
+
             hour, minute, virtual_minute = get_virtual_time(step)
             temp = get_night_temp(virtual_minute)
             temp_sensor.value = temp
             temp_sensor.publish_data(temp, unit="°C")
             presence_value = 1 if (hour >= 22 or hour < 7) else 0
             presence_sensor.publish_data(presence_value)
-            print(f"[{hour:02d}:{minute:02d}] Temp={temp:.2f}°C, Presenza={presence_value}, Light={getattr(light_actuator, 'value', '?')}, Fan={getattr(fan_actuator, 'state', '?')}, Heater={getattr(heater_actuator, 'state', '?')}")
+            print(f"[{hour:02d}:{minute:02d}] Temp={temp:.2f}degC, Presenza={presence_value}, Light={getattr(light_actuator, 'value', '?')}, Fan={getattr(fan_actuator, 'state', '?')}, Heater={getattr(heater_actuator, 'state', '?')}")
             time.sleep(real_step_seconds)
             if stop_event.is_set():
                 break
