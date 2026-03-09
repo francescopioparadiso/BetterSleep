@@ -3,11 +3,14 @@ import sys
 import os
 import time
 import threading
-
+import logging
 
 # Path setups
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../sleep_cycle')))
+logging.basicConfig(filename='test_cycle.log', level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../sleep_cycle')))
+import logging
 from sleep_cycle.sleep_cycle_manager import SleepCycleManager
 # Fixed imports including Actuators
 from device_connector.Simulate_Sensor import create_config , FanActuator, HeaterActuator, LightActuator, TemperatureSensor,PresenceSensor
@@ -15,7 +18,7 @@ def setup_manager():
     conf_path = "../sleep_cycle/conf.json"
     with open(conf_path, "r") as f:
         conf = json.load(f)
-    return SleepCycleManager(conf, Debug=True)
+    return SleepCycleManager(conf, Debug=True,logger=logger)
 
 
 def test_high_temp_simulation(duration_seconds=60):
@@ -226,4 +229,6 @@ def test_night_simulation(duration_seconds=300, presence_decider=None):
 
 if __name__ == "__main__":
     # Use dynamic night_time and morning_time from active_users_cache
+    #save the log in a file and not send it to the console
     test_night_simulation(duration_seconds=300)
+

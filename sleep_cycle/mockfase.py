@@ -5,7 +5,7 @@ class MockPhaseManager(PhaseManager):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fake_time = datetime(2024, 1, 1, 20, 0)  # Start at 8:00 PM
+        self.fake_time = datetime(2025, 3, 1, 20, 0)  # Start at 8:00 PM
 
     def get_current_time(self):
         return self.fake_time

@@ -15,11 +15,6 @@ from common.common import mqtt_to_regex, json_error_page
 from PhaseManager import PhaseManager
 from mockfase import MockPhaseManager
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
 def _resolve_temperature_action(temp_value, desired_temperature, room_actuators):
@@ -73,8 +68,10 @@ class SleepCycleManager:
     exposed = True
     SLEEP_DETECTION_SECONDS = 10
 
-    def __init__(self, conf,Debug=False):
+    def __init__(self, conf,Debug=False,logger=None):
         self.mqtt_client = None
+        self.logger=logger
+
         self.catalog_url = conf['catalogURL']
         self.service_info = conf['serviceInfo']
         self.remove_interval = conf.get('removeInterval', 10)
@@ -114,13 +111,13 @@ class SleepCycleManager:
         if status == 200 and data:
             endpoint = data.get("endpoint")
             if endpoint:
-                logger.info(f"User service endpoint retrieved: {endpoint}")
+                self.logger.info(f"User service endpoint retrieved: {endpoint}")
                 return endpoint
             else:
-                logger.error("User service endpoint not found in Catalog response")
+                self.logger.error("User service endpoint not found in Catalog response")
                 return None
         else:
-            logger.error(f"Error retrieving user service endpoint: {status} - {error}")
+            self.logger.error(f"Error retrieving user service endpoint: {status} - {error}")
             return None
 
     def get_ActiveRoomwithUser(self):
@@ -131,7 +128,7 @@ class SleepCycleManager:
         try:
             res = requests.get(f"{self.user_service_endpoint}/getActiveRoomsWithUser")
             if res.status_code != 200:
-                logger.error(f"Failed to sync associations: {res.status_code}")
+                self.logger.error(f"Failed to sync associations: {res.status_code}")
                 return
 
             data = res.json()
@@ -145,9 +142,9 @@ class SleepCycleManager:
                 normalized_map[str(room_id)] = user_id
 
             self.room_to_user_map = normalized_map
-            logger.info(f"Association map synchronized: {self.room_to_user_map}")
+            self.logger.info(f"Association map synchronized: {self.room_to_user_map}")
         except Exception as e:
-            logger.error(f"Exception during association sync: {e}")
+            self.logger.error(f"Exception during association sync: {e}")
 
     def _fetch_and_cache_room_preference(self, userid):
         res = requests.get(f"{self.user_service_endpoint}/getUserRoomPreferences", params={"user_id": userid})
@@ -209,9 +206,9 @@ class SleepCycleManager:
             self.startClient()
             for topic in self.topic_subscribe_raw:
                 self.mqtt_client.mySubscribe(topic)
-            logger.info(f"MQTT client initialized and subscribed to {self.topic_subscribe_raw}")
+            self.logger.info(f"MQTT client initialized and subscribed to {self.topic_subscribe_raw}")
         except Exception as e:
-            logger.error(f"Error initializing MQTT client: {e}")
+            self.logger.error(f"Error initializing MQTT client: {e}")
             self.catalog_client.unregister()
             sys.exit(1)
 
@@ -225,15 +222,15 @@ class SleepCycleManager:
     def publish(self, message, command_topic=None):
         try:
             self.mqtt_client.myPublish(command_topic, message)
-            logger.info(f"Published message to {command_topic}: {message}")
+            self.logger.info(f"Published message to {command_topic}: {message}")
         except Exception as e:
-            logger.error(f"Error publishing message: {e}")
+            self.logger.error(f"Error publishing message: {e}")
 
     def notify(self, topic, payload):
         try:
             message_received = json.loads(payload)
         except json.JSONDecodeError:
-            logger.error(f"Invalid JSON payload received on topic {topic}")
+            self.logger.error(f"Invalid JSON payload received on topic {topic}")
             return
 
         for index, regex in enumerate(self.topic_subscribe_regex):
@@ -248,13 +245,13 @@ class SleepCycleManager:
                 self._handle_preference_topic(topic, message_received)
                 return
 
-        logger.warning(f"Received message on unrecognized topic: {topic}")
+        self.logger.warning(f"Received message on unrecognized topic: {topic}")
 
     def _handle_sensor_topic(self, topic, msg):
         # House/{houseid}/Bedroom/{roomid}/sensor/{sensor_type}/{sensorid}/data
         parts = topic.split("/")
         if len(parts) < 8:
-            logger.warning(f"Invalid sensor topic format: {topic}")
+            self.logger.warning(f"Invalid sensor topic format: {topic}")
             return
 
         house_id = parts[1]
@@ -267,7 +264,7 @@ class SleepCycleManager:
         user_data = self._fetch_and_cache_room_preference(userid)
         if not user_data:
             return
-        logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
+        self.logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
 
         if sensor_type == "ambient_temp":
             desiderate_temp = user_data['live_targets']['temperature']
@@ -289,7 +286,7 @@ class SleepCycleManager:
             return
 
         # Room preferences are now part of user cache, handled through user updates
-        logger.warning(f"Preference topic: {topic}")
+        self.logger.warning(f"Preference topic: {topic}")
 
     def _update_user_preferences(self, userid, message_received):
         if "night_time" not in message_received and "morning_time" not in message_received:
@@ -297,17 +294,17 @@ class SleepCycleManager:
 
         user_cache = self.active_users_cache.get(userid)
         if not user_cache:
-            logger.warning(f"User {userid} not found in cache, will fetch on next sensor event")
+            self.logger.warning(f"User {userid} not found in cache, will fetch on next sensor event")
             return
 
         if "night_time" in message_received:
             user_cache["night_time"] = message_received["night_time"]
-            logger.info(f"Updated night_time for user {userid}: {message_received['night_time']}")
+            self.logger.info(f"Updated night_time for user {userid}: {message_received['night_time']}")
         if "morning_time" in message_received:
             user_cache["morning_time"] = message_received["morning_time"]
-            logger.info(f"Updated morning_time for user {userid}: {message_received['morning_time']}")
+            self.logger.info(f"Updated morning_time for user {userid}: {message_received['morning_time']}")
 
-        logger.info(f"Current user preferences for {userid}: {user_cache}")
+        self.logger.info(f"Current user preferences for {userid}: {user_cache}")
 
 
     def get_actuators_in_room(self, room_id):
@@ -323,17 +320,17 @@ class SleepCycleManager:
                 actuators=list(actuatorslist)
                 return actuators
             except json.JSONDecodeError as e:
-                logger.error(f"Error of decoding JSON for actuators in {room_id}: {e}")
+                self.logger.error(f"Error of decoding JSON for actuators in {room_id}: {e}")
                 return []
         else:
-            logger.error(
+            self.logger.error(
                 f"Error in request to Catalog for actuators in {bedroomid}: {response.status_code} - {response.text}")
             return []
 
     def handle_temperature(self, message_received, room_actuator, desired_temperature, houseid, bedroomid):
         temp_value = message_received['e'][0]['v']
         if desired_temperature is None:
-            logger.warning(f"Desired temperature is None for room {bedroomid}, skipping temperature handling.")
+            self.logger.warning(f"Desired temperature is None for room {bedroomid}, skipping temperature handling.")
             return
         action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuator)
         if not action or not device:
@@ -359,7 +356,7 @@ class SleepCycleManager:
 
         user_data = self.active_users_cache.get(userid)
         if not user_data:
-            logger.warning(f"User {userid} not found in cache for presence handling")
+            self.logger.warning(f"User {userid} not found in cache for presence handling")
             return
 
         # Track when user leaves bed
@@ -373,7 +370,7 @@ class SleepCycleManager:
                     user_data["live_targets"]["last_seen_bed"] = None
                     user_data["live_targets"]["last_left_bed"] = None
                     self.publish({"action": "FINISH_SLEEP", "timestamp": str(datetime.now())}, command_topic=finish_sleep_topic)
-                    logger.info(f"User {userid} finished sleep in {bedroomid}")
+                    self.logger.info(f"User {userid} finished sleep in {bedroomid}")
             return
         else:
             user_data["live_targets"]["last_left_bed"] = None
@@ -390,7 +387,7 @@ class SleepCycleManager:
         topic_heart=f"House/{houseID}/Bedroom/{bedroomID}/heart_rate"
         message = {"action": 1, "timestamp": str(datetime.now())}
         self.publish(message, command_topic=topic_heart)
-        logger.info(f"User {userid} is now sleeping in {bedroomid}")
+        self.logger.info(f"User {userid} is now sleeping in {bedroomid}")
 
     def change_target_temperature_light(self, userid, target_temperature=None, target_light=None, phase=None):
         """
@@ -399,7 +396,7 @@ class SleepCycleManager:
         """
         user_data = self.active_users_cache.get(userid)
         if not user_data:
-            logger.warning(f"User {userid} not found in cache for target update")
+            self.logger.warning(f"User {userid} not found in cache for target update")
             return
 
         if target_temperature is not None:
@@ -411,7 +408,6 @@ class SleepCycleManager:
 
 
 if __name__ == "__main__":
-    logger.setLevel(logging.INFO)
     try:
         with open("conf.json", "r") as f:
             full_conf = json.load(f)
@@ -428,8 +424,15 @@ if __name__ == "__main__":
     # Configure the dispatcher to use GET/POST/PUT/DELETE methods
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+
     try:
-        sleep_cycle_manager = SleepCycleManager(full_conf)
+        sleep_cycle_manager = SleepCycleManager(full_conf, Debug=False, logger=logger)
         cherrypy.tree.mount(sleep_cycle_manager, '/', conf)
         cherrypy.config.update({
             'server.socket_host': full_conf['serviceInfo']['host'],
