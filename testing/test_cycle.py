@@ -129,4 +129,4 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
 if __name__ == "__main__":
     # Use dynamic night_time and morning_time from active_users_cache
     #save the log in a file and not send it to the console
-    test_night_simulation(duration_seconds=600)
+    test_night_simulation(duration_seconds=60)

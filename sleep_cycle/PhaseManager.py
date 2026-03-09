@@ -92,21 +92,23 @@ class PhaseManager:
     def _apply_static_phase(self, userid, user_data, phase):
         t_night = float(user_data['config'].get("temperature_night", 18.0))
         t_morn = float(user_data['config'].get("temperature_morning", 22.0))
+        l_night = float(user_data['config'].get("light_night", 0.0))
 
         if phase == "SLEEP":
             target_t = t_night
+            # During sleep, enforce the night light level.
+            target_l = l_night
         else:
             target_t = t_morn
+            target_l = None
 
         # Clear the transition snapshot so the next transition captures a fresh value
         user_data.get("live_targets", {}).pop("transition_start_light", None)
 
-        # Static phases only control temperature, not light.
-        # Light is left at whatever the actuator currently reports.
         self.manager.change_target_temperature_light(
             userid,
             target_temperature=target_t,
-            target_light=None,
+            target_light=target_l,
             phase=phase
         )
 
