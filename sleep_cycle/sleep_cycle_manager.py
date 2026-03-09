@@ -17,9 +17,16 @@ from mockfase import MockPhaseManager
 # Configure logging
 
 
-def _resolve_temperature_action(temp_value, desired_temperature, room_actuators, prefer_fan=True):
-    # prefer_fan: True = use fan if possible, False = use heater if possible
-    if temp_value > desired_temperature:
+def _resolve_temperature_action(temp_value, desired_temperature, room_actuators, prefer_fan=True, tolerance=0.0):
+    temp_value = float(temp_value)
+    desired_temperature = float(desired_temperature)
+    tol = max(0.0, float(tolerance))
+
+    upper_bound = desired_temperature + tol
+    lower_bound = desired_temperature - tol
+
+    # Above band -> cool down
+    if temp_value > upper_bound:
         if prefer_fan and "fan" in room_actuators:
             return 1, "fan"
         if not prefer_fan and "heater" in room_actuators:
@@ -31,7 +38,8 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
             return 0, "heater"
         return None, None
 
-    if temp_value < desired_temperature:
+    # Below band -> warm up
+    if temp_value < lower_bound:
         if not prefer_fan and "heater" in room_actuators:
             return 1, "heater"
         if prefer_fan and "fan" in room_actuators:
@@ -43,14 +51,15 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
             return 0, "fan"
         return None, None
 
+    # Inside deadband -> keep HVAC off
     if prefer_fan and "fan" in room_actuators:
         return 0, "fan"
     if not prefer_fan and "heater" in room_actuators:
-        return 1, "heater"
+        return 0, "heater"
     if "fan" in room_actuators:
         return 0, "fan"
     if "heater" in room_actuators:
-        return 1, "heater"
+        return 0, "heater"
     return None, None
 
 
@@ -99,6 +108,7 @@ class SleepCycleManager:
         transition_window_min = conf.get('transitionWindowMin', 30)
         phase_check_interval = conf.get('phaseCheckIntervalSec', 60)
         transition_curve_exponent = conf.get('transitionCurveExponent', 1.0)
+        self.temperature_tolerance = float(conf.get('temperatureTolerance', 0.5))
         self.active_users_cache = {}  # {userid: {data_unificata}}
         self.room_to_user_map = {}  # {bedroomid: userid} -> Il nostro Gatekeeper
         self.topic_publish = self.MQTT_info.get('topic_publish', )
@@ -360,14 +370,38 @@ class SleepCycleManager:
             return []
 
     def handle_temperature(self, message_received, room_actuator, desired_temperature, houseid, bedroomid):
-        temp_value = message_received['e'][0]['v']
+        temp_value = float(message_received['e'][0]['v'])
         if desired_temperature is None:
             self.logger.warning(f"Desired temperature is None for room {bedroomid}, skipping temperature handling.")
             return
+
+        tol = max(0.0, float(self.temperature_tolerance))
+        desired_temperature = float(desired_temperature)
+
+        # In-band comfort: force both HVAC actuators OFF to avoid oscillation.
+        if abs(temp_value - desired_temperature) <= tol:
+            base_topic = self.topic_publish[0]
+            for device in ("fan", "heater"):
+                if device not in room_actuator:
+                    continue
+                topic = base_topic.format(
+                    houseID=houseid,
+                    bedroomID=bedroomid,
+                    device=device
+                )
+                self.publish({"action": 0, "timestamp": datetime.now().timestamp()}, command_topic=topic)
+            return
+
         # Use prefer_fan flag from phase_manager if available
         prefer_fan = getattr(self.phase_manager, 'prefer_fan', True)
-        action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuator, prefer_fan=prefer_fan)
-        if not action or not device:
+        action, device = _resolve_temperature_action(
+            temp_value,
+            desired_temperature,
+            room_actuator,
+            prefer_fan=prefer_fan,
+            tolerance=tol
+        )
+        if action is None or device is None:
             return
 
         command = {

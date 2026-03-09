@@ -81,13 +81,20 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
         minute = step % 60
         return hour, minute, step
 
-    def get_night_temp(minute):
+    def get_baseline_temp(minute):
         if minute <= 420:
             return 23 - (4.0 / 420) * minute
-        else:
-            return 18 + (4.0 / 180) * (minute - 420)
+        return 18 + (4.0 / 180) * (minute - 420)
+
+    # Thermal dynamics per simulated minute.
+    fan_cooling_per_min = 0.18
+    heater_warming_per_min = 0.20
+    ambient_pull_factor = 0.06
+    min_temp, max_temp = 14.0, 30.0
+    current_temp = 23.0
 
     def simulation_loop():
+        nonlocal current_temp
         print("--- Simulazione Notte Accelerata ---")
         print("Wind-down phase: 21:30 - 22:00 (30 minutes)")
         print("Night phase: 22:00 - 07:00")
@@ -105,12 +112,24 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
                 manager.phase_manager._check_all_rooms()
 
             hour, minute, virtual_minute = get_virtual_time(step)
-            temp = get_night_temp(virtual_minute)
-            temp_sensor.value = temp
-            temp_sensor.publish_data(temp, unit="°C")
-            presence_value = 1 if (hour >= 22 or hour < 7) else 0
+
+            baseline_temp = get_baseline_temp(virtual_minute)
+            fan_on = getattr(fan_actuator, 'state', 'OFF') == "ON"
+            heater_on = getattr(heater_actuator, 'state', 'OFF') == "ON"
+
+            # Passive drift toward baseline + active actuator impact.
+            current_temp += (baseline_temp - current_temp) * ambient_pull_factor
+            if fan_on:
+                current_temp -= fan_cooling_per_min
+            if heater_on:
+                current_temp += heater_warming_per_min
+            current_temp = max(min_temp, min(max_temp, current_temp))
+
+            temp_sensor.value = current_temp
+            temp_sensor.publish_data(round(current_temp, 2), unit="°C")
+            presence_value = 1 if (hour >= 22 or hour < 8) else 0
             presence_sensor.publish_data(presence_value)
-            print(f"[{hour:02d}:{minute:02d}] Temp={temp:.2f}degC, Presenza={presence_value}, Light={getattr(light_actuator, 'value', '?')}, Fan={getattr(fan_actuator, 'state', '?')}, Heater={getattr(heater_actuator, 'state', '?')}")
+            print(f"[{hour:02d}:{minute:02d}] Temp={current_temp:.2f}degC, Presenza={presence_value}, Light={getattr(light_actuator, 'value', '?')}, Fan={getattr(fan_actuator, 'state', '?')}, Heater={getattr(heater_actuator, 'state', '?')}")
             time.sleep(real_step_seconds)
             if stop_event.is_set():
                 break
