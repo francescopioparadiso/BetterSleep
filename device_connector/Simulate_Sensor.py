@@ -14,6 +14,7 @@ from device_connector.models import Sensor, Actuator , BaseIoTComponent
 
 # -------------------- LOGGING SETUP --------------------
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # -------------------- CONFIG GENERATOR --------------------
 def create_config(
@@ -55,14 +56,24 @@ def create_config(
 
 # -------------------- SENSOR CLASSES --------------------
 class PresenceSensor(Sensor):
-    """Simulates a presence sensor."""
-    def __init__(self, config):
+    """Simulates a presence sensor. In debug mode, only sends values when publish_data is called."""
+    def __init__(self, config, debug=False):
         super().__init__(config, 2)
+        self.debug = debug
+        self._thread = None
+        self._stop_event = threading.Event()
+
     def run(self):
-        while True:
-            val = random.choice([0, 1])
-            self.publish_data(val)
-            time.sleep(15)
+        if not self.debug:
+            while not self._stop_event.is_set():
+                val = random.choice([0, 1])
+                self.publish_data(val)
+                time.sleep(15)
+
+    def stop(self):
+        self._stop_event.set()
+        super().stop()
+
 
 class TemperatureSensor(Sensor):
     """Simulates a body temperature sensor."""
@@ -82,16 +93,16 @@ class HeartRateSensor(Sensor):
         self.is_sleeping = False
     def notify(self, topic, payload):
         try:
-            data = json.loads(payload)
+            data=json.loads(payload)
             action = data.get("action")
             if action == "START_SLEEPING":
                 self.is_sleeping = True
-                print("\n[HR SENSOR] Starting Sleep Cycle Monitoring...\n")
+                logger.info("[HR SENSOR] Starting Sleep Cycle Monitoring...")
             elif action == "STOP_SLEEPING":
                 self.is_sleeping = False
-                print("\n[HR SENSOR] Stopping Monitoring.\n")
+                logger.info("[HR SENSOR] Stopping Monitoring.")
         except Exception as e:
-            print("Invalid command", e)
+            logger.error(f"[HR SENSOR] Error processing command on topic '{topic}': {e}")
     def run(self):
         while True:
             if self.is_sleeping:
@@ -116,11 +127,13 @@ class LightActuator(Actuator):
         super().__init__(config)
     def notify(self, topic, payload):
         try:
+
             data = json.loads(payload)
-            state = data.get("state")
-            print(f"\n[LIGHT ACTUATOR] Received command: {state}\n")
+            action = data.get("action")
+            logger.info(f"[LIGHT ACTUATOR] Received command: {action}")
         except Exception as e:
-            print("Invalid command", e)
+            logger.error(f"[LIGHT ACTUATOR] Error processing command on topic '{topic}': {e}")
+
 class HeaterActuator(Actuator):
     """Simulates a heater actuator."""
     def __init__(self, config):
@@ -128,22 +141,30 @@ class HeaterActuator(Actuator):
     def notify(self, topic, payload):
         try:
             data = json.loads(payload)
-            state = data.get("state")
-            print(f"\n[HEATER ACTUATOR] Received command: {state}\n")
+            state = data.get("action")
+            logger.info(f"[HEATER ACTUATOR] Received command: {state}")
         except Exception as e:
-            print("Invalid command", e)
+            logger.error(f"[HEATER ACTUATOR] Error processing command on topic '{topic}': {e}")
+
 class FanActuator(Actuator):
     """Simulates a fan actuator."""
     def __init__(self, config):
         super().__init__(config)
+        self.state = "OFF"
 
     def notify(self, topic, payload):
         try:
-            data = json.loads(payload)
-            state = data.get("state")
-            print(f"\n[FAN ACTUATOR] Received command: {state}\n")
+            data= json.loads(payload)
+            action = data.get("action")
+            if action:
+                self.state = "ON"
+            else:
+                self.state = "OFF"
+
+            logger.info(f"[FAN ACTUATOR] Received command: {action}, Fan state: {self.state}")
         except Exception as e:
-            print("Invalid command", e)
+            logger.error(f"[FAN ACTUATOR] Error processing command on topic '{topic}': {e}")
+
 # -------------------- MAIN LOGIC --------------------
 if __name__ == "__main__":
     CATALOG_URL = "http://127.0.0.1:8080"
@@ -184,12 +205,11 @@ if __name__ == "__main__":
     # Start threads
     for d in devices:
         threading.Thread(target=d.run, daemon=True).start()
-    print(f"\n--- House {HOUSE} Room {ROOM} Simulation Active ---\n")
+    logger.info(f"--- House {HOUSE} Room {ROOM} Simulation Active ---")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nShutting down devices...\n")
-
+        logger.info("Shutting down devices...")
         for d in devices:
             d.stop()

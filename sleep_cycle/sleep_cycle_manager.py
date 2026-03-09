@@ -224,7 +224,7 @@ class SleepCycleManager:
 
     def publish(self, message, command_topic=None):
         try:
-            self.mqtt_client.myPublish(command_topic, json.dumps(message))
+            self.mqtt_client.myPublish(command_topic, message)
             logger.info(f"Published message to {command_topic}: {message}")
         except Exception as e:
             logger.error(f"Error publishing message: {e}")
@@ -270,7 +270,13 @@ class SleepCycleManager:
         logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
 
         if sensor_type == "ambient_temp":
-            desiderate_temp = user_data['live_targets']['temperature']  #!TODO make a check if the live target are empity
+            desiderate_temp = user_data['live_targets']['temperature']
+            if desiderate_temp is None:
+                phase = user_data['live_targets'].get('phase')
+                if phase == "SLEEP":
+                    desiderate_temp = user_data['config'].get('temperature_night', 18.0)
+                else:
+                    desiderate_temp = user_data['config'].get('temperature_morning', 22.0)
             room_actuators = user_data['config']['actuators']
             self.handle_temperature(msg, room_actuators, desiderate_temp, house_id, room_id)
         elif sensor_type == "presence":
@@ -325,15 +331,16 @@ class SleepCycleManager:
             return []
 
     def handle_temperature(self, message_received, room_actuator, desired_temperature, houseid, bedroomid):
-
         temp_value = message_received['e'][0]['v']
+        if desired_temperature is None:
+            logger.warning(f"Desired temperature is None for room {bedroomid}, skipping temperature handling.")
+            return
         action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuator)
-
         if not action or not device:
             return
 
         command = {
-            "value": action,
+            "action": action,
             "timestamp": datetime.now().timestamp()
         }
         base_topic=self.topic_publish[0]
@@ -343,7 +350,8 @@ class SleepCycleManager:
             bedroomID=bedroomid,
             device=device
         )
-        self.publish(json.dumps(command), command_topic=topic)
+        self.publish(command, command_topic=topic)
+
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']
         topic_to_publish = self.topic_publish[1].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
