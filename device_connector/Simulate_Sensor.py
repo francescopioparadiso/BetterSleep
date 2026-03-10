@@ -10,7 +10,7 @@ import json
 import random
 import logging
 
-from device_connector.models import Sensor, Actuator , BaseIoTComponent
+from device_connector.models import Sensor, Actuator
 
 # -------------------- LOGGING SETUP --------------------
 logging.basicConfig(level=logging.INFO)
@@ -128,34 +128,17 @@ class LightActuator(Actuator):
         self.value = 0
         self.timestamp_provider = time.time
 
-
-    def _publish_state(self, timestamp=None):
-
-        if timestamp is None:
-            timestamp = float(self.timestamp_provider())
-
-        payload = {
-            "bn": f"{self.service_info.get('houseID')}:{self.service_info.get('roomID')}:{self.service_info.get('ActuatorID')}:light",
-            "e": [{
-                "n": "LightLevel",
-                "v": self.value,
-                "u": "%",
-                "t": timestamp
-            }]
-        }
-        self.publish(payload, command_topic=self.topic_publish)
-
     def notify(self, topic, payload):
         try:
             data = json.loads(payload)
-
             action = data.get("action")
             value = data.get("value")
             if action == "SET" and value is not None:
                 next_value = int(value)
                 if next_value != self.value:
                     self.value = next_value
-                    self._publish_state()
+                    # Publish state change
+                    self.publish_data(self.value, unit="%", name="LightLevel")
 
             logger.info(f"[LIGHT ACTUATOR] Received command: {action} with value: {value}")
         except Exception as e:
@@ -166,16 +149,24 @@ class HeaterActuator(Actuator):
     def __init__(self, config):
         super().__init__(config)
         self.state = "OFF"
+        self.previous_state = None
+        self.timestamp_provider = time.time
 
     def notify(self, topic, payload):
         try:
-            data= json.loads(payload)
+            data = json.loads(payload)
             action = data.get("action")
             if action:
                 self.state = "ON"
             else:
                 self.state = "OFF"
-            logger.info(f"[HEATER ACTUATOR] Received command: {action}, Fan state: {self.state}")
+
+            # Publish state only if it changed
+            if self.state != self.previous_state:
+                self.previous_state = self.state
+                self.publish_data(1 if self.state == "ON" else 0, name="HeaterState")
+
+            logger.info(f"[HEATER ACTUATOR] Received command: {action}, Heater state: {self.state}")
         except Exception as e:
             logger.error(f"[HEATER ACTUATOR] Error processing command on topic '{topic}': {e}")
 
@@ -184,15 +175,22 @@ class FanActuator(Actuator):
     def __init__(self, config):
         super().__init__(config)
         self.state = "OFF"
+        self.previous_state = None
+        self.timestamp_provider = time.time
 
     def notify(self, topic, payload):
         try:
-            data= json.loads(payload)
+            data = json.loads(payload)
             action = data.get("action")
             if action:
                 self.state = "ON"
             else:
                 self.state = "OFF"
+
+            # Publish state only if it changed
+            if self.state != self.previous_state:
+                self.previous_state = self.state
+                self.publish_data(1 if self.state == "ON" else 0, name="FanState")
 
             logger.info(f"[FAN ACTUATOR] Received command: {action}, Fan state: {self.state}")
         except Exception as e:
@@ -223,8 +221,20 @@ if __name__ == "__main__":
     )
     c_light = create_config(
         CATALOG_URL, "5", "Light", "light", HOUSE, ROOM, BROKER_IP, PORT,
-        topic_publish="House/{houseID}/Bedroom/{roomID}/sensor/light/{ActuatorID}/data",
+        topic_publish="House/{houseID}/Bedroom/{roomID}/actuator/light/data",
         topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/actuator/light/command",
+        is_sensor=False
+    )
+    c_heater = create_config(
+        CATALOG_URL, "6", "Heater", "heater", HOUSE, ROOM, BROKER_IP, PORT,
+        topic_publish="House/{houseID}/Bedroom/{roomID}/actuator/heater/data",
+        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/actuator/heater/command",
+        is_sensor=False
+    )
+    c_fan = create_config(
+        CATALOG_URL, "7", "Fan", "fan", HOUSE, ROOM, BROKER_IP, PORT,
+        topic_publish="House/{houseID}/Bedroom/{roomID}/actuator/fan/data",
+        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/actuator/fan/command",
         is_sensor=False
     )
     # Device instances
@@ -233,8 +243,10 @@ if __name__ == "__main__":
     body_temp = TemperatureSensor(c_temp)
     vibration = VibrationSensor(c_vib)
     light_actuator = LightActuator(c_light)
+    heater_actuator = HeaterActuator(c_heater)
+    fan_actuator = FanActuator(c_fan)
     # Add actuators to devices list
-    devices = [presence, heart_rate, body_temp, vibration, light_actuator]
+    devices = [presence, heart_rate, body_temp, vibration, light_actuator, heater_actuator, fan_actuator]
     # Start threads
     for d in devices:
         threading.Thread(target=d.run, daemon=True).start()

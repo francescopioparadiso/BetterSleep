@@ -207,6 +207,9 @@ class SleepCycleManager:
             },
             "live_values": {
                 "light": previous_live_values.get("light"),  # Actual light sensor reading
+                "light_actuator": previous_live_values.get("light_actuator"),  # Light actuator state (%)
+                "heater_state": previous_live_values.get("heater_state"),  # Heater state (0/1)
+                "fan_state": previous_live_values.get("fan_state"),  # Fan state (0/1)
                 "phase": previous_live_values.get("phase"),  # Current phase (DAY/WIND_DOWN/SLEEP/WAKE_UP)
                 "last_seen_bed": previous_live_values.get("last_seen_bed"),  # Timestamp when entered bed
                 "last_left_bed": previous_live_values.get("last_left_bed")  # Timestamp when left bed
@@ -263,6 +266,10 @@ class SleepCycleManager:
                 return
 
             if index == 1:
+                self._handle_actuator_topic(topic, message_received)
+                return
+
+            if index == 2:
                 self._handle_preference_topic(topic, message_received)
                 return
 
@@ -310,6 +317,46 @@ class SleepCycleManager:
                 user_data['live_values']['light'] = current_light
             except Exception:
                 self.logger.warning(f"Invalid light payload for user {userid}: {msg}")
+
+    def _handle_actuator_topic(self, topic, msg):
+        # House/{houseid}/Bedroom/{roomid}/actuator/{device_type}/data
+        parts = topic.split("/")
+        if len(parts) < 7:
+            self.logger.warning(f"Invalid actuator topic format: {topic}")
+            return
+
+        house_id = parts[1]
+        room_id = parts[3]
+        device_type = parts[5]  # light, heater, fan
+
+        userid = self.room_to_user_map.get(room_id)
+        if userid is None:
+            return  # ignore events for rooms without an active user
+
+        user_data = self.active_users_cache.get(userid)
+        if not user_data:
+            user_data = self._fetch_and_cache_room_preference(userid)
+        if not user_data:
+            return
+
+        self.logger.info(f"Handling actuator event for user {userid} in room {room_id}, device: {device_type}")
+
+        try:
+            # Extract value from SenML payload
+            if 'e' in msg and len(msg['e']) > 0:
+                value = msg['e'][0].get('v')
+
+                if device_type == "light":
+                    user_data['live_values']['light_actuator'] = value
+                    self.logger.debug(f"Light actuator state updated: {value}%")
+                elif device_type == "heater":
+                    user_data['live_values']['heater_state'] = value
+                    self.logger.debug(f"Heater actuator state updated: {value}")
+                elif device_type == "fan":
+                    user_data['live_values']['fan_state'] = value
+                    self.logger.debug(f"Fan actuator state updated: {value}")
+        except Exception as e:
+            self.logger.warning(f"Invalid actuator payload for user {userid}: {e}")
 
     def _handle_preference_topic(self, topic, message_received):
         preference_kind, entity_id = _parse_preference_topic(topic)

@@ -21,6 +21,12 @@ def setup_manager():
     return SleepCycleManager(conf, Debug=True,logger=logger)
 
 
+def load_test_config(config_path="conf_test.json"):
+    """Load test cycle configuration from JSON file."""
+    with open(config_path, "r") as f:
+        return json.load(f)
+
+
 
 def test_night_simulation(duration_seconds=600, presence_decider=None):
     """
@@ -44,10 +50,13 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
         07:00-07:30: Wake-up phase (light brightens, temp adjusts)
         07:30-08:00: Day phase (user awake)
     """
+    # Load configuration
+    config = load_test_config()
+
     manager = setup_manager()
-    userid = "1"
-    houseid = "1"
-    bedroomid = "1"
+    userid = config["simulation"]["userid"]
+    houseid = config["simulation"]["houseid"]
+    bedroomid = config["simulation"]["bedroomid"]
 
     # Initialize the user cache by triggering a fetch before simulation starts
     manager._fetch_and_cache_room_preference(userid)
@@ -55,37 +64,56 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     # Wait for MQTT connections to stabilize
     time.sleep(2)
 
-    # Sensor and actuator configuration
-    # All devices communicate via MQTT broker and register with the catalog service
-    CATALOG_URL = "http://127.0.0.1:8080"
-    BROKER_IP = "broker.hivemq.com"
-    PORT = 1883
-    PUB_TEMPLATE = f"House/{houseid}/Bedroom/{bedroomid}/sensor/ambient_temp/1/data"
+    # Extract configuration values
+    catalog_url = config["catalog"]["url"]
+    broker_ip = config["mqtt"]["broker"]
+    port = config["mqtt"]["port"]
 
-    # Temperature sensor: monitors room ambient temperature
+    sensors_config = config["sensors"]
+    actuators_config = config["actuators"]
+    thermal_config = config["thermal_dynamics"]
+
+    # ...existing code...
+
+    # Create sensor configurations from JSON
+    sensor_configs = {}
+
+    # Temperature sensor
+    temp_config = sensors_config["temperature"]
     c_temp = create_config(
-        CATALOG_URL, "1", "Temperature", "ambient_temp", houseid, bedroomid, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE
+        catalog_url, temp_config["sensorID"], temp_config["name"], temp_config["type"],
+        houseid, bedroomid, broker_ip, port, topic_publish=temp_config["topic_publish"]
     )
+    sensor_configs["temp"] = c_temp
 
-    # Heart rate sensor: monitors user's heart rate during sleep
+    # Heart rate sensor
+    hr_config = sensors_config["heart_rate"]
     c_heart_rate = create_config(
-        CATALOG_URL, "2", "HeartRate", "heart_rate", houseid, bedroomid, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE,
-        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/heart_rate"
+        catalog_url, hr_config["sensorID"], hr_config["name"], hr_config["type"],
+        houseid, bedroomid, broker_ip, port, topic_publish=hr_config["topic_publish"],
+        topic_subscribe=hr_config["topic_subscribe"]
     )
+    sensor_configs["hr"] = c_heart_rate
 
-    # Presence sensor: detects if user is in bed (1) or out of bed (0)
+    # Presence sensor
+    pres_config = sensors_config["presence"]
     c_pres = create_config(
-        CATALOG_URL, "1", "Presence", "presence", houseid, bedroomid, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE
+        catalog_url, pres_config["sensorID"], pres_config["name"], pres_config["type"],
+        houseid, bedroomid, broker_ip, port, topic_publish=pres_config["topic_publish"]
     )
+    sensor_configs["presence"] = c_pres
 
-    # Vibration sensor: detects movement/restlessness during sleep
+    # Vibration sensor
+    vib_config = sensors_config["vibration"]
     c_vibration = create_config(
-        CATALOG_URL, "3", "Vibration", "vibration", houseid, bedroomid, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE
+        catalog_url, vib_config["sensorID"], vib_config["name"], vib_config["type"],
+        houseid, bedroomid, broker_ip, port, topic_publish=vib_config["topic_publish"]
     )
+    sensor_configs["vibration"] = c_vibration
 
     # Create sensor instances
     temp_sensor = TemperatureSensor(c_temp)
-    heart_rate_sensor = HeartRateSensor(c_heart_rate )
+    heart_rate_sensor = HeartRateSensor(c_heart_rate)
     vibration_sensor = VibrationSensor(c_vibration)
     presence_sensor = PresenceSensor(c_pres)
 
@@ -103,41 +131,56 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     for sensor in (temp_sensor, heart_rate_sensor, vibration_sensor, presence_sensor):
         sensor.timestamp_provider = simulated_timestamp
 
-    # Actuator configurations
-    # Light actuator: controls bedroom brightness (0-100%)
+    # Create actuator configurations from JSON
+    actuator_configs = {}
+
+    # Light actuator
+    light_cfg = actuators_config["light"]
     c_light = create_config(
-        CATALOG_URL, "1", "Light", "light", houseid, bedroomid, BROKER_IP, PORT,
-        topic_publish="House/{houseID}/Bedroom/{roomID}/sensor/light/{ActuatorID}/data",
-        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command", is_sensor=False
+        catalog_url, light_cfg["actuatorID"], light_cfg["name"], light_cfg["type"],
+        houseid, bedroomid, broker_ip, port, topic_publish=light_cfg["topic_publish"],
+        topic_subscribe=light_cfg["topic_subscribe"], is_sensor=False
     )
+    actuator_configs["light"] = c_light
 
-    # Heater actuator: warms the room when temperature is below target
+    # Heater actuator
+    heater_cfg = actuators_config["heater"]
     c_heater = create_config(
-        CATALOG_URL, "2", "Heater", "heater", houseid, bedroomid, BROKER_IP, PORT,
-        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/actuator/heater/command", is_sensor=False
+        catalog_url, heater_cfg["actuatorID"], heater_cfg["name"], heater_cfg["type"],
+        houseid, bedroomid, broker_ip, port, topic_publish=heater_cfg["topic_publish"],
+        topic_subscribe=heater_cfg["topic_subscribe"], is_sensor=False
     )
+    actuator_configs["heater"] = c_heater
 
-    # Fan actuator: cools the room when temperature is above target
+    # Fan actuator
+    fan_cfg = actuators_config["fan"]
     c_fan = create_config(
-        CATALOG_URL, "3", "Fan", "fan", houseid, bedroomid, BROKER_IP, PORT,
-        topic_subscribe=f"House/{houseid}/Bedroom/{bedroomid}/actuator/fan/command", is_sensor=False
+        catalog_url, fan_cfg["actuatorID"], fan_cfg["name"], fan_cfg["type"],
+        houseid, bedroomid, broker_ip, port, topic_publish=fan_cfg["topic_publish"],
+        topic_subscribe=fan_cfg["topic_subscribe"], is_sensor=False
     )
+    actuator_configs["fan"] = c_fan
 
     # Create actuator instances
     fan_actuator = FanActuator(c_fan)
     heater_actuator = HeaterActuator(c_heater)
     light_actuator = LightActuator(c_light)
 
-    # Initialize light at 50% brightness
+    # Inject simulated timestamp provider into all actuators
+    for actuator in (fan_actuator, heater_actuator, light_actuator):
+        actuator.timestamp_provider = simulated_timestamp
+
+    # Initialize light at 50% brightness and publish state
     light_actuator.value = 50
-    light_actuator._publish_state()
+    light_actuator.publish_data(light_actuator.value, unit="%", name="LightLevel")
 
 
     stop_event = threading.Event()
 
-    # Simulation time configuration: 21:00 (9 PM) to 08:00 (8 AM) = 11 hours = 660 minutes
-    total_minutes = 660  # 11 ore virtuali (21:00 -> 08:00)
-    steps = 660  # Each step = 1 simulated minute
+    # Simulation time configuration from config
+    sim_phases = config["simulation_phases"]
+    total_minutes = sim_phases["total_minutes"]
+    steps = sim_phases["steps"]
     real_step_seconds = duration_seconds / steps  # Real time per simulated minute
 
     def get_virtual_time(step):
@@ -157,7 +200,7 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     def get_baseline_temp(minute):
         """
         Calculate baseline room temperature without HVAC intervention.
-        Simulates natural cooling during night (21:00-07:00) and warming in morning (07:00-08:00).
+        Simulates natural cooling during night and warming in morning.
 
         Args:
             minute: Virtual minutes elapsed since 21:00
@@ -165,18 +208,28 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
         Returns:
             float: Target baseline temperature in °C
         """
-        # Night cooling phase: 21:00-07:00 (600 minutes): 23°C -> 18°C
-        if minute <= 600:
-            return 23 - (5.0 / 600) * minute
-        # Morning warming phase: 07:00-08:00 (60 minutes): 18°C -> 22°C
-        return 18 + (4.0 / 60) * (minute - 600)
+        # Extract phase boundaries from config (in hours)
+        sleep_end_hour = sim_phases["sleep_end"]
+        wake_up_start_hour = sim_phases["wake_up_start"]
 
-    # Thermal dynamics configuration (per simulated minute)
-    fan_cooling_per_min = 0.18      # Temperature decrease when fan is ON (°C/min)
-    heater_warming_per_min = 0.20   # Temperature increase when heater is ON (°C/min)
-    ambient_pull_factor = 0.06      # Natural drift toward baseline (0-1, higher = faster)
-    min_temp, max_temp = 14.0, 30.0 # Physical temperature bounds
-    current_temp = 23.0             # Starting temperature at 21:00
+        # Convert hours to minutes
+        sleep_end_min = int(sleep_end_hour * 60) - 21 * 60  # Adjust for start time 21:00
+        wake_up_start_min = int(wake_up_start_hour * 60) - 21 * 60
+
+        # Night cooling phase: 21:00-07:00 (600 minutes): 23°C -> 18°C
+        if minute <= sleep_end_min:
+            return 23 - (5.0 / sleep_end_min) * minute
+        # Morning warming phase: 07:00-08:00 (60 minutes): 18°C -> 22°C
+        morning_duration = total_minutes - sleep_end_min
+        return 18 + (4.0 / morning_duration) * (minute - sleep_end_min)
+
+    # Thermal dynamics configuration from config
+    fan_cooling_per_min = thermal_config["fan_cooling_per_min"]
+    heater_warming_per_min = thermal_config["heater_warming_per_min"]
+    ambient_pull_factor = thermal_config["ambient_pull_factor"]
+    min_temp = thermal_config["min_temp"]
+    max_temp = thermal_config["max_temp"]
+    current_temp = thermal_config["starting_temp"]
 
     def simulation_loop():
         """
@@ -250,16 +303,17 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
             vibration_sensor.publish_data(round(vibration_value, 3), unit="g", timestamp=sim_ts)
 
             # Get current phase safely from live_values
-            phase = manager.active_users_cache.get(userid, {}).get("live_values", {}).get("phase", "UNKNOWN")
+            user_live_values = manager.active_users_cache.get(userid, {}).get("live_values", {})
+            phase = user_live_values.get("phase", "UNKNOWN")
+
 
             # Console output for monitoring
             print(f"[{hour:02d}:{minute:02d}] Temp={current_temp:.2f}°C, Presenza={presence_value}, "
                   f"Light={getattr(light_actuator, 'value', '?')}%, "
                   f"Fan={getattr(fan_actuator, 'state', '?')}, "
                   f"Heater={getattr(heater_actuator, 'state', '?')}, "
-                  f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g"
-                  f", Phase={phase}")
-
+                  f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g, "
+                  f"Phase={phase} ")
 
             # Real-time delay between simulation steps
             time.sleep(real_step_seconds)

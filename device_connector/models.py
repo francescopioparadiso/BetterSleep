@@ -14,6 +14,7 @@ from common.catalog_client import CatalogClient
 logger = logging.getLogger(__name__)
 
 
+
 class BaseIoTComponent:
     def __init__(self, config):
         self.config = config
@@ -21,6 +22,7 @@ class BaseIoTComponent:
         self.service_info = config.get("serviceInfo", {})
         self.remove_interval = config.get("removeInterval", 30)
         self.MQTT_info = config.get("MQTT", {})
+        self.timestamp_provider = time.time
 
         # 1. Identify Device Type
         if "sensorID" in self.service_info:
@@ -109,6 +111,41 @@ class BaseIoTComponent:
         except Exception as e:
             logger.error(f"Error publishing message: {e}")
 
+    def publish_data(self, value, unit=None, timestamp=None, name=None):
+        """Generic method to publish data for both sensors and actuators.
+
+        Args:
+            value: The data value to publish
+            unit: Unit of measurement (optional)
+            timestamp: Timestamp (defaults to current time)
+            name: Name of the measurement (optional, defaults to sensor_type_long for sensors)
+        """
+        house_id = self.service_info.get("houseID")
+        room_id = self.service_info.get("roomID")
+
+        if self.category == "sensor":
+            comp_id = self.service_info.get("sensorID")
+        else:
+            comp_id = self.service_info.get("ActuatorID")
+
+        if timestamp is None:
+            timestamp = float(self.timestamp_provider())
+
+        # Use provided name, fallback to sensor_type_long for sensors, or use component type
+        measurement_name = name or getattr(self, 'sensor_type_long', self.service_info.get('type', 'Value').title())
+
+        payload = {
+            "bn": f"{house_id}:{room_id}:{comp_id}:{self.service_info.get('type', 'unknown')}",
+            "e": [{
+                "n": measurement_name,
+                "v": value,
+                "u": unit,
+                "t": timestamp
+            }]
+        }
+
+        self.publish(payload, command_topic=self.topic_publish)
+
 class Sensor(BaseIoTComponent):
 
     def __init__(self, config, sensor_type):
@@ -126,26 +163,6 @@ class Sensor(BaseIoTComponent):
 
         # then in your class
         self.sensor_type_long = sensortype.get(sensor_type, "Unknown")
-
-    def publish_data(self, value, unit=None, timestamp=None):
-        house_id = self.service_info.get("houseID")
-        room_id = self.service_info.get("roomID")
-        sensor_id = self.service_info.get("sensorID")
-
-        if timestamp is None:
-            timestamp = float(self.timestamp_provider())
-
-        payload = {
-            "bn": f"{house_id}:{room_id}:{sensor_id}:{self.sensor_type}",
-            "e": [{
-                "n" : self.sensor_type_long,
-                "v": value,
-                "u": unit,
-                "t": timestamp
-            }]
-        }
-
-        self.publish(payload, command_topic=self.topic_publish)
 class Actuator(BaseIoTComponent):
     def notify(self, topic, payload):
         try:

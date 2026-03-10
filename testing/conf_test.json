@@ -1,0 +1,86 @@
+{
+  "simulation": {
+    "duration_seconds": 60,
+    "userid": "1",
+    "houseid": "1",
+    "bedroomid": "1"
+  },
+  "catalog": {
+    "url": "http://127.0.0.1:8080"
+  },
+  "mqtt": {
+    "broker": "broker.hivemq.com",
+    "port": 1883
+  },
+  "sensors": {
+    "temperature": {
+      "sensorID": "1",
+      "name": "Temperature",
+      "type": "ambient_temp",
+      "topic_publish": "House/{houseID}/Bedroom/{roomID}/sensor/ambient_temp/{sensorID}/data"
+    },
+    "heart_rate": {
+      "sensorID": "2",
+      "name": "HeartRate",
+      "type": "heart_rate",
+      "topic_publish": "House/{houseID}/Bedroom/{roomID}/sensor/heart_rate/{sensorID}/data",
+      "topic_subscribe": "House/{houseID}/Bedroom/{roomID}/heart_rate"
+    },
+    "presence": {
+      "sensorID": "3",
+      "name": "Presence",
+      "type": "presence",
+      "topic_publish": "House/{houseID}/Bedroom/{roomID}/sensor/presence/{sensorID}/data"
+    },
+    "vibration": {
+      "sensorID": "4",
+      "name": "Vibration",
+      "type": "vibration",
+      "topic_publish": "House/{houseID}/Bedroom/{roomID}/sensor/vibration/{sensorID}/data"
+    }
+  },
+  "actuators": {
+    "light": {
+      "actuatorID": "1",
+      "name": "Light",
+      "type": "light",
+      "topic_publish": "House/{houseID}/Bedroom/{roomID}/actuator/light/data",
+      "topic_subscribe": "House/{houseID}/Bedroom/{roomID}/actuator/light/command"
+    },
+    "heater": {
+      "actuatorID": "2",
+      "name": "Heater",
+      "type": "heater",
+      "topic_publish": "House/{houseID}/Bedroom/{roomID}/actuator/heater/data",
+      "topic_subscribe": "House/{houseID}/Bedroom/{roomID}/actuator/heater/command"
+    },
+    "fan": {
+      "actuatorID": "3",
+      "name": "Fan",
+      "type": "fan",
+      "topic_publish": "House/{houseID}/Bedroom/{roomID}/actuator/fan/data",
+      "topic_subscribe": "House/{houseID}/Bedroom/{roomID}/actuator/fan/command"
+    }
+  },
+  "thermal_dynamics": {
+    "fan_cooling_per_min": 0.18,
+    "heater_warming_per_min": 0.20,
+    "ambient_pull_factor": 0.06,
+    "min_temp": 14.0,
+    "max_temp": 30.0,
+    "starting_temp": 23.0
+  },
+  "simulation_phases": {
+    "total_minutes": 660,
+    "steps": 660,
+    "start_hour": 21,
+    "end_hour": 8,
+    "wind_down_start": 21.5,
+    "wind_down_end": 22.0,
+    "sleep_start": 22.0,
+    "sleep_end": 7.0,
+    "wake_up_start": 7.5,
+    "wake_up_end": 8.0
+  }
+}
+

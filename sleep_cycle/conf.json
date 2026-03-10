@@ -11,6 +11,7 @@
     "port": 1883,
     "topic_subscribe": [
       "House/+/Bedroom/+/sensor/+/+/data",
+      "House/+/Bedroom/+/actuator/+/data",
       "UserService/ChangePreference/#"
     ],
     "topic_publish": [
