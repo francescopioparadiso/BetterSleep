@@ -1,0 +1,412 @@
+import json
+import os
+import sys
+import logging
+import cherrypy
+import requests
+import re
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from common.catalog_client import CatalogClient
+from common.MQTT.MyMQTT import MyMQTT
+from datetime import datetime
+
+from common.common import mqtt_to_regex, json_error_page
+from PhaseManager import PhaseManager
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_temperature_action(temp_value, desired_temperature, room_actuators):
+    if temp_value > desired_temperature:
+        if "fan" in room_actuators:
+            return 1, "fan"
+        if "heater" in room_actuators:
+            return 0, "heater"
+        return None, None
+
+    if temp_value < desired_temperature:
+        if "fan" in room_actuators:
+            return 0, "fan"
+        if "heater" in room_actuators:
+            return 1, "heater"
+        return None, None
+
+    if "fan" in room_actuators:
+        return 0, "fan"
+    if "heater" in room_actuators:
+        return 1, "heater"
+    return None, None
+
+
+def _build_command(action, device):
+    return {"action": action, "device": device, "timestamp": datetime.now().timestamp()}
+
+
+def _parse_sensor_topic(topic):
+    parts = topic.split("/")
+    if len(parts) < 7:
+        return None
+    return parts[1], parts[3], parts[5]
+
+
+def _parse_preference_topic(topic):
+    parts = topic.split("/")
+
+    # UserService/ChangePreference/User/{userID}/Preference/
+    if len(parts) >= 5 and parts[2] == "User":
+        return "user", parts[3]
+
+    # UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
+    if len(parts) >= 8 and parts[2] == "House":
+        return "room", parts[5]
+
+    return None, None
+
+
+class SleepCycleManager:
+    exposed = True
+    SLEEP_DETECTION_SECONDS = 10
+
+    def __init__(self, conf):
+        self.mqtt_client = None
+        self.catalog_url = conf['catalogURL']
+        self.service_info = conf['serviceInfo']
+        self.remove_interval = conf.get('removeInterval', 10)
+        self.catalog_client = CatalogClient(self.catalog_url, self.service_info, self.remove_interval)
+        self.catalog_client.register()
+        self.MQTT_info = conf['MQTT']
+        self.user_service_endpoint = self.get_endpoint_user_service()
+        self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']
+        self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
+        transition_window_min = conf.get('transitionWindowMin', 30)
+        phase_check_interval = conf.get('phaseCheckIntervalSec', 60)
+        transition_curve_exponent = conf.get('transitionCurveExponent', 1.0)
+        self.active_users_cache = {}  # {userid: {data_unificata}}
+        self.room_to_user_map = {}  # {bedroomid: userid} -> Il nostro Gatekeeper
+        self.topic_publish = self.MQTT_info.get('topic_publish', )
+        self.phase_manager = PhaseManager(
+            manager_instance=self,
+            transition_window_min=transition_window_min,
+            check_interval=phase_check_interval,
+            transition_curve_exponent=transition_curve_exponent
+        )
+        self.phase_manager.start()
+        self.init_mqtt_client()
+        self.get_ActiveRoomwithUser()
+
+    def get_endpoint_user_service(self):
+        data, status, error = self.catalog_client.get(f"getEndpointUserService")
+        if status == 200 and data:
+            endpoint = data.get("endpoint")
+            if endpoint:
+                logger.info(f"User service endpoint retrieved: {endpoint}")
+                return endpoint
+            else:
+                logger.error("User service endpoint not found in Catalog response")
+                return None
+        else:
+            logger.error(f"Error retrieving user service endpoint: {status} - {error}")
+            return None
+
+    def get_ActiveRoomwithUser(self):
+        """
+        Fetches active associations and normalizes them to RoomID -> UserID mapping.
+        Accepts either {room_id: user_id} or {user_id: room_id} from user service.
+        """
+        try:
+            res = requests.get(f"{self.user_service_endpoint}/getActiveRoomsWithUser")
+            if res.status_code != 200:
+                logger.error(f"Failed to sync associations: {res.status_code}")
+                return
+
+            data = res.json()
+            raw_map = data.get("active_rooms", data)
+            normalized_map = {}
+            print(raw_map)
+
+
+            self.room_to_user_map = raw_map
+            logger.info(f"Association map synchronized: {self.room_to_user_map}")
+        except Exception as e:
+            logger.error(f"Exception during association sync: {e}")
+
+    def _fetch_and_cache_room_preference(self, userid):
+        res = requests.get(f"{self.user_service_endpoint}/getUserRoomPreferences", params={"user_id": userid})
+        if res.status_code != 200:
+            return None
+
+        data = res.json()
+        pref = data.get("preferences", {})
+
+        # Backward compatibility with nested response shape from user_service/postgres_db.
+        if "user_preferences" in pref:
+            pref = pref.get("user_preferences", {})
+
+        u_id = int(userid)
+        r_id = int(pref.get("room_id", 0))
+
+        # 1. Cleanup: If the user changed rooms, remove them from the old room mapping
+        if u_id in self.active_users_cache:
+            old_r = self.active_users_cache[u_id].get('active_room_id')
+            if old_r and old_r in self.room_to_user_map:
+                # Only delete if this user is the one currently mapped to that room
+                if self.room_to_user_map[old_r] == u_id:
+                    del self.room_to_user_map[old_r]
+
+
+        # 3. Update Unified Cache
+        self.active_users_cache[u_id] = {
+            "active_room_id": r_id,
+            "house_id": int(pref.get('house_id', 0)),
+            "night_time": pref.get('night_time'),
+            "morning_time": pref.get('morning_time'),
+            "is_sleeping": pref.get('is_sleeping', False),
+            "config": {
+                "temperature_night": float(pref.get('temperature_night', 18.0)),
+                "temperature_morning": float(pref.get('temperature_morning', 22.0)),
+                "light_night": float(pref.get('light_night', 0.0)),
+                "light_morning": float(pref.get('light_morning', 100.0)),
+                "actuators": pref.get('actuators', [])
+            },
+            "live_targets": {
+                "temperature": None,
+                "light": None,
+                "phase": None,
+                "last_seen_bed": None
+            }
+        }
+
+        # 4. Map the room to the user
+        self.room_to_user_map[r_id] = u_id
+
+        return self.active_users_cache[u_id]
+
+    def init_mqtt_client(self):
+        client_id = self.MQTT_info['clientID']
+        broker = self.MQTT_info['broker']
+        port = self.MQTT_info['port']
+        try:
+            self.mqtt_client = MyMQTT(client_id, broker, port, self)
+            self.startClient()
+            for topic in self.topic_subscribe_raw:
+                self.mqtt_client.mySubscribe(topic)
+            logger.info(f"MQTT client initialized and subscribed to {self.topic_subscribe_raw}")
+        except Exception as e:
+            logger.error(f"Error initializing MQTT client: {e}")
+            self.catalog_client.unregister()
+            sys.exit(1)
+
+    def startClient(self):
+        self.mqtt_client.start()
+
+    def stopClient(self):
+        self.phase_manager.stop()
+        self.mqtt_client.stop()
+
+    def publish(self, message, command_topic=None):
+        try:
+            self.mqtt_client.publish(command_topic, json.dumps(message))
+            logger.info(f"Published message to {command_topic}: {message}")
+        except Exception as e:
+            logger.error(f"Error publishing message: {e}")
+
+    def notify(self, topic, payload):
+        try:
+            message_received = json.loads(payload)
+            logger.info(f"Received message on topic {topic}: {message_received}")
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON payload received on topic {topic}")
+            return
+
+        for index, regex in enumerate(self.topic_subscribe_regex):
+            if not regex.match(topic):
+                continue
+
+            if index == 0:
+                self._handle_sensor_topic(topic, message_received)
+                return
+
+            if index == 1:
+                self._handle_preference_topic(topic, message_received)
+                return
+
+        logger.warning(f"Received message on unrecognized topic: {topic}")
+
+    def _handle_sensor_topic(self, topic, msg):
+        # House/{houseid}/Bedroom/{roomid}/sensor/{sensor_type}/{sensorid}/data
+        parts = topic.split("/")
+        if len(parts) < 8:
+            logger.warning(f"Invalid sensor topic format: {topic}")
+            return
+
+        house_id = parts[1]
+        room_id = parts[3]
+        sensor_type = parts[5]  # Changed from parts[4] to parts[5] due to 'sensor' in path
+
+        userid = self.room_to_user_map.get(room_id)
+        if userid is None:
+            return  # ignore events for rooms without an active user for the night
+
+        logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
+        user_data = self._fetch_and_cache_room_preference(userid)
+        if not user_data:
+            return
+
+        if sensor_type == "ambient_temp":
+            desiderate_temp = user_data['config']['temperature_night'] if user_data.get('is_sleeping') else user_data['config']['temperature_morning']
+            room_actuators = user_data['config']['actuators']
+            self.handle_temperature(msg, room_actuators, desiderate_temp, house_id, room_id)
+        elif sensor_type == "presence":
+            self.handle_presence(msg, userid, house_id, room_id)
+        else:
+            logger.debug(f"Ignoring sensor type '{sensor_type}' in topic {topic}")
+    def _handle_preference_topic(self, topic, message_received):
+        preference_kind, entity_id = _parse_preference_topic(topic)
+
+        if preference_kind == "user":
+            self._update_user_preferences(entity_id, message_received)
+            return
+
+        # Room preferences are now part of user cache, handled through user updates
+        logger.warning(f"Preference topic: {topic}")
+
+    def _update_user_preferences(self, userid, message_received):
+        if "night_time" not in message_received and "morning_time" not in message_received:
+            return
+
+        userid = int(userid)
+        user_cache = self.active_users_cache.get(userid)
+        if not user_cache:
+            logger.warning(f"User {userid} not found in cache, will fetch on next sensor event")
+            return
+
+        if "night_time" in message_received:
+            user_cache["night_time"] = message_received["night_time"]
+            logger.info(f"Updated night_time for user {userid}: {message_received['night_time']}")
+        if "morning_time" in message_received:
+            user_cache["morning_time"] = message_received["morning_time"]
+            logger.info(f"Updated morning_time for user {userid}: {message_received['morning_time']}")
+
+
+        logger.info(f"Current user preferences for {userid}: {user_cache}")
+
+
+    def get_actuators_in_room(self, bedroomid):
+        response = requests.get(f"{self.catalog_url}/getActuatorsInRoom",
+                                params={"bedroomid": bedroomid})
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                actuators = data.get("actuators", [])
+                logger.info(f"Actuators in {bedroomid}: {actuators}")
+                return actuators
+            except json.JSONDecodeError as e:
+                logger.error(f"Error of decoding JSON for actuators in {bedroomid}: {e}")
+                return []
+        else:
+            logger.error(
+                f"Error in request to Catalog for actuators in {bedroomid}: {response.status_code} - {response.text}")
+            return []
+
+    def handle_temperature(self, message_received, room_actuetor, desiderate_temperature, houseid, bedroomid):
+        temp_value = message_received['e'][0]['v']
+        room_actuators = room_actuetor
+        desired_temperature = desiderate_temperature
+        base_topic = self.topic_publish[0].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
+
+        action, device = _resolve_temperature_action(temp_value, desired_temperature, room_actuators)
+        if not action or not device:
+            return
+
+        command={"value": action, "timestamp": datetime.now().timestamp()}
+        self.publish(command, command_topic=f"{base_topic}/{device}")
+
+    def handle_presence(self, message_received, userid, houseid, bedroomid):
+        presence_value = message_received['e'][0]['v']
+        topic_to_publish = self.topic_publish[1].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
+
+        user_data = self.active_users_cache.get(userid)
+        if not user_data:
+            logger.warning(f"User {userid} not found in cache for presence handling")
+            return
+
+        if presence_value != 1:
+            user_data["live_targets"]["last_seen_bed"] = None
+            if user_data.get("is_sleeping", False):
+                user_data["is_sleeping"] = False
+                logger.info(f"User {userid} is now awake in {bedroomid}")
+            return
+
+        if user_data["live_targets"].get("last_seen_bed") is None:
+            user_data["live_targets"]["last_seen_bed"] = datetime.now()
+            return
+
+        second_in_bed = (datetime.now() - user_data["live_targets"]["last_seen_bed"]).total_seconds()
+        if user_data.get("is_sleeping", False) or second_in_bed < self.SLEEP_DETECTION_SECONDS:
+            return
+
+        user_data["is_sleeping"] = True
+        message = {"action": "START_SLEEPING", "timestamp": str(datetime.now())}
+        self.publish(message, command_topic=topic_to_publish)
+        logger.info(f"User {userid} is now sleeping in {bedroomid}")
+
+    def change_target_temperature_light(self, userid, target_temperature=None, target_light=None, phase=None):
+        """
+        Update the live targets for a user based on phase transitions.
+        Called by PhaseManager.
+        """
+        user_data = self.active_users_cache.get(userid)
+        if not user_data:
+            logger.warning(f"User {userid} not found in cache for target update")
+            return
+
+        if target_temperature is not None:
+            user_data["live_targets"]["temperature"] = target_temperature
+        if target_light is not None:
+            user_data["live_targets"]["light"] = target_light
+        if phase is not None:
+            user_data["live_targets"]["phase"] = phase
+
+        logger.debug(f"Updated targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
+
+
+if __name__ == "__main__":
+    logger.setLevel(logging.DEBUG)
+    try:
+        with open("conf.json", "r") as f:
+            full_conf = json.load(f)
+    except FileNotFoundError:
+        logger.error("Configuration file 'conf.json' not found")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in 'conf.json': {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error reading configuration file: {e}")
+        sys.exit(1)
+
+    # Configure the dispatcher to use GET/POST/PUT/DELETE methods
+    conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
+
+    try:
+        sleep_cycle_manager = SleepCycleManager(full_conf)
+        cherrypy.tree.mount(sleep_cycle_manager, '/', conf)
+        cherrypy.config.update({
+            'server.socket_host': full_conf['serviceInfo']['host'],
+            'server.socket_port': full_conf['serviceInfo']['port'],
+            'error_page.default':  json_error_page,
+        })
+
+        cherrypy.engine.subscribe('start', sleep_cycle_manager.catalog_client.start_background_loop)
+        cherrypy.engine.subscribe('stop', sleep_cycle_manager.catalog_client.stop_background_loop)
+        cherrypy.engine.subscribe('stop', sleep_cycle_manager.catalog_client.unregister)
+
+        cherrypy.engine.start()
+        cherrypy.engine.block()
+    except KeyError as e:
+        logger.error(f"Missing configuration key: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error starting service: {e}")
+        sys.exit(1)

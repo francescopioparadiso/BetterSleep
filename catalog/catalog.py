@@ -1,9 +1,15 @@
 import json
 import sys
+from pathlib import Path
 import logging
 import cherrypy
 import threading
 import time
+
+# Ensure sibling project packages (e.g. common/) are importable when run from catalog/.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from common.common import json_error_page
 from mongo_db import MongoDBAdapter

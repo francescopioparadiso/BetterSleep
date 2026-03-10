@@ -8,6 +8,11 @@ class SleepDashboardModel: ObservableObject {
     @Published var isLoading = false
     @Published var sleepScore: Double = 0
     @Published var sleepDuration: Double = 0   // hours
+    @Published var interruptions: Double = 0   // count
+    @Published var remSleep: Double = 0        // percentage
+    @Published var deepSleep: Double = 0       // percentage
+    @Published var hrv: Double = 0             // HRV
+    @Published var rhr: Double = 0             // Resting Heart Rate
     @Published var avgHeartRate: Double = 0
     @Published var minHeartRate: Double = 0
     @Published var maxHeartRate: Double = 0
@@ -164,69 +169,125 @@ class SleepDashboardModel: ObservableObject {
     }
 }
 
+// MARK: - Metric Type Definition
+
+enum SleepMetricType: Hashable {
+    case duration, interruptions, remSleep, deepSleep, hrv, rhr
+
+    var icon: String {
+        switch self {
+        case .duration: return "bed.double.fill"
+        case .interruptions: return "moon.zzz.fill"
+        case .remSleep: return "waveform.path"
+        case .deepSleep: return "moon.fill"
+        case .hrv: return "bolt.heart.fill"
+        case .rhr: return "arrow.down.heart.fill"
+        }
+    }
+
+    var iconColor: Color {
+        switch self {
+        case .duration: return .blue
+        case .interruptions: return .orange
+        case .remSleep: return .purple
+        case .deepSleep: return .indigo
+        case .hrv: return .red
+        case .rhr: return .red
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .duration: return "Sleep Duration"
+        case .interruptions: return "Interruptions"
+        case .remSleep: return "REM Sleep"
+        case .deepSleep: return "Deep Sleep"
+        case .hrv: return "HRV"
+        case .rhr: return "RHR"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .duration: return "Total hours asleep"
+        case .interruptions: return "Times you woke up"
+        case .remSleep: return "Percentage of night"
+        case .deepSleep: return "Percentage of night"
+        case .hrv: return "Heart rate variability"
+        case .rhr: return "Resting heart rate"
+        }
+    }
+
+    var useStackedValueLayout: Bool {
+        return self == .interruptions || self == .remSleep || self == .deepSleep
+    }
+}
+
 // MARK: - Main View
 
 struct ChartsView: View {
-    @StateObject private var vm = SleepDashboardModel()
+    @StateObject private var vm: SleepDashboardModel
+    private let shouldAutoLoad: Bool
+
+    @MainActor
+    init(shouldAutoLoad: Bool = true) {
+        _vm = StateObject(wrappedValue: SleepDashboardModel())
+        self.shouldAutoLoad = shouldAutoLoad
+    }
+
+    init(vm: SleepDashboardModel, shouldAutoLoad: Bool = true) {
+        _vm = StateObject(wrappedValue: vm)
+        self.shouldAutoLoad = shouldAutoLoad
+    }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.04, green: 0.06, blue: 0.16),
-                        Color(red: 0.07, green: 0.10, blue: 0.26)
-                    ],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .ignoresSafeArea()
-
+            VStack {
                 if !vm.hasActiveRoom {
                     noActiveRoomView
                 } else {
-                    ScrollView {
-                        VStack(spacing: 28) {
-                            headerRow
-                            sleepScoreGauge
-                            metricsGrid
-                            Spacer(minLength: 24)
+                    List {
+                        sleepScoreGauge
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            
+
+                        Section(header: Text("Sleep Metrics")) {
+                            ForEach([SleepMetricType.duration, .interruptions, .remSleep, .deepSleep], id: \.self) { type in
+                                metricRow(type: type, value: getMetricValue(type: type))
+                            }
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 4)
+
+                        Section(header: Text("Heart Metrics")) {
+                            ForEach([SleepMetricType.hrv, .rhr], id: \.self) { type in
+                                metricRow(type: type, value: getMetricValue(type: type))
+                            }
+                        }
                     }
+                    .listStyle(.insetGrouped)
+                    .scrollIndicators(.hidden)
                 }
             }
             .navigationTitle("Sleep Analysis")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
         }
-        .task { await vm.load() }
-    }
-
-    // MARK: Header
-
-    private var headerRow: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Last Night")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.5))
-                Text(vm.lastNightLabel)
-                    .font(.subheadline).fontWeight(.semibold)
-                    .foregroundStyle(.white)
-            }
-            Spacer()
-            Button { Task { await vm.load() } } label: {
-                if vm.isLoading {
-                    ProgressView().tint(.white)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .foregroundStyle(.white.opacity(0.7))
-                        .imageScale(.medium)
-                }
+        .task {
+            if shouldAutoLoad {
+                await vm.load()
             }
         }
     }
+
+    private func getMetricValue(type: SleepMetricType) -> Double {
+        switch type {
+        case .duration: return vm.sleepDuration
+        case .interruptions: return vm.interruptions
+        case .remSleep: return vm.remSleep
+        case .deepSleep: return vm.deepSleep
+        case .hrv: return vm.hrv
+        case .rhr: return vm.rhr
+        }
+    }
+
 
     // MARK: Gauge
 
@@ -236,7 +297,7 @@ struct ChartsView: View {
                 // Track
                 Circle()
                     .trim(from: 0.0, to: 0.75)
-                    .stroke(Color.white.opacity(0.08),
+                    .stroke(Color.secondary.opacity(0.2),
                             style: StrokeStyle(lineWidth: 20, lineCap: .round))
                     .rotationEffect(.degrees(135))
                     .frame(width: 230, height: 230)
@@ -246,11 +307,12 @@ struct ChartsView: View {
                     .trim(from: 0.0, to: 0.75 * (vm.sleepScore / 100))
                     .stroke(
                         LinearGradient(
-                            colors: [.blue, .cyan, vm.sleepQualityColor],
+                            colors: [vm.sleepQualityColor, vm.sleepQualityColor.opacity(0.7)],
                             startPoint: .leading, endPoint: .trailing
                         ),
                         style: StrokeStyle(lineWidth: 20, lineCap: .round)
                     )
+                    .shadow(color: vm.sleepQualityColor.opacity(0.8), radius: 30, x: 0, y: 0)
                     .rotationEffect(.degrees(135))
                     .frame(width: 230, height: 230)
                     .animation(.easeOut(duration: 1.2), value: vm.sleepScore)
@@ -259,114 +321,95 @@ struct ChartsView: View {
                 VStack(spacing: 2) {
                     Text("\(Int(vm.sleepScore))")
                         .font(.system(size: 60, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                     Text(vm.sleepQualityLabel)
-                        .font(.subheadline).fontWeight(.semibold)
+                        .font(.subheadline).fontWeight(.semibold).fontDesign(.rounded)
                         .foregroundStyle(vm.sleepQualityColor)
                     Text("Sleep Score")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.45))
+                        .font(.caption).fontWeight(.semibold).fontDesign(.rounded)
+                        .foregroundStyle(Color.secondary)
                 }
             }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 32)
+    }
 
-            // Duration + quality summary
-            HStack(spacing: 40) {
-                sleepSummaryItem(
-                    icon: "moon.fill",
-                    iconColor: .indigo,
-                    value: vm.sleepDuration > 0 ? String(format: "%.1fh", vm.sleepDuration) : "--",
-                    label: "Duration"
-                )
-                Rectangle()
-                    .frame(width: 1, height: 36)
-                    .foregroundStyle(.white.opacity(0.15))
-                sleepSummaryItem(
-                    icon: "zzz",
-                    iconColor: vm.sleepQualityColor,
-                    value: vm.sleepQualityLabel,
-                    label: "Quality"
-                )
-                Rectangle()
-                    .frame(width: 1, height: 36)
-                    .foregroundStyle(.white.opacity(0.15))
-                sleepSummaryItem(
-                    icon: "heart.fill",
-                    iconColor: .red,
-                    value: vm.avgHeartRate > 0 ? String(format: "%.0f", vm.avgHeartRate) : "--",
-                    label: "Avg BPM"
-                )
+    // MARK: - Metric Row
+
+    private func metricRow(type: SleepMetricType, value: Double) -> some View {
+        let (displayValue, unit) = formatMetricValue(type: type, value: value)
+
+        return HStack(spacing: 14) {
+            Image(systemName: type.icon)
+                .font(.title)
+                .foregroundColor(type.iconColor)
+                .shadow(color: type.iconColor.opacity(0.7), radius: 10, x: 0, y: 0)
+                .frame(width: 36)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(type.title)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .fontDesign(.rounded)
+                Text(type.subtitle)
+                    .font(.caption)
+                    .fontDesign(.rounded)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if type.useStackedValueLayout {
+                HStack(spacing: 2) {
+                    Text(displayValue)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.primary)
+                        .fontDesign(.rounded)
+                    
+                    if !unit.isEmpty {
+                        Text(unit)
+                            .fontDesign(.rounded)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else {
+                HStack(spacing: 2) {
+                    Text(displayValue)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.primary)
+                    
+                    if !unit.isEmpty {
+                        Text(unit)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.title3).fontDesign(.rounded)
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
     }
 
-    private func sleepSummaryItem(icon: String, iconColor: Color, value: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .foregroundStyle(iconColor)
-                .font(.system(size: 14))
-            Text(value)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.45))
-        }
-    }
-
-    // MARK: Metrics Grid
-
-    private var metricsGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-            SleepMetricCard(
-                icon: "bed.double.fill", iconColor: .indigo,
-                title: "Sleep",
-                value: vm.sleepDuration > 0 ? String(format: "%.1f", vm.sleepDuration) : "--",
-                unit: "hours",
-                subtitle: vm.sleepDuration == 0 ? "No data"
-                         : vm.sleepDuration >= 7  ? "Recommended ✓" : "Below target",
-                accent: Color(red: 0.13, green: 0.14, blue: 0.32)
-            )
-            SleepMetricCard(
-                icon: "heart.fill", iconColor: .red,
-                title: "Heart Rate",
-                value: vm.avgHeartRate > 0 ? String(format: "%.0f", vm.avgHeartRate) : "--",
-                unit: "BPM",
-                subtitle: "avg during sleep",
-                accent: Color(red: 0.22, green: 0.08, blue: 0.10)
-            )
-            SleepMetricCard(
-                icon: "arrow.down.heart.fill", iconColor: .pink,
-                title: "Min HR",
-                value: vm.minHeartRate > 0 ? String(format: "%.0f", vm.minHeartRate) : "--",
-                unit: "BPM",
-                subtitle: "resting low",
-                accent: Color(red: 0.20, green: 0.07, blue: 0.14)
-            )
-            SleepMetricCard(
-                icon: "arrow.up.heart.fill", iconColor: Color(red: 1, green: 0.45, blue: 0.3),
-                title: "Max HR",
-                value: vm.maxHeartRate > 0 ? String(format: "%.0f", vm.maxHeartRate) : "--",
-                unit: "BPM",
-                subtitle: "peak during sleep",
-                accent: Color(red: 0.20, green: 0.09, blue: 0.06)
-            )
-            SleepMetricCard(
-                icon: "waveform.path", iconColor: .purple,
-                title: "Movement",
-                value: vm.avgVibration < 0.001 ? "--" : String(format: "%.2f", vm.avgVibration),
-                unit: "",
-                subtitle: vm.movementLabel,
-                accent: Color(red: 0.12, green: 0.07, blue: 0.20)
-            )
-            SleepMetricCard(
-                icon: "thermometer.medium", iconColor: .orange,
-                title: "Room Temp",
-                value: vm.avgTemperature > 0 ? String(format: "%.1f", vm.avgTemperature) : "--",
-                unit: "°C",
-                subtitle: "during sleep",
-                accent: Color(red: 0.20, green: 0.11, blue: 0.04)
-            )
+    private func formatMetricValue(type: SleepMetricType, value: Double) -> (String, String) {
+        switch type {
+        case .duration:
+            if value > 0 {
+                let hours = Int(value)
+                let minutes = Int((value - Double(hours)) * 60)
+                return ("\(hours)h \(minutes)m", "hours")
+            }
+            return ("--", "")
+        case .interruptions:
+            return (value > 0 ? String(format: "%.0f", value) : "--", "times")
+        case .remSleep:
+            return (value > 0 ? String(format: "%.0f", value) : "--", "%")
+        case .deepSleep:
+            return (value > 0 ? String(format: "%.0f", value) : "--", "%")
+        case .hrv:
+            return (value > 0 ? String(format: "%.0f", value) : "--", "ms")
+        case .rhr:
+            return (value > 0 ? String(format: "%.0f", value) : "--", "bpm")
         }
     }
 
@@ -388,58 +431,110 @@ struct ChartsView: View {
     }
 }
 
-// MARK: - Metric Card Component
 
-struct SleepMetricCard: View {
-    let icon: String
-    let iconColor: Color
-    let title: String
-    let value: String
-    let unit: String
-    let subtitle: String
-    let accent: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(iconColor)
-                Text(title)
-                    .font(.caption).fontWeight(.semibold)
-                    .foregroundStyle(iconColor)
-                Spacer()
-            }
-
-            HStack(alignment: .lastTextBaseline, spacing: 3) {
-                Text(value)
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                if !unit.isEmpty {
-                    Text(unit)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.55))
-                        .padding(.bottom, 3)
-                }
-            }
-
-            Text(subtitle)
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.45))
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(accent)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
-        )
-    }
+private func makePreviewVM(
+    score: Double,
+    duration: Double,
+    interruptions: Double = 2,
+    remSleep: Double = 20,
+    deepSleep: Double = 15,
+    hrv: Double = 50,
+    rhr: Double = 16,
+    avgHR: Double = 58,
+    minHR: Double = 49,
+    maxHR: Double = 72,
+    vibration: Double = 0.08,
+    temperature: Double = 20.8,
+    hasActiveRoom: Bool = true
+) -> SleepDashboardModel {
+    let vm = SleepDashboardModel()
+    vm.hasActiveRoom = hasActiveRoom
+    vm.sleepScore = score
+    vm.sleepDuration = duration
+    vm.interruptions = interruptions
+    vm.remSleep = remSleep
+    vm.deepSleep = deepSleep
+    vm.hrv = hrv
+    vm.rhr = rhr
+    vm.avgHeartRate = avgHR
+    vm.minHeartRate = minHR
+    vm.maxHeartRate = maxHR
+    vm.avgVibration = vibration
+    vm.avgTemperature = temperature
+    return vm
 }
 
-#Preview {
-    ChartsView()
+#Preview("Excellent") {
+    ChartsView(
+        vm: makePreviewVM(
+            score: 88,
+            duration: 8.0,
+            interruptions: 1,
+            remSleep: 22,
+            deepSleep: 18,
+            hrv: 65,
+            rhr: 15
+        ),
+        shouldAutoLoad: false
+    )
+}
+
+#Preview("Good") {
+    ChartsView(
+        vm: makePreviewVM(
+            score: 72,
+            duration: 6.9,
+            interruptions: 2,
+            remSleep: 20,
+            deepSleep: 14,
+            hrv: 55,
+            rhr: 16
+        ),
+        shouldAutoLoad: false
+    )
+}
+
+#Preview("Fair") {
+    ChartsView(
+        vm: makePreviewVM(
+            score: 52,
+            duration: 5.8,
+            interruptions: 4,
+            remSleep: 16,
+            deepSleep: 10,
+            hrv: 40,
+            rhr: 18
+        ),
+        shouldAutoLoad: false
+    )
+}
+
+#Preview("Poor") {
+    ChartsView(
+        vm: makePreviewVM(
+            score: 28,
+            duration: 3.9,
+            interruptions: 7,
+            remSleep: 12,
+            deepSleep: 5,
+            hrv: 25,
+            rhr: 22
+        ),
+        shouldAutoLoad: false
+    )
+}
+
+#Preview("No Data") {
+    ChartsView(
+        vm: makePreviewVM(
+            score: 0,
+            duration: 0,
+            interruptions: 0,
+            remSleep: 0,
+            deepSleep: 0,
+            hrv: 0,
+            rhr: 0
+        ),
+        shouldAutoLoad: false
+    )
 }
