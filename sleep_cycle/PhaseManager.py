@@ -147,28 +147,29 @@ class PhaseManager:
             f"wake_up_start={wake_up_start} | morning={morn_min}"
         )
 
-        # WIND_DOWN phase: if now_min is in [wind_down_start, night_min)
-        if _is_in_range(now_min, wind_down_start, night_min):
+        # WIND_DOWN phase: start if now_min >= wind_down_start and now_min < night_min
+        if wind_down_start <= now_min < night_min:
+            logger.info(f"[PhaseManager] user={userid} → WIND_DOWN (late sensor, robust)")
             progress = _get_progress(now_min, wind_down_start, night_min)
-            logger.info(f"[PhaseManager] user={userid} → WIND_DOWN (progress={progress:.3f})")
             self._apply_transition(userid, user_data, "WIND_DOWN", progress)
             return
 
-        # WAKE_UP phase: if now_min is in [wake_up_start, morn_min)
-        if _is_in_range(now_min, wake_up_start, morn_min):
+        # SLEEP phase: start if now_min >= night_min or now_min < morn_min
+        if (now_min >= night_min and now_min < 1440) or (now_min < morn_min):
+            logger.info(f"[PhaseManager] user={userid} → SLEEP (robust phase check)")
+            self._apply_static_phase(userid, user_data, "SLEEP")
+            return
+
+        # WAKE_UP phase: unchanged
+        if wake_up_start <= now_min < morn_min:
             progress = _get_progress(now_min, wake_up_start, morn_min)
             logger.info(f"[PhaseManager] user={userid} → WAKE_UP (progress={progress:.3f})")
             self._apply_transition(userid, user_data, "WAKE_UP", progress)
             return
 
-        # SLEEP phase: if now_min >= night_min or now_min < morn_min
-        # (covers the case where the transition window was missed)
-        if _is_in_range(now_min, night_min, morn_min) or now_min >= night_min or now_min < morn_min:
-            logger.info(f"[PhaseManager] user={userid} → SLEEP (robust phase check)")
-            self._apply_static_phase(userid, user_data, "SLEEP")
-        else:
-            logger.info(f"[PhaseManager] user={userid} → DAY")
-            self._apply_static_phase(userid, user_data, "DAY")
+        # DAY phase: fallback
+        logger.info(f"[PhaseManager] user={userid} → DAY")
+        self._apply_static_phase(userid, user_data, "DAY")
 
     def _apply_static_phase(self, userid, user_data, phase):
         t_night = float(user_data['config'].get("temperature_night", 18.0))
