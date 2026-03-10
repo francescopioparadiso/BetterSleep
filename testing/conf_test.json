@@ -3,7 +3,8 @@
     "duration_seconds": 60,
     "userid": "1",
     "houseid": "1",
-    "bedroomid": "1"
+    "bedroomid": "1",
+    "simulation_start": "2026-03-10 21:00"
   },
   "catalog": {
     "url": "http://127.0.0.1:8080"

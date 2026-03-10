@@ -4,7 +4,7 @@ import os
 import time
 import threading
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Path setups
 logging.basicConfig(filename='test_cycle.log', level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
@@ -200,17 +200,18 @@ def test_night_simulation(duration_seconds=60, presence_decider=None):
     # current simulation step — updated each iteration before sensors publish
     _sim_step = [0]
 
+    # Parse simulation start date/time from config (format: "YYYY-MM-DD HH:MM")
+    _sim_start_str = config["simulation"].get("simulation_start", "2026-03-10 21:00")
+    _sim_start_dt = datetime.strptime(_sim_start_str, "%Y-%m-%d %H:%M")
+
     def simulated_timestamp():
         """
-        Returns a Unix timestamp encoding the virtual HH:MM of the current
-        simulation step. The PhaseManager decodes this to drive its clock,
-        so it follows the test's virtual time instead of the system clock.
+        Returns a Unix timestamp encoding the exact virtual date+time of the
+        current simulation step, starting from simulation_start in conf_test.json.
+        The PhaseManager decodes this to drive its clock.
         """
-        s = _sim_step[0]
-        h = (21 + (s // 60)) % 24
-        m = s % 60
-        from datetime import datetime as _dt
-        return _dt.now().replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
+        vt = _sim_start_dt + timedelta(minutes=_sim_step[0])
+        return vt.timestamp()
 
     # Inject simulated timestamp provider into all sensors
     for sensor in (temp_sensor, heart_rate_sensor, vibration_sensor, presence_sensor):
@@ -275,18 +276,9 @@ def test_night_simulation(duration_seconds=60, presence_decider=None):
     real_step_seconds = duration_seconds / steps  # Real time per simulated minute
 
     def get_virtual_time(step):
-        """
-        Convert simulation step to virtual clock time.
-
-        Args:
-            step: Current simulation step (0-659)
-
-        Returns:
-            tuple: (hour, minute, virtual_minute) where virtual_minute is total minutes elapsed
-        """
-        hour = (21 + (step // 60)) % 24
-        minute = step % 60
-        return hour, minute, step
+        """Convert simulation step to virtual clock time based on simulation_start."""
+        vt = _sim_start_dt + timedelta(minutes=step)
+        return vt.hour, vt.minute, step
 
     def get_baseline_temp(minute):
         """
@@ -400,7 +392,8 @@ def test_night_simulation(duration_seconds=60, presence_decider=None):
             fan_mqtt="ON" if fan_mqtt == 1 else "OFF"
             heater_mqtt="ON" if heater_mqtt == 1 else "OFF"
             # Console output for monitoring
-            print(f"[{hour:02d}:{minute:02d}] Temp={current_temp:.2f}°C, Presenza={presence_value}, "
+            vt_str = (_sim_start_dt + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
+            print(f"[{vt_str}] Temp={current_temp:.2f}°C, Presenza={presence_value}, "
                   f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g | "
                   f"Phase={phase} | MQTT[Light={light_mqtt}, Fan={fan_mqtt}, Heater={heater_mqtt}]")
 
