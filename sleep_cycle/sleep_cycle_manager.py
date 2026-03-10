@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import logging
 import cherrypy
 import requests
@@ -13,7 +14,6 @@ from datetime import datetime
 
 from common.common import mqtt_to_regex, json_error_page
 from PhaseManager import PhaseManager
-from mockfase import MockPhaseManager
 # Configure logging
 
 
@@ -81,10 +81,9 @@ class SleepCycleManager:
     exposed = True
     SLEEP_DETECTION_SECONDS = 1800  # 30 minutes
 
-    def __init__(self, conf,Debug=False,logger=None):
+    def __init__(self, conf, logger=None):
         self.mqtt_client = None
-        self.logger=logger
-
+        self.logger = logger
         self.catalog_url = conf['catalogURL']
         self.service_info = conf['serviceInfo']
         self.remove_interval = conf.get('removeInterval', 10)
@@ -98,24 +97,15 @@ class SleepCycleManager:
         phase_check_interval = conf.get('phaseCheckIntervalSec', 60)
         transition_curve_exponent = conf.get('transitionCurveExponent', 1.0)
         self.temperature_tolerance = float(conf.get('temperatureTolerance', 0.5))
-        self.active_users_cache = {}  # {userid: {data_unificata}}
-        self.room_to_user_map = {}  # {bedroomid: userid} -> Il nostro Gatekeeper
-        self.topic_publish = self.MQTT_info.get('topic_publish', )
-        self.debug=Debug
-        if not self.debug:
-            self.phase_manager = PhaseManager(
-                manager_instance=self,
-                transition_window_min=transition_window_min,
-                check_interval=phase_check_interval,
-                transition_curve_exponent=transition_curve_exponent
-            )
-        else:
-            self.phase_manager = MockPhaseManager(
-                manager_instance=self,
-                transition_window_min=transition_window_min,
-                check_interval=phase_check_interval,
-                transition_curve_exponent=transition_curve_exponent
-            )
+        self.active_users_cache = {}
+        self.room_to_user_map = {}
+        self.topic_publish = self.MQTT_info.get('topic_publish')
+        self.phase_manager = PhaseManager(
+            manager_instance=self,
+            transition_window_min=transition_window_min,
+            check_interval=phase_check_interval,
+            transition_curve_exponent=transition_curve_exponent
+        )
         self.phase_manager.start()
         self.init_mqtt_client()
         self.get_ActiveRoomwithUser()
@@ -206,13 +196,14 @@ class SleepCycleManager:
                 "light": previous_live_targets.get("light")  # Target light brightness
             },
             "live_values": {
-                "light": previous_live_values.get("light"),  # Actual light sensor reading
-                "light_actuator": previous_live_values.get("light_actuator"),  # Light actuator state (%)
-                "heater_state": previous_live_values.get("heater_state"),  # Heater state (0/1)
-                "fan_state": previous_live_values.get("fan_state"),  # Fan state (0/1)
-                "phase": previous_live_values.get("phase"),  # Current phase (DAY/WIND_DOWN/SLEEP/WAKE_UP)
-                "last_seen_bed": previous_live_values.get("last_seen_bed"),  # Timestamp when entered bed
-                "last_left_bed": previous_live_values.get("last_left_bed")  # Timestamp when left bed
+                "light": previous_live_values.get("light"),
+                "light_actuator": previous_live_values.get("light_actuator"),
+                "heater_state": previous_live_values.get("heater_state"),
+                "fan_state": previous_live_values.get("fan_state"),
+                "phase": "DAY" if not pref.get('is_sleeping', False) else "SLEEP",
+                "phase_published": False,  # reset so first tick always publishes
+                "last_seen_bed": previous_live_values.get("last_seen_bed"),
+                "last_left_bed": previous_live_values.get("last_left_bed")
             }
         }
 
@@ -286,16 +277,25 @@ class SleepCycleManager:
         room_id = parts[3]
         sensor_type = parts[5]
 
+        # Always sync PhaseManager clock from sensor timestamp first — before any cache check.
+        # This works for both simulation (virtual timestamps) and production (real timestamps).
+        try:
+            ts = msg['e'][0].get('t')
+            if ts is not None:
+                self.phase_manager.sync_from_sensor_time(float(ts))
+        except Exception:
+            pass
+
         userid = self.room_to_user_map.get(room_id)
         if userid is None:
-            return  # ignore events for rooms without an active user for the night
+            return
 
         user_data = self.active_users_cache.get(userid)
         if not user_data:
             user_data = self._fetch_and_cache_room_preference(userid)
         if not user_data:
             return
-        self.logger.info(f"Handling sensor event for user {userid} in the active room {room_id} (house {house_id}), sensor type: {sensor_type}")
+        self.logger.info(f"Handling sensor event for user {userid} in room {room_id} (house {house_id}), type: {sensor_type}")
 
         if sensor_type == "ambient_temp":
             desiderate_temp = user_data['live_targets']['temperature']
@@ -500,7 +500,7 @@ class SleepCycleManager:
     def change_target_temperature_light(self, userid, target_temperature=None, target_light=None, phase=None):
         """
         Update the live targets for a user based on phase transitions.
-        Publish light commands only when rounded brightness changes.
+        Publish light commands and phase updates via MQTT.
         """
         user_data = self.active_users_cache.get(userid)
         if not user_data:
@@ -510,6 +510,8 @@ class SleepCycleManager:
         self.logger.info(f"Updating targets for user {userid}: temp={target_temperature}, light={target_light}, phase={phase}")
 
         previous_light = user_data["live_targets"].get("light")
+        previous_phase = user_data["live_values"].get("phase")
+        phase_published = user_data["live_values"].get("phase_published", False)
 
         if target_temperature is not None:
             user_data["live_targets"]["temperature"] = target_temperature
@@ -518,28 +520,39 @@ class SleepCycleManager:
         if phase is not None:
             user_data["live_values"]["phase"] = phase
 
+        houseid = user_data.get("house_id")
+        bedroomid = user_data.get("active_room_id")
+
+        # Publish light command: always on first call (previous_light is None) or when value changes
         if target_light is not None:
             new_value = int(round(max(0.0, min(100.0, float(target_light)))))
             old_value = None if previous_light is None else int(round(previous_light))
+            if old_value is None or old_value != new_value:
+                topic = f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command"
+                command = {"action": "SET", "value": new_value}
+                self.publish(command, command_topic=topic)
+                self.logger.info(f"Sent SET command to light actuator: value={new_value}, phase={phase}, topic={topic}")
 
-            if old_value == new_value:
-                return
-
-            houseid = user_data.get("house_id")
-            bedroomid = user_data.get("active_room_id")
-            topic = f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command"
-            command = {"action": "SET", "value": new_value}
-            self.publish(command, command_topic=topic)
-            self.logger.info(f"Sent SET command to light actuator: value={new_value}, phase={phase}, topic={topic}")
+        # Publish phase: on first publish ever, or when phase changes, or during active transitions
+        is_transition = phase in ("WIND_DOWN", "WAKE_UP")
+        if phase is not None and (not phase_published or phase != previous_phase or is_transition):
+            topic = f"House/{houseid}/Bedroom/{bedroomid}/phase"
+            phase_data = {
+                "bn": f"{houseid}:{bedroomid}:phase",
+                "e": [{"n": "Phase", "v": phase, "t": time.time()}]
+            }
+            self.publish(phase_data, command_topic=topic)
+            user_data["live_values"]["phase_published"] = True
+            self.logger.info(f"Published phase update: {phase} to topic {topic}")
 
 if __name__ == "__main__":
-    # Configure logging before any usage
+    # Configure logging before any usage - DEBUG MODE ENABLED
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     try:
         with open("conf.json", "r") as f:
             full_conf = json.load(f)
@@ -558,7 +571,7 @@ if __name__ == "__main__":
 
 
     try:
-        sleep_cycle_manager = SleepCycleManager(full_conf, Debug=False, logger=logger)
+        sleep_cycle_manager = SleepCycleManager(full_conf, logger=logger)
         cherrypy.tree.mount(sleep_cycle_manager, '/', conf)
         cherrypy.config.update({
             'server.socket_host': full_conf['serviceInfo']['host'],

@@ -14,11 +14,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../slee
 from sleep_cycle.sleep_cycle_manager import SleepCycleManager
 # Fixed imports including Actuators
 from device_connector.Simulate_Sensor import *
-def setup_manager():
-    conf_path = "../sleep_cycle/conf.json"
-    with open(conf_path, "r") as f:
-        conf = json.load(f)
-    return SleepCycleManager(conf, Debug=True,logger=logger)
+from common.MQTT.MyMQTT import MyMQTT
 
 
 def load_test_config(config_path="conf_test.json"):
@@ -27,20 +23,109 @@ def load_test_config(config_path="conf_test.json"):
         return json.load(f)
 
 
+class MQTTFeedbackMonitor:
+    """Monitor MQTT feedback from actuators and sleep_cycle_manager."""
 
-def test_night_simulation(duration_seconds=600, presence_decider=None):
+    def __init__(self, broker, port, userid, houseid, bedroomid, initial_light=50):
+        self.broker = broker
+        self.port = port
+        self.userid = userid
+        self.houseid = houseid
+        self.bedroomid = bedroomid
+
+        # State storage - initialize with default values
+        self.actuator_states = {
+            "light": initial_light,  # Initial light level
+            "heater": "OFF",  # Default heater state
+            "fan": "OFF"  # Default fan state
+        }
+        self.current_phase = "DAY"  # Default phase
+        self.mqtt_client = None
+
+    def on_message(self, topic, payload):
+        """Handle incoming MQTT messages."""
+        try:
+            data = json.loads(payload)
+
+            # Parse actuator feedback: House/{houseid}/Bedroom/{bedroomid}/actuator/{device}/data
+            if "actuator" in topic and "data" in topic:
+                parts = topic.split("/")
+                if len(parts) >= 7:
+                    device_type = parts[5]  # light, heater, fan
+                    if 'e' in data and len(data['e']) > 0:
+                        value = data['e'][0].get('v')
+                        self.actuator_states[device_type] = value
+                        logger.debug(f"Actuator {device_type} state updated: {value}")
+
+            # Parse phase feedback: House/{houseid}/Bedroom/{bedroomid}/phase
+            elif "phase" in topic and "actuator" not in topic:
+                if 'e' in data and len(data['e']) > 0:
+                    phase = data['e'][0].get('v')
+                    self.current_phase = phase
+                    logger.debug(f"Phase updated: {phase}")
+
+        except Exception as e:
+            logger.error(f"Error parsing MQTT message on topic {topic}: {e}")
+
+    def start(self):
+        """Start MQTT client to monitor feedback."""
+        try:
+            client_id = f"TestCycleMonitor_{self.userid}"
+            self.mqtt_client = MyMQTT(client_id, self.broker, self.port, self)
+            self.mqtt_client.start()
+
+            # Subscribe to actuator data topics
+            topics = [
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/light/data",
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/heater/data",
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/fan/data",
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/phase"  # Phase topic
+            ]
+
+            for topic in topics:
+                self.mqtt_client.mySubscribe(topic)
+                logger.info(f"Subscribed to: {topic}")
+
+        except Exception as e:
+            logger.error(f"Error starting MQTT feedback monitor: {e}")
+
+    def stop(self):
+        """Stop MQTT client."""
+        try:
+            if self.mqtt_client:
+                self.mqtt_client.stop()
+        except Exception as e:
+            logger.error(f"Error stopping MQTT feedback monitor: {e}")
+
+    def notify(self, topic, payload):
+        """Called by MyMQTT when a message is received."""
+        self.on_message(topic, payload)
+
+    def get_states(self):
+        """Get current actuator states and phase."""
+        return {
+            "light": self.actuator_states.get("light", "?"),
+            "heater": self.actuator_states.get("heater", "?"),
+            "fan": self.actuator_states.get("fan", "?"),
+            "phase": self.current_phase if self.current_phase else "DAY"
+        }
+
+
+
+
+def test_night_simulation(duration_seconds=60, presence_decider=None):
     """
     Simulates a complete night cycle from 21:00 to 08:00 (11 hours).
 
     This function creates a virtual environment where:
     - Time is accelerated (real seconds = virtual minutes)
-    - Sensors publish fake data with simulated timestamps
-    - The sleep cycle manager responds with phase transitions
+    - Sensors publish fake data via MQTT to a broker
+    - The sleep cycle manager (separate microservice) receives and processes data
     - Temperature is controlled by fan/heater actuators
     - Light brightness transitions smoothly during wind-down and wake-up
 
     Args:
-        duration_seconds: Real-world duration of the simulation (default 600s = 10 minutes)
+        duration_seconds: Real-world duration of the simulation (default 60s = 1 minute)
         presence_decider: Optional callback for custom presence logic (unused currently)
 
     Phases simulated:
@@ -53,16 +138,9 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     # Load configuration
     config = load_test_config()
 
-    manager = setup_manager()
     userid = config["simulation"]["userid"]
     houseid = config["simulation"]["houseid"]
     bedroomid = config["simulation"]["bedroomid"]
-
-    # Initialize the user cache by triggering a fetch before simulation starts
-    manager._fetch_and_cache_room_preference(userid)
-
-    # Wait for MQTT connections to stabilize
-    time.sleep(2)
 
     # Extract configuration values
     catalog_url = config["catalog"]["url"]
@@ -73,7 +151,9 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     actuators_config = config["actuators"]
     thermal_config = config["thermal_dynamics"]
 
-    # ...existing code...
+    logger.info(f"Starting test simulation for user {userid} in house {houseid}, bedroom {bedroomid}")
+    logger.info(f"MQTT Broker: {broker_ip}:{port}")
+    logger.info(f"Catalog URL: {catalog_url}")
 
     # Create sensor configurations from JSON
     sensor_configs = {}
@@ -117,15 +197,20 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     vibration_sensor = VibrationSensor(c_vibration)
     presence_sensor = PresenceSensor(c_pres)
 
+    # current simulation step — updated each iteration before sensors publish
+    _sim_step = [0]
+
     def simulated_timestamp():
         """
-        Provides simulated timestamps for sensor data.
-        Returns virtual time from the mock phase manager's fake clock.
+        Returns a Unix timestamp encoding the virtual HH:MM of the current
+        simulation step. The PhaseManager decodes this to drive its clock,
+        so it follows the test's virtual time instead of the system clock.
         """
-        phase_manager = getattr(manager, "phase_manager", None)
-        if phase_manager is not None and hasattr(phase_manager, "get_current_time"):
-            return phase_manager.get_current_time().timestamp()
-        return time.time()
+        s = _sim_step[0]
+        h = (21 + (s // 60)) % 24
+        m = s % 60
+        from datetime import datetime as _dt
+        return _dt.now().replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
 
     # Inject simulated timestamp provider into all sensors
     for sensor in (temp_sensor, heart_rate_sensor, vibration_sensor, presence_sensor):
@@ -174,6 +259,12 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     light_actuator.value = 50
     light_actuator.publish_data(light_actuator.value, unit="%", name="LightLevel")
 
+    # Initialize MQTT feedback monitor to receive actuator states from sleep_cycle_manager
+    mqtt_monitor = MQTTFeedbackMonitor(broker_ip, port, userid, houseid, bedroomid, initial_light=50)
+    mqtt_monitor.start()
+
+    # Wait for MQTT connections to stabilize
+    time.sleep(2)
 
     stop_event = threading.Event()
 
@@ -239,28 +330,26 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
         - Virtual time progression (21:00 -> 08:00)
         - Temperature dynamics with HVAC control
         - Sensor data publishing (temperature, presence, heart rate, vibration)
-        - Phase transitions (WIND_DOWN -> SLEEP -> WAKE_UP)
+        - Actuator states (light, heater, fan)
+
+        The sleep_cycle_manager (separate microservice) will:
+        - Receive sensor data via MQTT
+        - Publish actuator commands
+        - Manage sleep phases
         """
         nonlocal current_temp
-        print("--- Simulazione Notte Accelerata ---")
+        print("--- Simulazione Notte Accelerata (Standalone) ---")
         print("Simulation period: 21:00 - 08:00 (11 hours)")
         print("Wind-down phase: 21:30 - 22:00 (30 minutes)")
         print("Night phase: 22:00 - 07:00 (9 hours)")
         print("Wake-up phase: 07:30 - 08:00 (30 minutes)")
         print()
+        print("NOTE: sleep_cycle_manager is a separate microservice")
+        print("      It will receive sensor data and publish actuator commands via MQTT")
+        print()
 
-        # Initialize mock phase manager with fake time starting at 21:00
-        if hasattr(manager, "phase_manager") and hasattr(manager.phase_manager, "fast_forward"):
-            manager.phase_manager.stop()
-            # Start simulation at 21:00 (1 hour before wind-down begins)
-            manager.phase_manager.fake_time = datetime(2026, 3, 9, 21, 0)
-        manager._fetch_and_cache_room_preference(userid)  # Ensure cache is populated with correct night/morning times
         for step in range(steps):
-            # Advance virtual time by 1 minute
-            if hasattr(manager, "phase_manager") and hasattr(manager.phase_manager, "fast_forward"):
-                manager.phase_manager.fast_forward(1)
-                manager.phase_manager._check_all_rooms()
-
+            _sim_step[0] = step  # update virtual clock before sensors publish
             hour, minute, virtual_minute = get_virtual_time(step)
 
             # Calculate target temperature based on natural ambient conditions
@@ -302,18 +391,18 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
             vibration_value = 0.1 * presence_value + 0.05 * (0.5 - (step % 20) / 20)
             vibration_sensor.publish_data(round(vibration_value, 3), unit="g", timestamp=sim_ts)
 
-            # Get current phase safely from live_values
-            user_live_values = manager.active_users_cache.get(userid, {}).get("live_values", {})
-            phase = user_live_values.get("phase", "UNKNOWN")
-
-
+            # Get actuator states and phase from MQTT feedback (what sleep_cycle_manager is sending)
+            mqtt_states = mqtt_monitor.get_states()
+            light_mqtt = mqtt_states.get("light", "?")
+            heater_mqtt = mqtt_states.get("heater", "?")
+            fan_mqtt = mqtt_states.get("fan", "?")
+            phase = mqtt_states.get("phase", "DAY")
+            fan_mqtt="ON" if fan_mqtt == 1 else "OFF"
+            heater_mqtt="ON" if heater_mqtt == 1 else "OFF"
             # Console output for monitoring
             print(f"[{hour:02d}:{minute:02d}] Temp={current_temp:.2f}°C, Presenza={presence_value}, "
-                  f"Light={getattr(light_actuator, 'value', '?')}%, "
-                  f"Fan={getattr(fan_actuator, 'state', '?')}, "
-                  f"Heater={getattr(heater_actuator, 'state', '?')}, "
-                  f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g, "
-                  f"Phase={phase} ")
+                  f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g | "
+                  f"Phase={phase} | MQTT[Light={light_mqtt}, Fan={fan_mqtt}, Heater={heater_mqtt}]")
 
             # Real-time delay between simulation steps
             time.sleep(real_step_seconds)
