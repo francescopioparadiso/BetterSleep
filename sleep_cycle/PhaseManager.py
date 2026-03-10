@@ -91,7 +91,7 @@ class PhaseManager:
             vt = datetime.fromtimestamp(float(unix_ts))
             new_minute = vt.hour * 60 + vt.minute
             # Only process once per unique virtual minute per user
-            if new_minute == self._last_synced_minute.get(userid, -1):
+            if new_minute <= self._last_synced_minute.get(userid, -1):
                 return
             self._sensor_time_per_user[userid] = vt.replace(second=0, microsecond=0)
             self._last_synced_minute[userid] = new_minute
@@ -147,20 +147,24 @@ class PhaseManager:
             f"wake_up_start={wake_up_start} | morning={morn_min}"
         )
 
+        # WIND_DOWN phase: if now_min is in [wind_down_start, night_min)
         if _is_in_range(now_min, wind_down_start, night_min):
             progress = _get_progress(now_min, wind_down_start, night_min)
             logger.info(f"[PhaseManager] user={userid} → WIND_DOWN (progress={progress:.3f})")
             self._apply_transition(userid, user_data, "WIND_DOWN", progress)
             return
 
+        # WAKE_UP phase: if now_min is in [wake_up_start, morn_min)
         if _is_in_range(now_min, wake_up_start, morn_min):
             progress = _get_progress(now_min, wake_up_start, morn_min)
             logger.info(f"[PhaseManager] user={userid} → WAKE_UP (progress={progress:.3f})")
             self._apply_transition(userid, user_data, "WAKE_UP", progress)
             return
 
-        if _is_in_range(now_min, night_min, morn_min):
-            logger.info(f"[PhaseManager] user={userid} → SLEEP")
+        # SLEEP phase: if now_min >= night_min or now_min < morn_min
+        # (covers the case where the transition window was missed)
+        if _is_in_range(now_min, night_min, morn_min) or now_min >= night_min or now_min < morn_min:
+            logger.info(f"[PhaseManager] user={userid} → SLEEP (robust phase check)")
             self._apply_static_phase(userid, user_data, "SLEEP")
         else:
             logger.info(f"[PhaseManager] user={userid} → DAY")
