@@ -126,15 +126,21 @@ class LightActuator(Actuator):
     def __init__(self, config):
         super().__init__(config)
         self.value = 0
+        self.timestamp_provider = time.time
 
-    def _publish_state(self):
+
+    def _publish_state(self, timestamp=None):
+
+        if timestamp is None:
+            timestamp = float(self.timestamp_provider())
+
         payload = {
             "bn": f"{self.service_info.get('houseID')}:{self.service_info.get('roomID')}:{self.service_info.get('ActuatorID')}:light",
             "e": [{
                 "n": "LightLevel",
                 "v": self.value,
                 "u": "%",
-                "t": time.time()
+                "t": timestamp
             }]
         }
         self.publish(payload, command_topic=self.topic_publish)

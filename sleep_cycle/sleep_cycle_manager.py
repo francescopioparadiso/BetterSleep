@@ -90,7 +90,7 @@ def _parse_preference_topic(topic):
 
 class SleepCycleManager:
     exposed = True
-    SLEEP_DETECTION_SECONDS = 10
+    SLEEP_DETECTION_SECONDS = 1800  # 30 minutes
 
     def __init__(self, conf,Debug=False,logger=None):
         self.mqtt_client = None

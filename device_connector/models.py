@@ -114,6 +114,8 @@ class Sensor(BaseIoTComponent):
     def __init__(self, config, sensor_type):
         super().__init__(config)
         self.sensor_type = sensor_type
+        # Supports fake/virtual time in simulations; defaults to wall-clock time.
+        self.timestamp_provider = time.time
         sensortype = {
             0: "Temperature",
             1: "Humidity",
@@ -125,10 +127,13 @@ class Sensor(BaseIoTComponent):
         # then in your class
         self.sensor_type_long = sensortype.get(sensor_type, "Unknown")
 
-    def publish_data(self, value, unit=None):
+    def publish_data(self, value, unit=None, timestamp=None):
         house_id = self.service_info.get("houseID")
         room_id = self.service_info.get("roomID")
         sensor_id = self.service_info.get("sensorID")
+
+        if timestamp is None:
+            timestamp = float(self.timestamp_provider())
 
         payload = {
             "bn": f"{house_id}:{room_id}:{sensor_id}:{self.sensor_type}",
@@ -136,7 +141,7 @@ class Sensor(BaseIoTComponent):
                 "n" : self.sensor_type_long,
                 "v": value,
                 "u": unit,
-                "t": time.time()
+                "t": timestamp
             }]
         }
 

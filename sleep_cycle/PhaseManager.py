@@ -38,6 +38,7 @@ class PhaseManager:
         self._thread = None
 
     def start(self):
+        """Start the background phase monitoring thread."""
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -46,11 +47,13 @@ class PhaseManager:
         logger.info(f"PhaseManager started (Window: {self.window}m, Interval: {self.interval}s)")
 
     def stop(self):
+        """Stop the background phase monitoring thread."""
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
 
     def _run_logic(self):
+        """Main loop that periodically checks all rooms for phase transitions."""
         while not self._stop_event.is_set():
             try:
                 self._check_all_rooms()
