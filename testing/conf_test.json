@@ -1,11 +1,22 @@
 {
   "simulation": {
     "duration_seconds": 60,
-    "userid": "1",
-    "houseid": "1",
-    "bedroomid": "1",
     "simulation_start": "2026-03-10 21:00"
   },
+  "users": [
+    {
+      "userid": "1",
+      "houseid": "1",
+      "bedroomid": "1",
+      "has_fan": true
+    },
+    {
+      "userid": "2",
+      "houseid": "2",
+      "bedroomid": "1",
+      "has_fan": false
+    }
+  ],
   "catalog": {
     "url": "http://127.0.0.1:8080"
   },
@@ -84,4 +95,3 @@
     "wake_up_end": 8.0
   }
 }
-

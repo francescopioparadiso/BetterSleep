@@ -182,10 +182,26 @@ class MongoDBAdapter:
     def insert_sensor(self,new_sensor):
         try:
             logger.debug(f"Attempting to insert sensor: {new_sensor}")
-            # Check for duplicate sensorID
-            if self.db.sensors.find_one({"sensorID": new_sensor["sensorID"]}):
-                logger.warning(f"Sensor ID {new_sensor['sensorID']} already exists (pre-check)")
+            # Normalize sensorID to string
+            sensor_id = str(new_sensor.get("sensorID")) if new_sensor.get("sensorID") is not None else None
+            room_id = new_sensor.get("roomID") or new_sensor.get("room_id")
+
+            if not sensor_id:
+                logger.warning("Sensor insertion failed: missing sensorID")
                 return False
+
+            # Build query that includes room scope when available so same sensorID can exist in different rooms
+            query = {"sensorID": sensor_id}
+            if room_id:
+                query["roomID"] = room_id
+
+            # Check for duplicate sensorID in the same room
+            if self.db.sensors.find_one(query):
+                logger.warning(f"Sensor ID {sensor_id} already exists in room {room_id} (pre-check)")
+                return False
+
+            # Ensure sensor dict stores string ID
+            new_sensor["sensorID"] = sensor_id
             result = self.db.sensors.insert_one(new_sensor)
             logger.info(f"Sensor {new_sensor['sensorID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Sensor data saved - last_update: {new_sensor.get('last_update')}, inserted_at: {new_sensor.get('inserted_at')}")
@@ -193,16 +209,20 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error inserting sensor: {e}", exc_info=True)
             return False
-    def delete_sensor(self, sensor_id):
+    def delete_sensor(self, sensor_id, room_id=None):
 
         try:
             # Forza la conversione a stringa per evitare mismatch
             sensor_id = str(sensor_id)
-            result = self.db.sensors.delete_one({"sensorID": sensor_id})
+            # Build deletion query; include room if provided to avoid accidental deletions across rooms
+            query = {"sensorID": sensor_id}
+            if room_id:
+                query["roomID"] = room_id
+            result = self.db.sensors.delete_one(query)
             if result.deleted_count > 0:
-                logger.info(f"Sensor {sensor_id} deleted successfully")
+                logger.info(f"Sensor {sensor_id} deleted successfully (room={room_id})")
                 return True
-            logger.warning(f"Sensor {sensor_id} not found for deletion")
+            logger.warning(f"Sensor {sensor_id} not found for deletion (room={room_id})")
             return False
         except Exception as e:
             logger.error(f"Error deleting sensor {sensor_id}: {e}", exc_info=True)
@@ -228,48 +248,66 @@ class MongoDBAdapter:
     def insert_actuator(self,new_actuator):
         try:
             logger.debug(f"Attempting to insert actuator: {new_actuator}")
-            # Check for duplicate ActuatorID
-            if self.db.actuators.find_one({"ActuatorID": new_actuator["ActuatorID"]}):
-                logger.warning(f"Actuator ID {new_actuator['ActuatorID']} already exists (pre-check)")
+            # Determine actuator id key (support both ActuatorID and actuatorID payloads)
+            actuator_id = None
+            if new_actuator.get("ActuatorID") is not None:
+                actuator_id = str(new_actuator.get("ActuatorID"))
+                id_key = "ActuatorID"
+            elif new_actuator.get("actuatorID") is not None:
+                actuator_id = str(new_actuator.get("actuatorID"))
+                id_key = "actuatorID"
+            else:
+                logger.warning("Actuator insertion failed: missing ActuatorID/actuatorID")
                 return False
+
+            room_id = new_actuator.get("roomID") or new_actuator.get("room_id")
+
+            # Build query that includes room scope when available
+            query = {id_key: actuator_id}
+            if room_id:
+                query["roomID"] = room_id
+
+            # Check for duplicate ActuatorID in the same room
+            if self.db.actuators.find_one(query):
+                logger.warning(f"Actuator ID {actuator_id} already exists in room {room_id} (pre-check)")
+                return False
+
+            # Ensure payload has consistent key format: keep original key but normalize stored value to string
+            new_actuator[id_key] = actuator_id
             result = self.db.actuators.insert_one(new_actuator)
-            logger.info(f"Actuator {new_actuator['ActuatorID']} inserted successfully with ID: {result.inserted_id}")
+            logger.info(f"Actuator {actuator_id} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Actuator data saved - last_update: {new_actuator.get('last_update')}, inserted_at: {new_actuator.get('inserted_at')}")
             return True
         except Exception as e:
             logger.error(f"Error inserting actuator: {e}", exc_info=True)
             return False
-    def delete_actuator(self, actuator_id):
+    def delete_actuator(self, actuator_id, room_id=None):
 
         try:
             # Forza la conversione a stringa per evitare mismatch
             actuator_id = str(actuator_id)
-            result = self.db.actuators.delete_one({"ActuatorID": actuator_id})
+            # Try both possible field names when building the query
+            # Prefer the canonical field names present in the DB documents
+            query = {"ActuatorID": actuator_id}
+            if room_id:
+                query["roomID"] = room_id
+            result = self.db.actuators.delete_one(query)
             if result.deleted_count > 0:
-                logger.info(f"Actuator {actuator_id} deleted successfully")
+                logger.info(f"Actuator {actuator_id} deleted successfully (room={room_id})")
                 return True
-            logger.warning(f"Actuator {actuator_id} not found for deletion")
+            # Fall back to lower-case key
+            query = {"actuatorID": actuator_id}
+            if room_id:
+                query["roomID"] = room_id
+            result = self.db.actuators.delete_one(query)
+            if result.deleted_count > 0:
+                logger.info(f"Actuator {actuator_id} deleted successfully with lowercase key (room={room_id})")
+                return True
+            logger.warning(f"Actuator {actuator_id} not found for deletion (room={room_id})")
             return False
         except Exception as e:
             logger.error(f"Error deleting actuator {actuator_id}: {e}", exc_info=True)
             return False
-    def update_actuator_last_update(self, actuator_id, last_update):
-
-        try:
-            logger.debug(f"Updating actuator {actuator_id} last_update to: {last_update} (type: {type(last_update).__name__})")
-
-            result = self.db.actuators.update_one(
-                {"ActuatorID": actuator_id},
-                {"$set": {"last_update": last_update}}
-            )
-            if result.matched_count > 0:
-                logger.info(f"Actuator {actuator_id} last_update timestamp updated to {last_update}")
-                return True
-            logger.warning(f"Actuator {actuator_id} not found")
-            return False
-        except Exception as e:
-            logger.error(f"Error updating actuator last_update: {e}", exc_info=True)
-            raise
 
     def get_sensor_by_room (self, room_id):
         try:

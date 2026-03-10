@@ -237,20 +237,24 @@ class Catalog:
         raise cherrypy.HTTPError(404, "Service not found")
 
     def _delete_remove_sensor(self, params):
-        """Delete a sensor by serviceID."""
+        """Delete a sensor by serviceID and optional roomID."""
         service_id = params.get('sensorID')
+        room_id = params.get('roomID')
         if not service_id:
-            raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
-        success = self.db.delete_sensor(service_id)
+            raise cherrypy.HTTPError(400, "Missing 'sensorID' parameter")
+        # Pass room_id to delete_sensor to scope deletion to specific room when provided
+        success = self.db.delete_sensor(service_id, room_id)
         if success:
             return json.dumps({"status": "success", "message": "Sensor Deleted"})
         raise cherrypy.HTTPError(404, "Sensor not found")
     def _delete_remove_actuator(self, params):
         """Delete an actuator by serviceID."""
         actuator_id = params.get('ActuatorID')
+        room_id = params.get('roomID')
         if not actuator_id:
-            raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
-        success = self.db.delete_actuator(actuator_id)
+            raise cherrypy.HTTPError(400, "Missing 'ActuatorID' parameter")
+        # Pass room_id to delete_actuator to scope deletion to specific room when provided
+        success = self.db.delete_actuator(actuator_id, room_id)
         if success:
             return json.dumps({"status": "success", "message": "Actuator Deleted"})
         raise cherrypy.HTTPError(404, "Actuator not found")

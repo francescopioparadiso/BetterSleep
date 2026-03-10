@@ -42,3 +42,48 @@ Content-Type: application/json
   "room_id": 1,
   "house_id": 1
 }
+
+###
+POST http://localhost:9095/signup
+Content-Type: application/json
+
+{
+  "email": "meraviglia@email.com",
+   "password": "12345678"
+}
+###
+POST http://localhost:9095/addHouse
+Content-Type: application/json
+
+{
+  "name": "House 002"
+  }
+
+###
+POST http://localhost:9095/addHouseMember
+Content-Type: application/json
+
+{
+  "house_id": 2,
+  "user_id": 2
+}
+
+###
+POST http://localhost:9095/addRoom
+Content-Type: application/json
+
+{
+  "house_id": 2,
+  "user_id": 2,
+  "name": "Bedroom Meraviglia"
+}
+
+###
+PUT http://localhost:9095/setActiveRoom
+Content-Type: application/json
+
+{
+  "user_id": 2,
+  "room_id": 2,
+  "house_id": 2
+}

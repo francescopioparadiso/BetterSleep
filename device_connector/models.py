@@ -34,6 +34,7 @@ class BaseIoTComponent:
             self.type_device = 2
             self.category = "actuator"
         print(self.service_info)
+        self.id=None
         self.comp_id = self.service_info.get(self.id_key)
 
         # 2. Setup Topics
@@ -135,7 +136,7 @@ class BaseIoTComponent:
         measurement_name = name or getattr(self, 'sensor_type_long', self.service_info.get('type', 'Value').title())
 
         payload = {
-            "bn": f"{house_id}:{room_id}:{comp_id}:{self.service_info.get('type', 'unknown')}",
+            "bn": f"{house_id}:{room_id}:{comp_id}:{self.id}",
             "e": [{
                 "n": measurement_name,
                 "v": value,
@@ -163,6 +164,7 @@ class Sensor(BaseIoTComponent):
 
         # then in your class
         self.sensor_type_long = sensortype.get(sensor_type, "Unknown")
+        self.id = sensor_type
 class Actuator(BaseIoTComponent):
     def notify(self, topic, payload):
         try:
