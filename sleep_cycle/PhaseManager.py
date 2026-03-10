@@ -128,13 +128,14 @@ class PhaseManager:
 
         curved_progress = self._curve_progress(progress)
         live_targets = user_data.get("live_targets", {})
+        live_values = user_data.get("live_values", {})
 
         # Capture the actual light value ONCE when the transition begins.
         # Priority: real sensor reading -> last target -> config fallback.
         if "transition_start_light" not in live_targets:
-            current_light = user_data.get("live_light")
+            current_light = live_values.get("light")  # Get actual sensor reading
             if current_light is None:
-                current_light = live_targets.get("light")
+                current_light = live_targets.get("light")  # Fallback to last target
 
             if current_light is not None:
                 live_targets["transition_start_light"] = max(0.0, min(100.0, float(current_light)))
@@ -146,10 +147,10 @@ class PhaseManager:
 
         # Temperature always interpolates between config endpoints
         if phase == "WIND_DOWN":
-            target_t = t_morn
+            target_t = t_morn  # Maintain day temperature during wind-down
             end_l = l_night
         else:  # WAKE_UP
-            target_t=t_night
+            target_t = t_morn  # Use morning temperature during wake-up (22°C)
             end_l = l_morn
 
         target_l = start_l + ((end_l - start_l) * curved_progress)

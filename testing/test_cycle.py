@@ -49,7 +49,10 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
     houseid = "1"
     bedroomid = "1"
 
-    # Wait for active_users_cache to be populated
+    # Initialize the user cache by triggering a fetch before simulation starts
+    manager._fetch_and_cache_room_preference(userid)
+
+    # Wait for MQTT connections to stabilize
     time.sleep(2)
 
     # Sensor and actuator configuration
@@ -246,14 +249,16 @@ def test_night_simulation(duration_seconds=600, presence_decider=None):
             vibration_value = 0.1 * presence_value + 0.05 * (0.5 - (step % 20) / 20)
             vibration_sensor.publish_data(round(vibration_value, 3), unit="g", timestamp=sim_ts)
 
-            phase=manager.active_users_cache[userid]["live_targets"]["phase"]
+            # Get current phase safely from live_values
+            phase = manager.active_users_cache.get(userid, {}).get("live_values", {}).get("phase", "UNKNOWN")
+
             # Console output for monitoring
             print(f"[{hour:02d}:{minute:02d}] Temp={current_temp:.2f}°C, Presenza={presence_value}, "
                   f"Light={getattr(light_actuator, 'value', '?')}%, "
                   f"Fan={getattr(fan_actuator, 'state', '?')}, "
                   f"Heater={getattr(heater_actuator, 'state', '?')}, "
                   f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g"
-                  f", Phase={phase }")
+                  f", Phase={phase}")
 
 
             # Real-time delay between simulation steps

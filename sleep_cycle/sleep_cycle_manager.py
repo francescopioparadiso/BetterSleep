@@ -27,39 +27,28 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
 
     # Above band -> cool down
     if temp_value > upper_bound:
-        if prefer_fan and "fan" in room_actuators:
-            return 1, "fan"
-        if not prefer_fan and "heater" in room_actuators:
-            return 0, "heater"
-        # fallback
+        # Priority: turn ON fan to cool down
         if "fan" in room_actuators:
             return 1, "fan"
+        # Fallback: turn OFF heater if no fan available
         if "heater" in room_actuators:
             return 0, "heater"
         return None, None
 
     # Below band -> warm up
     if temp_value < lower_bound:
-        if not prefer_fan and "heater" in room_actuators:
-            return 1, "heater"
-        if prefer_fan and "fan" in room_actuators:
-            return 0, "fan"
-        # fallback
+        # Priority: turn ON heater to warm up
         if "heater" in room_actuators:
             return 1, "heater"
+        # Fallback: turn OFF fan if no heater available
         if "fan" in room_actuators:
             return 0, "fan"
         return None, None
 
-    # Inside deadband -> keep HVAC off
-    if prefer_fan and "fan" in room_actuators:
-        return 0, "fan"
-    if not prefer_fan and "heater" in room_actuators:
-        return 0, "heater"
-    if "fan" in room_actuators:
-        return 0, "fan"
-    if "heater" in room_actuators:
-        return 0, "heater"
+    # Inside deadband -> turn off all HVAC to avoid oscillation
+    for device in ("fan", "heater"):
+        if device in room_actuators:
+            return 0, device
     return None, None
 
 
@@ -198,7 +187,7 @@ class SleepCycleManager:
 
         previous_cache = self.active_users_cache.get(u_id, {})
         previous_live_targets = previous_cache.get("live_targets", {})
-        previous_live_light = previous_cache.get("live_light")
+        previous_live_values = previous_cache.get("live_values", {})
 
         self.active_users_cache[u_id] = {
             "active_room_id": r_id,
@@ -210,17 +199,18 @@ class SleepCycleManager:
                 "temperature_night": float(pref.get('temperature_night', 18.0)),
                 "temperature_morning": float(pref.get('temperature_morning', 22.0)),
                 "light_night": float(pref.get('light_night', 0.0)),
-                "light_morning": float(pref.get('light_morning', 100.0)),
-                "actuators": self.get_actuators_in_room(r_id)
+                "light_morning": float(pref.get('light_morning', 100.0))
             },
             "live_targets": {
-                "temperature": previous_live_targets.get("temperature"),
-                "light": previous_live_targets.get("light"),
-                "phase": previous_live_targets.get("phase"),
-                "last_seen_bed": previous_live_targets.get("last_seen_bed"),
-                "last_left_bed": previous_live_targets.get("last_left_bed")
+                "temperature": previous_live_targets.get("temperature"),  # Target temperature
+                "light": previous_live_targets.get("light")  # Target light brightness
             },
-            "live_light": previous_live_light
+            "live_values": {
+                "light": previous_live_values.get("light"),  # Actual light sensor reading
+                "phase": previous_live_values.get("phase"),  # Current phase (DAY/WIND_DOWN/SLEEP/WAKE_UP)
+                "last_seen_bed": previous_live_values.get("last_seen_bed"),  # Timestamp when entered bed
+                "last_left_bed": previous_live_values.get("last_left_bed")  # Timestamp when left bed
+            }
         }
 
         # 4. Map the room to the user
@@ -303,20 +293,21 @@ class SleepCycleManager:
         if sensor_type == "ambient_temp":
             desiderate_temp = user_data['live_targets']['temperature']
             if desiderate_temp is None:
-                phase = user_data['live_targets'].get('phase')
+                phase = user_data['live_values'].get('phase')
                 if phase == "SLEEP":
                     desiderate_temp = user_data['config'].get('temperature_night', 18.0)
                 else:
                     desiderate_temp = user_data['config'].get('temperature_morning', 22.0)
-            room_actuators = user_data['config']['actuators']
+            # Fetch actuators on-demand instead of caching
+            room_actuators = self.get_actuators_in_room(room_id)
             self.handle_temperature(msg, room_actuators, desiderate_temp, house_id, room_id)
         elif sensor_type == "presence":
             self.handle_presence(msg, userid, house_id, room_id)
         elif sensor_type == "light":
             try:
                 current_light = float(msg['e'][0]['v'])
-                # Keep real sensor brightness separate from commanded transition targets.
-                user_data['live_light'] = current_light
+                # Store actual sensor reading in live_values
+                user_data['live_values']['light'] = current_light
             except Exception:
                 self.logger.warning(f"Invalid light payload for user {userid}: {msg}")
 
@@ -404,18 +395,20 @@ class SleepCycleManager:
         if action is None or device is None:
             return
 
-        command = {
-            "action": action,
-            "timestamp": datetime.now().timestamp()
-        }
-        base_topic=self.topic_publish[0]
+        # CRITICAL: Ensure mutual exclusivity - only one HVAC device active at a time
+        base_topic = self.topic_publish[0]
 
-        topic = base_topic.format(
-            houseID=houseid,
-            bedroomID=bedroomid,
-            device=device
-        )
+        # Send command to the target device
+        command = {"action": action, "timestamp": datetime.now().timestamp()}
+        topic = base_topic.format(houseID=houseid, bedroomID=bedroomid, device=device)
         self.publish(command, command_topic=topic)
+
+        # Turn OFF the opposite device to prevent both being active simultaneously
+        opposite_device = "heater" if device == "fan" else "fan"
+        if opposite_device in room_actuator:
+            off_command = {"action": 0, "timestamp": datetime.now().timestamp()}
+            off_topic = base_topic.format(houseID=houseid, bedroomID=bedroomid, device=opposite_device)
+            self.publish(off_command, command_topic=off_topic)
 
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']
@@ -429,25 +422,25 @@ class SleepCycleManager:
 
         # Track when user leaves bed
         if presence_value != 1:
-            if user_data["live_targets"].get("last_left_bed") is None:
-                user_data["live_targets"]["last_left_bed"] = datetime.now()
+            if user_data["live_values"].get("last_left_bed") is None:
+                user_data["live_values"]["last_left_bed"] = datetime.now()
             else:
-                seconds_out_of_bed = (datetime.now() - user_data["live_targets"]["last_left_bed"]).total_seconds()
+                seconds_out_of_bed = (datetime.now() - user_data["live_values"]["last_left_bed"]).total_seconds()
                 if user_data.get("is_sleeping", False) and seconds_out_of_bed >= self.SLEEP_DETECTION_SECONDS:
                     user_data["is_sleeping"] = False
-                    user_data["live_targets"]["last_seen_bed"] = None
-                    user_data["live_targets"]["last_left_bed"] = None
+                    user_data["live_values"]["last_seen_bed"] = None
+                    user_data["live_values"]["last_left_bed"] = None
                     self.publish({"action": "FINISH_SLEEP", "timestamp": str(datetime.now())}, command_topic=finish_sleep_topic)
                     self.logger.info(f"User {userid} finished sleep in {bedroomid}")
             return
         else:
-            user_data["live_targets"]["last_left_bed"] = None
+            user_data["live_values"]["last_left_bed"] = None
 
-        if user_data["live_targets"].get("last_seen_bed") is None:
-            user_data["live_targets"]["last_seen_bed"] = datetime.now()
+        if user_data["live_values"].get("last_seen_bed") is None:
+            user_data["live_values"]["last_seen_bed"] = datetime.now()
             return
 
-        second_in_bed = (datetime.now() - user_data["live_targets"]["last_seen_bed"]).total_seconds()
+        second_in_bed = (datetime.now() - user_data["live_values"]["last_seen_bed"]).total_seconds()
         if user_data.get("is_sleeping", False) or second_in_bed < self.SLEEP_DETECTION_SECONDS:
             return
 
@@ -476,7 +469,7 @@ class SleepCycleManager:
         if target_light is not None:
             user_data["live_targets"]["light"] = target_light
         if phase is not None:
-            user_data["live_targets"]["phase"] = phase
+            user_data["live_values"]["phase"] = phase
 
         if target_light is not None:
             new_value = int(round(max(0.0, min(100.0, float(target_light)))))
