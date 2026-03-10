@@ -6,8 +6,21 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_to_min(val):
+    """Convert a time value to total minutes since midnight.
+
+    Accepts:
+    - "HH:MM" or "HH:MM:SS" strings
+    - datetime.time objects
+    - datetime.datetime objects (uses .hour / .minute)
+    """
+    if val is None:
+        return None
     try:
-        parts = val.split(":")
+        # datetime.time or datetime.datetime
+        if hasattr(val, 'hour') and hasattr(val, 'minute'):
+            return int(val.hour) * 60 + int(val.minute)
+        # string "HH:MM" or "HH:MM:SS"
+        parts = str(val).split(":")
         return int(parts[0]) * 60 + int(parts[1])
     except Exception:
         return None
@@ -37,10 +50,11 @@ class PhaseManager:
         self.prefer_fan = prefer_fan
         self._stop_event = threading.Event()
         self._thread = None
-        # The clock is always driven by sensor timestamps.
-        # It is set by sync_from_sensor_time() on every incoming sensor message.
-        self._sensor_time = None
-        self._last_synced_minute = -1
+        # Per-user clocks: each user's sensor drives only that user's phase check.
+        # _sensor_time_per_user  : {userid -> datetime}
+        # _last_synced_minute    : {userid -> int}  (HH*60+MM, -1 = never synced)
+        self._sensor_time_per_user = {}
+        self._last_synced_minute = {}
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -59,70 +73,98 @@ class PhaseManager:
         """Keep the thread alive; all phase checks are triggered by sync_from_sensor_time()."""
         self._stop_event.wait()
 
-    def sync_from_sensor_time(self, unix_ts):
+    def sync_from_sensor_time(self, unix_ts, userid):
         """
-        Called on every incoming sensor message.
-        Updates the clock to the HH:MM encoded in the sensor timestamp and
-        triggers _check_all_rooms() once per unique virtual minute.
+        Called on every incoming sensor message for a specific user.
+        Updates that user's virtual clock and triggers a phase check only for
+        that user, once per unique virtual minute.
 
-        - In simulation: test sends virtual timestamps (e.g. 21:30) → phases
-          change according to simulated time regardless of real wall-clock.
-        - In production: sensors send real UTC timestamps → PhaseManager uses
-          the sensor's reported time, making it timezone-independent.
+        - In simulation: test sends virtual timestamps (e.g. 21:30) → each
+          user's phase changes according to that user's simulated time,
+          independently of other users.
+        - In production: sensors send real UTC timestamps → each user is
+          evaluated against their own sensor's reported time.
         """
+        if userid is None:
+            return
         try:
             vt = datetime.fromtimestamp(float(unix_ts))
             new_minute = vt.hour * 60 + vt.minute
-            if new_minute == self._last_synced_minute:
-                return  # same virtual minute already processed
-            self._sensor_time = vt.replace(second=0, microsecond=0)
-            self._last_synced_minute = new_minute
-            logger.debug(f"PhaseManager clock → {self._sensor_time.strftime('%H:%M')}")
-            self._check_all_rooms()
+            # Only process once per unique virtual minute per user
+            if new_minute == self._last_synced_minute.get(userid, -1):
+                return
+            self._sensor_time_per_user[userid] = vt.replace(second=0, microsecond=0)
+            self._last_synced_minute[userid] = new_minute
+            logger.info(f"[PhaseManager] user={userid} clock → {self._sensor_time_per_user[userid].strftime('%H:%M')}")
+            self._check_user(userid)
         except Exception as e:
-            logger.error(f"PhaseManager sync_from_sensor_time error: {e}")
+            logger.error(f"PhaseManager sync_from_sensor_time error (user={userid}): {e}")
 
-    def get_current_time(self):
-        """Returns the last sensor-reported time."""
-        return self._sensor_time
+    def get_current_time(self, userid=None):
+        """Returns the last sensor-reported time for a specific user (or None)."""
+        if userid is not None:
+            return self._sensor_time_per_user.get(userid)
+        # Legacy fallback: return the most recently updated time across all users
+        if not self._sensor_time_per_user:
+            return None
+        return max(self._sensor_time_per_user.values())
 
-    def _check_all_rooms(self):
-        now = self.get_current_time()
+    def _check_user(self, userid):
+        """Evaluate and apply the correct phase for a single user based on their own clock."""
+        now = self._sensor_time_per_user.get(userid)
         if now is None:
-            return  # no sensor time received yet
+            return
+
         now_min = now.hour * 60 + now.minute
 
-        for userid, user_data in self.manager.active_users_cache.items():
-            if not user_data:
-                continue
-            night_min = _parse_to_min(user_data.get("night_time"))
-            morn_min = _parse_to_min(user_data.get("morning_time"))
+        user_data = self.manager.active_users_cache.get(userid)
+        if not user_data:
+            logger.warning(f"[PhaseManager] user={userid} not in active_users_cache — skipping")
+            return
 
-            logger.debug(f"[PhaseManager] user={userid} time={now.strftime('%H:%M')} "
-                         f"night_time={user_data.get('night_time')} ({night_min}) "
-                         f"morning_time={user_data.get('morning_time')} ({morn_min})")
+        night_min = _parse_to_min(user_data.get("night_time"))
+        morn_min  = _parse_to_min(user_data.get("morning_time"))
 
-            if night_min is None or morn_min is None:
-                logger.warning(f"[PhaseManager] user={userid}: night_time or morning_time missing — skipping phase check")
-                continue
+        logger.info(
+            f"[PhaseManager] CHECK user={userid} | virtual_time={now.strftime('%H:%M')} ({now_min}m) | "
+            f"night_time={user_data.get('night_time')!r} ({night_min}) | "
+            f"morning_time={user_data.get('morning_time')!r} ({morn_min}) | "
+            f"window={self.window}m"
+        )
 
-            wind_down_start = (night_min - self.window) % 1440
-            wake_up_start = (morn_min - self.window) % 1440
+        if night_min is None or morn_min is None:
+            logger.warning(
+                f"[PhaseManager] user={userid}: night_time or morning_time missing or unparseable "
+                f"(night_time={user_data.get('night_time')!r}, morning_time={user_data.get('morning_time')!r}) — skipping"
+            )
+            return
 
-            if _is_in_range(now_min, wind_down_start, night_min):
-                progress = _get_progress(now_min, wind_down_start, night_min)
-                self._apply_transition(userid, user_data, "WIND_DOWN", progress)
-                continue
+        wind_down_start = (night_min - self.window) % 1440
+        wake_up_start   = (morn_min  - self.window) % 1440
 
-            if _is_in_range(now_min, wake_up_start, morn_min):
-                progress = _get_progress(now_min, wake_up_start, morn_min)
-                self._apply_transition(userid, user_data, "WAKE_UP", progress)
-                continue
+        logger.info(
+            f"[PhaseManager] user={userid} | wind_down_start={wind_down_start} | night={night_min} | "
+            f"wake_up_start={wake_up_start} | morning={morn_min}"
+        )
 
-            if _is_in_range(now_min, night_min, morn_min):
-                self._apply_static_phase(userid, user_data, "SLEEP")
-            else:
-                self._apply_static_phase(userid, user_data, "DAY")
+        if _is_in_range(now_min, wind_down_start, night_min):
+            progress = _get_progress(now_min, wind_down_start, night_min)
+            logger.info(f"[PhaseManager] user={userid} → WIND_DOWN (progress={progress:.3f})")
+            self._apply_transition(userid, user_data, "WIND_DOWN", progress)
+            return
+
+        if _is_in_range(now_min, wake_up_start, morn_min):
+            progress = _get_progress(now_min, wake_up_start, morn_min)
+            logger.info(f"[PhaseManager] user={userid} → WAKE_UP (progress={progress:.3f})")
+            self._apply_transition(userid, user_data, "WAKE_UP", progress)
+            return
+
+        if _is_in_range(now_min, night_min, morn_min):
+            logger.info(f"[PhaseManager] user={userid} → SLEEP")
+            self._apply_static_phase(userid, user_data, "SLEEP")
+        else:
+            logger.info(f"[PhaseManager] user={userid} → DAY")
+            self._apply_static_phase(userid, user_data, "DAY")
 
     def _apply_static_phase(self, userid, user_data, phase):
         t_night = float(user_data['config'].get("temperature_night", 18.0))

@@ -97,7 +97,6 @@ class MQTTFeedbackMonitor:
             "phase": self.current_phase if self.current_phase else "DAY"
         }
 
-
 def simulate_single_user(user_info, config, duration_seconds, stop_event):
     """Encapsulated simulation logic for a single user thread."""
     userid = user_info["userid"]
@@ -111,9 +110,10 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
     sensors_config = config["sensors"]
     actuators_config = config["actuators"]
     thermal_config = config["thermal_dynamics"]
-
+    filepath=f"SimulationStats_User{userid}.txt"
     logger.info(f"Starting test simulation for user {userid} in house {houseid}, bedroom {bedroomid}")
-
+    with open(filepath, "w") as f:
+        f.write(f"Simulation Stats for User {userid} | House {houseid} Bedroom {bedroomid}\n")
     # Helper function to ensure unique sensor/actuator IDs across multiple users
     def make_unique_id(base_id):
         return f"{base_id}_{userid}"
@@ -257,7 +257,10 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
             print(f"[User {userid} | {vt_str}] Temp={current_temp:.2f}°C, Pres={presence_value}, "
                   f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g | "
                   f"Phase={phase} | MQTT[L={light_mqtt}, F={fan_mqtt}, H={heater_mqtt}]")
-
+            with open(filepath, "a") as f:
+                f.write(f"[User {userid} | {vt_str}] Temp={current_temp:.2f}°C, Pres={presence_value}, "
+                  f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.3f}g | "
+                  f"Phase={phase} | MQTT[L={light_mqtt}, F={fan_mqtt}, H={heater_mqtt}]")
             time.sleep(real_step_seconds)
 
     finally:

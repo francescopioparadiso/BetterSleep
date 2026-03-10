@@ -277,16 +277,33 @@ class SleepCycleManager:
         room_id = parts[3]
         sensor_type = parts[5]
 
-        # Always sync PhaseManager clock from sensor timestamp first — before any cache check.
-        # This works for both simulation (virtual timestamps) and production (real timestamps).
+        userid = self.room_to_user_map.get(room_id)
+
+        self.logger.info(
+            f"[SENSOR] topic={topic} | room_id={room_id!r} | "
+            f"room_to_user_map={self.room_to_user_map} | resolved userid={userid!r}"
+        )
+
+        # Sync PhaseManager clock for THIS user only, using this sensor's timestamp.
+        # Must happen after resolving userid so the per-user clock is updated correctly.
         try:
             ts = msg['e'][0].get('t')
-            if ts is not None:
-                self.phase_manager.sync_from_sensor_time(float(ts))
-        except Exception:
-            pass
+            if ts is not None and userid is not None:
+                vt = datetime.fromtimestamp(float(ts))
+                self.logger.info(
+                    f"[PHASE SYNC] user={userid} sensor_ts={ts} → virtual_time={vt.strftime('%H:%M')}"
+                )
+                self.phase_manager.sync_from_sensor_time(float(ts), userid)
+            elif userid is None:
+                self.logger.warning(
+                    f"[PHASE SYNC SKIPPED] room_id={room_id!r} not in room_to_user_map — "
+                    f"map keys: {list(self.room_to_user_map.keys())}"
+                )
+            elif ts is None:
+                self.logger.warning(f"[PHASE SYNC SKIPPED] no timestamp in payload for user={userid}")
+        except Exception as e:
+            self.logger.error(f"[PHASE SYNC ERROR] {e}")
 
-        userid = self.room_to_user_map.get(room_id)
         if userid is None:
             return
 
@@ -553,6 +570,7 @@ if __name__ == "__main__":
     )
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
+
     try:
         with open("conf.json", "r") as f:
             full_conf = json.load(f)
