@@ -412,8 +412,7 @@ class SleepCycleManager:
 
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']
-        topic_to_publish = self.topic_publish[1].replace("{houseid}", houseid).replace("{bedroomid}", bedroomid)
-        finish_sleep_topic = f"BedAnalitics/userID/{userid}/FinishSleep"
+        finish_sleep_topic = self.topic_publish[2].format(userID=userid)
 
         user_data = self.active_users_cache.get(userid)
         if not user_data:
@@ -445,7 +444,8 @@ class SleepCycleManager:
             return
 
         user_data["is_sleeping"] = True
-        topic_heart=f"House/{houseID}/Bedroom/{bedroomID}/heart_rate"
+        # Use heart_rate topic from config
+        topic_heart = self.topic_publish[1].format(houseID=houseid, bedroomID=bedroomid)
         message = {"action": 1, "timestamp": str(datetime.now())}
         self.publish(message, command_topic=topic_heart)
         self.logger.info(f"User {userid} is now sleeping in {bedroomid}")
