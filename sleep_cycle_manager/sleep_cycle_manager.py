@@ -66,11 +66,11 @@ def _parse_sensor_topic(topic):
 def _parse_preference_topic(topic):
     parts = topic.split("/")
 
-    # UserService/ChangePreference/User/{userID}/Preference/
+    # UserService/ChangePreference/User/{userid}/Preference/
     if len(parts) >= 5 and parts[2] == "User":
         return "user", parts[3]
 
-    # UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
+    # UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userid}/Preference/
     if len(parts) >= 8 and parts[2] == "House":
         return "room", parts[5]
 
@@ -125,7 +125,7 @@ class SleepCycleManager:
 
     def get_ActiveRoomwithUser(self):
         """
-        Fetches active associations and normalizes them to RoomID -> UserID mapping.
+        Fetches active associations and normalizes them to RoomID -> Userid mapping.
         User service returns {user_id: room_id}, we need {room_id: user_id}.
         """
         try:
@@ -201,6 +201,7 @@ class SleepCycleManager:
                 "fan_state": previous_live_values.get("fan_state"),
                 "phase": "DAY" if not pref.get('is_sleeping', False) else "SLEEP",
                 "phase_published": False,  # reset so first tick always publishes
+                "start_sleep_sent": False, # tracks whether START_SLEEP was sent this night
                 "last_seen_bed": previous_live_values.get("last_seen_bed"),
                 "last_left_bed": previous_live_values.get("last_left_bed")
             }
@@ -282,27 +283,11 @@ class SleepCycleManager:
             f"room_to_user_map={self.room_to_user_map} | resolved userid={userid!r}"
         )
 
-        # Sync PhaseManager clock for THIS user only, using this sensor's timestamp.
-        # Must happen after resolving userid so the per-user clock is updated correctly.
-        try:
-            ts = msg['e'][0].get('t')
-            if ts is not None and userid is not None:
-                vt = datetime.fromtimestamp(float(ts))
-                self.logger.info(
-                    f"[PHASE SYNC] user={userid} sensor_ts={ts} → virtual_time={vt.strftime('%H:%M')}"
-                )
-                self.phase_manager.sync_from_sensor_time(float(ts), userid)
-            elif userid is None:
-                self.logger.warning(
-                    f"[PHASE SYNC SKIPPED] room_id={room_id!r} not in room_to_user_map — "
-                    f"map keys: {list(self.room_to_user_map.keys())}"
-                )
-            elif ts is None:
-                self.logger.warning(f"[PHASE SYNC SKIPPED] no timestamp in payload for user={userid}")
-        except Exception as e:
-            self.logger.error(f"[PHASE SYNC ERROR] {e}")
-
         if userid is None:
+            self.logger.warning(
+                f"[PHASE SYNC SKIPPED] room_id={room_id!r} not in room_to_user_map — "
+                f"map keys: {list(self.room_to_user_map.keys())}"
+            )
             return
 
         user_data = self.active_users_cache.get(userid)
@@ -310,7 +295,28 @@ class SleepCycleManager:
             user_data = self._fetch_and_cache_room_preference(userid)
         if not user_data:
             return
+
         self.logger.info(f"Handling sensor event for user {userid} in room {room_id} (house {house_id}), type: {sensor_type}")
+
+        # Store sensor_ts BEFORE calling sync_from_sensor_time.
+        # sync_from_sensor_time → _check_user → change_target_temperature_light reads sensor_ts
+        # synchronously, so it must already be up-to-date when START_SLEEP is published.
+        ts = msg['e'][0].get('t') if 'e' in msg and len(msg['e']) > 0 else None
+        if ts is not None:
+            user_data['live_values']['sensor_ts'] = ts
+
+        # Sync PhaseManager clock for THIS user only, using this sensor's timestamp.
+        try:
+            if ts is not None:
+                vt = datetime.fromtimestamp(float(ts))
+                self.logger.info(
+                    f"[PHASE SYNC] user={userid} sensor_ts={ts} → virtual_time={vt.strftime('%H:%M')}"
+                )
+                self.phase_manager.sync_from_sensor_time(float(ts), userid)
+            else:
+                self.logger.warning(f"[PHASE SYNC SKIPPED] no timestamp in payload for user={userid}")
+        except Exception as e:
+            self.logger.error(f"[PHASE SYNC ERROR] {e}")
 
         if sensor_type == "ambient_temp":
             desiderate_temp = user_data['live_targets']['temperature']
@@ -474,7 +480,7 @@ class SleepCycleManager:
 
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']
-        finish_sleep_topic = self.topic_publish[2].format(userID=userid)
+        finish_sleep_topic = self.topic_publish[2].format(userid=userid)
 
         user_data = self.active_users_cache.get(userid)
         if not user_data:
@@ -527,6 +533,7 @@ class SleepCycleManager:
         previous_light = user_data["live_targets"].get("light")
         previous_phase = user_data["live_values"].get("phase")
         phase_published = user_data["live_values"].get("phase_published", False)
+        start_sleep_sent = user_data["live_values"].get("start_sleep_sent", False)
 
         if target_temperature is not None:
             user_data["live_targets"]["temperature"] = target_temperature
@@ -551,17 +558,31 @@ class SleepCycleManager:
         # Publish phase: on first publish ever, or when phase changes, or during active transitions
         is_transition = phase in ("WIND_DOWN", "WAKE_UP")
         if phase is not None and (not phase_published or phase != previous_phase or is_transition):
-            topic = self.topic_publish[4].format(houseid=houseid, bedroomid=bedroomid)
+            phase_topic = self.topic_publish[4].format(houseid=houseid, bedroomid=bedroomid)
             phase_data = {
                 "bn": f"{houseid}:{bedroomid}:phase",
                 "e": [{"n": "Phase", "v": phase, "t": time.time()}]
             }
-            self.publish(phase_data, command_topic=topic)
-            if phase=="SLEEP":
-                topic=self.topic_publish[3].format(userid=userid)
-                self.publish({"action": "START_SLEEP", "timestamp": str(datetime.now())}, command_topic=topic)
+            self.publish(phase_data, command_topic=phase_topic)
             user_data["live_values"]["phase_published"] = True
-            self.logger.info(f"Published phase update: {phase} to topic {topic}")
+            self.logger.info(f"Published phase update: {phase} to topic {phase_topic}")
+
+            sensor_ts = user_data['live_values'].get('sensor_ts')
+            ts_str = str(sensor_ts) if sensor_ts else str(datetime.now())
+
+            # START_SLEEP: send exactly once per night (first transition into SLEEP)
+            if phase == "SLEEP" and not start_sleep_sent:
+                start_topic = self.topic_publish[3].format(userid=userid)
+                self.publish({"action": "START_SLEEP", "timestamp": ts_str}, command_topic=start_topic)
+                user_data["live_values"]["start_sleep_sent"] = True
+                self.logger.info(f"Published START_SLEEP for user {userid} at {ts_str}")
+
+            # FINISH_SLEEP: send once when leaving SLEEP (→ WAKE_UP or DAY)
+            if previous_phase == "SLEEP" and phase != "SLEEP":
+                finish_topic = self.topic_publish[2].format(userid=userid)
+                self.publish({"action": "FINISH_SLEEP", "timestamp": ts_str}, command_topic=finish_topic)
+                user_data["live_values"]["start_sleep_sent"] = False  # reset for next night
+                self.logger.info(f"Published FINISH_SLEEP for user {userid} at {ts_str}")
 
 if __name__ == "__main__":
     # Configure logging before any usage - DEBUG MODE ENABLED

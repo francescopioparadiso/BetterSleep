@@ -51,9 +51,9 @@ class PhaseManager:
 
         # Per-user clocks: each user's sensor drives only that user's phase check.
         # _sensor_time_per_user  : {userid -> datetime}
-        # _last_synced_minute    : {userid -> int}  (HH*60+MM, -1 = never synced)
+        # _last_synced_minute    : {userid -> int}  (Unix minute, monotonically increasing — never wraps at midnight)
         self._sensor_time_per_user = {}
-        self._last_synced_minute = {}
+        self._last_synced_minute = {}  # stores int(unix_ts) // 60, NOT hour*60+min
 
 
 
@@ -77,12 +77,16 @@ class PhaseManager:
             return
         try:
             vt = datetime.fromtimestamp(float(unix_ts))
-            new_minute = vt.hour * 60 + vt.minute
+            # Use Unix minute (int(unix_ts)//60) — monotonically increasing across days.
+            # Using vt.hour*60+vt.minute (minute-of-day) would wrap at midnight: 1439→0,
+            # causing "0 <= 1439" to be True and skipping every minute after midnight forever.
+            unix_minute = int(float(unix_ts)) // 60
+
             # Only process once per unique virtual minute per user
-            if new_minute <= self._last_synced_minute.get(userid, -1):
+            if unix_minute <= self._last_synced_minute.get(userid, -1):
                 return
             self._sensor_time_per_user[userid] = vt.replace(second=0, microsecond=0)
-            self._last_synced_minute[userid] = new_minute
+            self._last_synced_minute[userid] = unix_minute
             logger.info(f"[PhaseManager] user={userid} clock → {self._sensor_time_per_user[userid].strftime('%H:%M')}")
             self._check_user(userid)
         except Exception as e:
@@ -141,20 +145,22 @@ class PhaseManager:
             self._apply_transition(userid, user_data, "WIND_DOWN", progress)
             return
 
-        # SLEEP phase: start if now_min >= night_min or now_min < morn_min
-        if (night_min <= now_min < 1440) or (now_min < morn_min):
-            logger.info(f"[PhaseManager] user={userid} → SLEEP (robust phase check)")
-            self._apply_static_phase(userid, user_data, "SLEEP")
-            return
-
-        # WAKE_UP phase: unchanged
+        # WAKE_UP phase: must be checked BEFORE SLEEP, otherwise the broad SLEEP
+        # condition (now_min < morn_min) would swallow the entire wake-up window.
         if wake_up_start <= now_min < morn_min:
             progress = _get_progress(now_min, wake_up_start, morn_min)
             logger.info(f"[PhaseManager] user={userid} → WAKE_UP (progress={progress:.3f})")
             self._apply_transition(userid, user_data, "WAKE_UP", progress)
             return
 
-        # DAY phase: fallback
+        # SLEEP phase: evening (>= night_min) OR early morning before the wake-up window.
+        # Use wake_up_start (not morn_min) as the upper bound so WAKE_UP has its own window.
+        if (night_min <= now_min < 1440) or (now_min < wake_up_start):
+            logger.info(f"[PhaseManager] user={userid} → SLEEP (robust phase check)")
+            self._apply_static_phase(userid, user_data, "SLEEP")
+            return
+
+        # DAY phase: fallback (morn_min <= now_min < wind_down_start)
         logger.info(f"[PhaseManager] user={userid} → DAY")
         self._apply_static_phase(userid, user_data, "DAY")
 
