@@ -10,13 +10,11 @@ from datetime import datetime, timedelta
 logging.basicConfig(filename='test_cycle.log', level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../sleep_cycle')))
-# from sleep_cycle.sleep_cycle_manager import SleepCycleManager
+# from sleep_cycle_manager.sleep_cycle_manager import SleepCycleManager
 from device_connector.Simulate_Sensor import *
 from common.MQTT.MyMQTT import MyMQTT
 
-
-def load_test_config(config_path="conf_test.json"):
+def load_test_config(config_path="conf.json"):
     """Load test cycle configuration from JSON file."""
     with open(config_path, "r") as f:
         return json.load(f)
