@@ -551,12 +551,15 @@ class SleepCycleManager:
         # Publish phase: on first publish ever, or when phase changes, or during active transitions
         is_transition = phase in ("WIND_DOWN", "WAKE_UP")
         if phase is not None and (not phase_published or phase != previous_phase or is_transition):
-            topic = f"House/{houseid}/Bedroom/{bedroomid}/phase"
+            topic = self.topic_publish[4].format(houseid=houseid, bedroomid=bedroomid)
             phase_data = {
                 "bn": f"{houseid}:{bedroomid}:phase",
                 "e": [{"n": "Phase", "v": phase, "t": time.time()}]
             }
             self.publish(phase_data, command_topic=topic)
+            if phase=="SLEEP":
+                topic=self.topic_publish[3].format(userid=userid)
+                self.publish({"action": "START_SLEEP", "timestamp": str(datetime.now())}, command_topic=topic)
             user_data["live_values"]["phase_published"] = True
             self.logger.info(f"Published phase update: {phase} to topic {topic}")
 

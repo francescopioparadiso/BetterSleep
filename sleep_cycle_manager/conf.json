@@ -17,7 +17,9 @@
     "topic_publish": [
       "House/{houseID}/Bedroom/{bedroomID}/actuator/{device}/command",
       "House/{houseID}/Bedroom/{bedroomID}/heart_rate",
-      "BedAnalitics/userID/{userID}/FinishSleep"
+      "BedAnalitics/userid/{userid}/FinishSleep",
+      "BedAnalitics/userid/{userid}/StartSleep",
+      "House/{houseid}/Bedroom/{bedroomid}/phase"
     ],
     "clientID": "SleepCycleManagerClientBetterSleep"
   },

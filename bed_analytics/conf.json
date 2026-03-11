@@ -1,15 +1,19 @@
 {
   "serviceInfo": {
-    "serviceID": 1,
+    "serviceID": 5,
     "name": "BedAnalytics",
     "host": "0.0.0.0",
-    "port": 9091,
+    "port": 9097,
     "type": "Analytics"
   },
  "MQTT": {
-      "broker": "localhost",
+      "broker": "broker.hivemq.com",
       "port": 1883,
-      "topic": "bed/analytics"
+      "topic_subscribe": [
+        "BedAnalitics/userid/#"
+      ],
+
+    "clientID": "BedAnalyticsClientBetterSleep1"
     },
   "catalogURL": "http://localhost:8080",
   "removeInterval": 10

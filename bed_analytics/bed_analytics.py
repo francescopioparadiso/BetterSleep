@@ -5,8 +5,14 @@ import threading
 import logging
 from datetime import datetime
 import cherrypy
-from common.catalog_client import CatalogClient
+import os
+import sys
+import re
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from common.catalog_client import CatalogClient
+from common.MQTT.MyMQTT import MyMQTT
+from common.common import json_error_page, mqtt_to_regex
 logger = logging.getLogger(__name__)
 
 
@@ -22,22 +28,39 @@ class BedAnalytics:
         self.actualTime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.catalog_client = CatalogClient(self.catalog_url, self.service_info, self.remove_interval)
         self.catalog_client.register()
+        self.mqtt_client = None
+        self.MQTT_info = conf['MQTT']
+        self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']  # Fix: define topic_subscribe_raw
+        self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
 
+    def init_mqtt_client(self):
+        client_id = self.MQTT_info['clientID']
+        broker = self.MQTT_info['broker']
+        port = self.MQTT_info['port']
+        try:
+            self.mqtt_client = MyMQTT(client_id, broker, port, self)
+            self.startClient()
+            for topic in self.topic_subscribe_raw:
+                self.mqtt_client.mySubscribe(topic)
+            logger.info(f"MQTT client initialized and subscribed to {self.topic_subscribe_raw}")
+        except Exception as e:
+            logger.error(f"Error initializing MQTT client: {e}")
+            self.catalog_client.unregister()
+            sys.exit(1)
 
-def json_error_page(status, message, traceback, version):
-    """Override CherryPy HTTPError to return JSON instead of HTML."""
-    cherrypy.response.headers["Content-Type"] = "application/json"
+    def startClient(self):
+        self.mqtt_client.start()
 
-    # Status arriva come "404 Not Found" → prendiamo solo il numero
-    try:
-        status_code = int(status.split(" ")[0])
-    except (ValueError, IndexError):
-        status_code = 500
+    def stopClient(self):
+        self.mqtt_client.stop()
 
-    return json.dumps({
-        "status": status_code,
-        "error": message
-    })
+    def notify(self, topic, payload):
+        try:
+            message_received = json.loads(payload)
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON payload received on topic {topic}")
+            return
+        print(f"Received MQTT message on topic {topic}: {message_received}")
 
 if __name__ == "__main__":
     # Standard CherryPy startup sequence
@@ -59,6 +82,7 @@ if __name__ == "__main__":
 
     try:
         bed_analytics = BedAnalytics(full_conf)
+        bed_analytics.init_mqtt_client()  # Fix: initialize and start MQTT client
         cherrypy.tree.mount(bed_analytics, '/', conf)
         cherrypy.config.update({
             'server.socket_host': full_conf['serviceInfo']['host'],
