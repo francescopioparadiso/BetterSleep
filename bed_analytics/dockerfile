@@ -2,13 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY bed_analytics/requirements.txt /tmp/requirements.txt
+COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY common /app/common
-COPY bed_analytics /app/bed_analytics
+COPY . .
+COPY ../common ./common
 
-WORKDIR /app/bed_analytics
 
 CMD ["python3", "bed_analytics.py"]

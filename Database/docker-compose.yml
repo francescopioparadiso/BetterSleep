@@ -34,27 +34,6 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
 
-  bed-analytics:
-    build:
-      context: ..
-      dockerfile: bed_analytics/dockerfile
-    container_name: bs_bed_analytics
-    restart: unless-stopped
-    depends_on:
-      - timeseries-mongo
-    environment:
-      BED_ANALYTICS_CATALOG_URL: http://host.docker.internal:8080
-      BED_ANALYTICS_SKIP_CATALOG: "true"
-      BED_ANALYTICS_MONGO_HOST: timeseries-mongo
-      BED_ANALYTICS_MONGO_PORT: 27017
-      BED_ANALYTICS_MONGO_DATABASE: sleepanalyticsdb
-      BED_ANALYTICS_TIMESERIES_ENDPOINT: http://host.docker.internal:9093
-      BED_ANALYTICS_USER_SERVICE_URL: http://host.docker.internal:9095
-      BED_ANALYTICS_MQTT_BROKER: broker.hivemq.com
-      BED_ANALYTICS_MQTT_PORT: 1883
-    ports:
-      - "9097:9097"
-
 
 volumes:
   postgres_data:

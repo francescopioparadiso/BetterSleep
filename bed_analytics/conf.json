@@ -6,21 +6,15 @@
     "port": 9097,
     "type": "Analytics"
   },
-  "MQTT": {
-    "broker": "broker.hivemq.com",
-    "port": 1883,
-    "topic_subscribe": [
-      "BedAnalitics/userid/#"
-    ],
+ "MQTT": {
+      "broker": "broker.hivemq.com",
+      "port": 1883,
+      "topic_subscribe": [
+        "BedAnalitics/userid/#"
+      ],
+
     "clientID": "BedAnalyticsClientBetterSleep1"
-  },
+    },
   "catalogURL": "http://localhost:8080",
-  "removeInterval": 10,
-  "mongoDB": {
-    "host": "localhost",
-    "port": 27017,
-    "username": "admin",
-    "password": "password_mongo",
-    "database": "sleepanalyticsdb"
-  }
+  "removeInterval": 10
 }
