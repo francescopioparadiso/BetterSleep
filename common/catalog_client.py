@@ -29,45 +29,31 @@ class CatalogClient:
         self.id_key = "serviceID" if type_device == 0 else "sensorID" if type_device == 1 else "ActuatorID"
 
     def request(self, method, endpoint, **kwargs):
-        """Make a request to the catalog and return (data, status_code, error_message).
+        """Make a request to the catalog.
 
         Returns:
-            tuple: (data_dict, status_code, error_message)
-                - data_dict: Response JSON as dict, or None if error
-                - status_code: HTTP status code (int), or None if timeout/connection error
-                - error_message: Error message string, or None if success
+            tuple: (data, status_code, error_message) — error_message is None on success.
         """
+        methods = {"get": requests.get, "post": requests.post, "put": requests.put, "delete": requests.delete}
         try:
-            call = getattr(requests, method.lower())
-            res = call(f"{self.catalog_url}/{endpoint}", timeout=self.timeout, **kwargs)
+            res = methods[method.lower()](
+                f"{self.catalog_url}/{endpoint}", timeout=self.timeout, **kwargs
+            )
             res.raise_for_status()
-
-            # Success case
-            if res.content:
-                try:
-                    return res.json(), res.status_code, None
-                except ValueError:
-                    return {}, res.status_code, None
-            return {}, res.status_code, None
-
-        except requests.exceptions.Timeout as e:
-            logger.error(f"Catalog timeout {method} {endpoint}: {str(e)}")
+            return (res.json() if res.content else {}), res.status_code, None
+        except requests.exceptions.Timeout:
+            logger.error(f"Catalog timeout {method} {endpoint}")
             return None, None, "Request timed out"
 
         except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code if e.response is not None else None
-            try:
-                error_detail = e.response.json().get('error', str(e)) if e.response is not None else str(e)
-            except:
-                error_detail = str(e)
-
-            logger.error(f"Catalog HTTP error {status_code} {method} {endpoint}: {error_detail}")
-            return None, status_code, error_detail
+            status = e.response.status_code if e.response is not None else None
+            detail = e.response.json().get("error", str(e)) if e.response is not None else str(e)
+            logger.error(f"Catalog HTTP error {status} {method} {endpoint}: {detail}")
+            return None, status, detail
 
         except Exception as e:
-            logger.error(f"Catalog unexpected error {method} {endpoint}: {type(e).__name__} - {str(e)}")
-            return None, None, f"Unexpected error: {str(e)}"
-
+            logger.error(f"Catalog unexpected error {method} {endpoint}: {type(e).__name__} - {e}")
+            return None, None, f"Unexpected error: {e}"
     def get(self, endpoint, **kwargs):
         return self.request('get', endpoint, **kwargs)
 

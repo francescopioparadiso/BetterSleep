@@ -43,6 +43,12 @@ def checkSenML(newmeasurament):
         raise cherrypy.HTTPError(400, "Missing required fields inside 'e'")
     return  True
 
+
+def _json_response(data):
+    cherrypy.response.headers['Content-Type'] = 'application/json'
+    return json.dumps(data).encode('utf-8')
+
+
 class TimeSeriesDBAdapter:
     exposed = True
 
@@ -71,7 +77,24 @@ class TimeSeriesDBAdapter:
     # POST METHOD - Add new resources
     # --------------------------------------------------------
     def POST(self, *uri, **params):
-        pass
+        """Handle POST requests to add new resources (e.g., measurements)."""
+        if not uri:
+            raise cherrypy.HTTPError(400, "Endpoint not specified")
+
+        handlers = {
+            "addSleepScore": self._add_sleep_score,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
+            raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler()
+
+    def _add_sleep_score(self):
+        payload = _load_json_body()
+        required_fields = ["user_id", "sleep_score"]
+        require_fields(payload, required_fields)
+        self.db.insert_sleep_score("sleep_scores", payload)
+        return json.dumps({"message": "Sleep score added successfully"}).encode('utf-8')
 
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
@@ -84,40 +107,38 @@ class TimeSeriesDBAdapter:
             "getSensorByRoomAndType": self._get_sensor_by_room_and_type,
             "getSensorById": self._get_sensor_by_id,
             "getAllSensors": self._get_all_sensors,
-            "getSensorDataByRoomAndTimeRange": self._get_sensor_data_by_room_and_time_range
+            "getSensorDataByRoomAndTimeRange": self._get_sensor_data_by_room_and_time_range,
+            "getSleepScoresByUser": self._get_sleep_scores_by_user
         }
         handler = handlers.get(uri[0])
         if not handler:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
 
-
-
-    def _json_response(self, data):
-        cherrypy.response.headers['Content-Type'] = 'application/json'
-        return json.dumps(data).encode('utf-8')
-
     def _get_sensor_by_room(self, params):
         room_id = params.get("room_id")
         if not room_id:
             raise cherrypy.HTTPError(400, "Missing 'room_id' parameter")
-        return self._json_response(self.db.get_sensor_by_room(room_id))
+        return _json_response(self.db.get_sensor_by_room(room_id))
+
     def _get_sensor_by_type(self, params):
         sensor_type = params.get("sensor_type")
         if not sensor_type:
             raise cherrypy.HTTPError(400, "Missing 'sensor_type' parameter")
-        return self._json_response(self.db.get_sensor_by_type(sensor_type))
+        return _json_response(self.db.get_sensor_by_type(sensor_type))
+
     def _get_sensor_by_room_and_type(self, params):
         room_id = params.get("room_id")
         sensor_type = params.get("sensor_type")
         if not room_id or not sensor_type:
             raise cherrypy.HTTPError(400, "Missing 'room_id' or 'sensor_type' parameter")
-        return self._json_response(self.db.get_sensor_by_room_and_type(room_id, sensor_type))
+        return _json_response(self.db.get_sensor_by_room_and_type(room_id, sensor_type))
+
     def _get_sensor_by_id(self, params):
         sensor_id = params.get("sensor_id")
         if not sensor_id:
             raise cherrypy.HTTPError(400, "Missing 'sensor_id' parameter")
-        return self._json_response(self.db.get_sensor_by_id(sensor_id))
+        return _json_response(self.db.get_sensor_by_id(sensor_id))
 
     def _get_sensor_data_by_room_and_time_range(self, params):
         room_id = params.get("room_id")
@@ -125,9 +146,16 @@ class TimeSeriesDBAdapter:
         end_time = params.get("end_time")
         if not room_id or not start_time or not end_time:
             raise cherrypy.HTTPError(400, "Missing 'room_id', 'start_time', or 'end_time' parameter")
-        return self._json_response(self.db.get_sensor_data_by_room_and_time_range(room_id, start_time, end_time))
+        return _json_response(self.db.get_sensor_data_by_room_and_time_range(room_id, start_time, end_time))
+
+    def _get_sleep_scores_by_user(self, params):
+        user_id = params.get("user_id")
+        if not user_id:
+            raise cherrypy.HTTPError(400, "Missing 'user_id' parameter")
+        return _json_response(self.db.get_sleep_scores_by_user(user_id))
+
     def _get_all_sensors(self, params):
-        return self._json_response(self.db.get_all_sensors())
+        return _json_response(self.db.get_all_sensors())
     def PUT(self, *uri, **params):
         pass
     def DELETE(self, *uri, **params):
@@ -137,7 +165,7 @@ class TimeSeriesDBAdapter:
         message_received = json.loads(payload)
         if checkSenML(message_received):
             logger.debug(f"Received valid SenML message: {message_received}")
-            self.db.insert_data("measurements", message_received)
+            self.db.insert_measurements_data("measurements", message_received)
         else:
             logger.warning(f"Received invalid SenML message: {message_received}")
 
@@ -165,7 +193,6 @@ if __name__ == "__main__":
         logger.error(f"Error reading configuration file: {e}")
         sys.exit(1)
 
-    # Configure the dispatcher to use GET/POST/PUT/DELETE methods
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
     try:

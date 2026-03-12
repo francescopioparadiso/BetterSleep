@@ -1,6 +1,5 @@
 import json
 import sys
-import time
 import threading
 import logging
 from datetime import datetime
@@ -8,18 +7,26 @@ import cherrypy
 import os
 import sys
 import re
+
+import requests
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
 from common.MQTT.MyMQTT import MyMQTT
 from common.common import json_error_page, mqtt_to_regex
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
-
 
 class BedAnalytics:
     exposed = True
 
     def __init__(self, conf):
+        # instance logger so methods can use self.logger
+        self.logger = logger
         self.catalog_url = conf['catalogURL']
         self.service_info = conf['serviceInfo']
         self.remove_interval = conf.get('removeInterval', 10)
@@ -80,17 +87,28 @@ class BedAnalytics:
             if action == "START_SLEEP":
                 self.cache_sleep_time[userid] = {"start": timestamp, "end": None}
                 logger.info(f"Recorded START_SLEEP for user {userid} at {timestamp}")
-            elif action == "END_SLEEP":
+            elif action == "FINISH_SLEEP":
                 if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
                     self.cache_sleep_time[userid]["end"] = timestamp
-                    logger.info(f"Recorded END_SLEEP for user {userid} at {timestamp}")
+                    logger.info(f"Recorded FINISH_SLEEP for user {userid} at {timestamp}")
                     # Optionally, trigger analytics immediately after receiving END_SLEEP
                     self.startAnalytics(self.cache_sleep_time[userid],bedroomid)
                 else:
-                    logger.warning(f"Received END_SLEEP for user {userid} without a corresponding START_SLEEP")
+                    logger.warning(f"Received FINISH_SLEEP for user {userid} without a corresponding START_SLEEP")
             return
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON payload received on topic {topic}")
+
+    def get_data_from_timeseries(self, bedroomid, start_time, end_time):
+        # Placeholder for actual data retrieval logic from the timeseries database
+        logger.info(f"Retrieving data for bedroom {bedroomid} from {start_time} to {end_time}")
+        res=requests.get(f"{self.timeseries_endpoint}/getSensorDataByRoomAndTimeRange?room_id={bedroomid}&start_time={start_time}&end_time={end_time}")
+        if res.status_code == 200:
+            logger.info(f"Data retrieved successfully for bedroom {bedroomid}")
+            return res.json()
+        else:
+            logger.error(f"Failed to retrieve data for bedroom {bedroomid}: {res.status_code} - {res.text}")
+            return None
 
 
     def startAnalytics(self, sleep_time, bedroomid):
@@ -100,6 +118,13 @@ class BedAnalytics:
         if start_time and end_time:
             # Placeholder for actual analytics logic
             logger.info(f"Starting analytics for sleep period: {start_time} to {end_time}")
+            data = self.get_data_from_timeseries(bedroomid, start_time, end_time)
+            if data:
+                logger.info(f"Analytics completed for bedroom {bedroomid} with data: {data}")
+            else:
+                logger.warning(f"No data available for analytics for bedroom {bedroomid}")
+        else:
+            logger.warning(f"Cannot start analytics: missing start or end time for sleep period")
 
 
 

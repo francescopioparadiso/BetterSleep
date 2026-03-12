@@ -94,7 +94,7 @@ class TimeSeriesDB:
 
     # --- QUERY EXECUTION ---
 
-    def _execute_query(self, filter_query, start_time=None, end_time=None):
+    def _execute_query_measurements(self, filter_query, start_time=None, end_time=None):
         """Run the aggregation pipeline and return a list of SenML objects.
 
         Each element: { "bn": "...", "e": [{n, v, t, u}, ...] }
@@ -113,32 +113,32 @@ class TimeSeriesDB:
     # --- PUBLIC QUERY METHODS (all return the same SenML list format) ---
 
     def get_sensor_by_room(self, room_id):
-        return self._execute_query({"room_id": int(room_id)})
+        return self._execute_query_measurements({"room_id": int(room_id)})
 
     def get_sensor_by_type(self, sensor_type):
-        return self._execute_query({"sensor_type": int(sensor_type)})
+        return self._execute_query_measurements({"sensor_type": int(sensor_type)})
 
     def get_sensor_by_room_and_type(self, room_id, sensor_type):
-        return self._execute_query({"room_id": int(room_id), "sensor_type": int(sensor_type)})
+        return self._execute_query_measurements({"room_id": int(room_id), "sensor_type": int(sensor_type)})
 
     def get_sensor_by_id(self, sensor_id):
-        return self._execute_query({"sensor_id": int(sensor_id)})
+        return self._execute_query_measurements({"sensor_id": int(sensor_id)})
 
     def get_all_sensors(self):
-        return self._execute_query({})
+        return self._execute_query_measurements({})
 
     def get_sensor_data_by_room_and_time_range(self, room_id, start_time, end_time):
         if self.db is None:
             logger.warning("Database not connected")
             return []
-        return self._execute_query(
+        return self._execute_query_measurements(
             {"room_id": int(room_id)},
-            start_time=start_time,
-            end_time=end_time
+            start_time=int(start_time),
+            end_time=int(end_time)
         )
 
 
-    def insert_data(self, collection_name, data):
+    def insert_measurements_data(self, collection_name, data):
         """Insert a SenML record, splitting bn into indexed integer fields."""
         if self.db is None:
             return False
@@ -164,4 +164,16 @@ class TimeSeriesDB:
             return True
         except Exception as e:
             logger.error(f"Error inserting: {e}")
+            return False
+
+    def insert_sleep_score(self, collection_name, data):
+        """Insert sleep score data."""
+        if self.db is None:
+            return False
+        try:
+            collection = self.db[collection_name]
+            collection.insert_one(data)
+            return True
+        except Exception as e:
+            logger.error(f"Error inserting sleep score data: {e}")
             return False
