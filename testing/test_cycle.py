@@ -236,11 +236,9 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
 
             presence_value = 1 if (hour >= 22 or hour < 7) else 0
             presence_sensor.publish_data(presence_value, timestamp=sim_ts)
-
-            heart_rate_value = 60 + (presence_value * 10) + (5 * (0.5 - (step % 10) / 10))
+            vibration_value = 0.005 * presence_value + 0.003 * (0.5 - (step % 20) / 20)
+            heart_rate_value = 58 + (presence_value * 7) + (3 * (0.5 - (step % 10) / 10))
             heart_rate_sensor.publish_data(round(heart_rate_value, 2), unit="bpm", timestamp=sim_ts)
-
-            vibration_value = 0.1 * presence_value + 0.05 * (0.5 - (step % 20) / 20)
             vibration_sensor.publish_data(round(vibration_value, 3), unit="g", timestamp=sim_ts)
 
             mqtt_states = mqtt_monitor.get_states()
