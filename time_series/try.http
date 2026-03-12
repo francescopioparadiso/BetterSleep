@@ -1,0 +1,7 @@
+### GET request to example server
+GET http://127.0.0.1:9093/getSensorDataByRoomAndTimeRange?room_id=2&start_time=1773174600&end_time=1773205200
+###
+GET http://127.0.0.1:9093/getSensorByRoom?room_id=2
+
+
+###
