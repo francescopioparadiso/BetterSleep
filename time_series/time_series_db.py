@@ -1,12 +1,14 @@
 import logging
 from pymongo import MongoClient
-from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure, OperationFailure
 
 logger = logging.getLogger(__name__)
 
 
-def _get_senml_aggregation(filter_query):
-    """convert the query into a MongoDB aggregation pipeline that produces SenML format."""
+def _get_senml_aggregation(filter_query, start_time=None, end_time=None):
+    """
+    Convert the query into a MongoDB pipeline that produces SenML format.
+    Each output document is a single SenML object
+    """
     pipeline = [
         {"$match": filter_query},
         {
@@ -22,8 +24,37 @@ def _get_senml_aggregation(filter_query):
                 },
                 "e": "$e"
             }
-        }
+        },
+        # One document per event
+        {"$unwind": {"path": "$e", "preserveNullAndEmptyArrays": False}},
+        # Drop events without a timestamp
+        {"$match": {"e.t": {"$exists": True}}},
     ]
+    #Time filter for the "getSensorDataByRoomAndTimeRange" endpoint
+    if start_time is not None and end_time is not None:
+        pipeline.append({"$match": {"e.t": {"$gte": start_time, "$lte": end_time}}})
+
+    pipeline += [
+        # Chronological order within each sensor
+        {"$sort": {"bn": 1, "e.t": 1}},
+        # Collapse all events for the same sensor into ONE document
+        {
+            "$group": {
+                "_id": "$bn",
+                "e": {
+                    "$push": {
+                        "n": "$e.n",
+                        "v": "$e.v",
+                        "t": "$e.t",
+                        "u": {"$ifNull": ["$e.u", None]}
+                    }
+                },
+            }
+        },
+        # Final SenML shape
+        {"$project": {"_id": 0, "bn": "$_id", "e": 1}}
+    ]
+
     return pipeline
 
 
@@ -61,22 +92,25 @@ class TimeSeriesDB:
             logger.error(f"Health check failed: {e}")
             return False
 
-    # --- LOGICA DI PARSING IN MONGO ---
+    # --- QUERY EXECUTION ---
 
-    def _execute_query(self, filter_query):
-        """Esegue l'aggregazione e restituisce la lista SenML."""
+    def _execute_query(self, filter_query, start_time=None, end_time=None):
+        """Run the aggregation pipeline and return a list of SenML objects.
+
+        Each element: { "bn": "...", "e": [{n, v, t, u}, ...] }
+        One element per unique sensor — all events grouped inside "e".
+        """
         if self.db is None:
             return []
         try:
             collection = self.db["measurements"]
-            pipeline = _get_senml_aggregation(filter_query)
-            # MongoDB esegue tutto il lavoro qui
+            pipeline = _get_senml_aggregation(filter_query, start_time, end_time)
             return list(collection.aggregate(pipeline))
         except Exception as e:
             logger.error(f"Aggregation error with filter {filter_query}: {e}")
             return []
 
-
+    # --- PUBLIC QUERY METHODS (all return the same SenML list format) ---
 
     def get_sensor_by_room(self, room_id):
         return self._execute_query({"room_id": int(room_id)})
@@ -93,24 +127,36 @@ class TimeSeriesDB:
     def get_all_sensors(self):
         return self._execute_query({})
 
+    def get_sensor_data_by_room_and_time_range(self, room_id, start_time, end_time):
+        if self.db is None:
+            logger.warning("Database not connected")
+            return []
+        return self._execute_query(
+            {"room_id": int(room_id)},
+            start_time=start_time,
+            end_time=end_time
+        )
+
+
     def insert_data(self, collection_name, data):
-        if self.db is None: return False
+        """Insert a SenML record, splitting bn into indexed integer fields."""
+        if self.db is None:
+            return False
         try:
             collection = self.db[collection_name]
             document = dict(data)
             if "bn" in data:
                 try:
-                    # Splittiamo e salviamo come numeri per query veloci (Index-friendly)
+                    # Split bn → store as integers for fast, index-friendly queries
+                    # Format: "house_id:room_id:sensor_id:sensor_type"
+                    # sensor_type values:
+                    #   0 = ambient_temp | 1 = humidity | 2 = presence
+                    #   3 = heart_rate   | 4 = vibration
                     parts = data["bn"].split(":")
                     document["house_id"] = int(parts[0])
                     document["room_id"] = int(parts[1])
                     document["sensor_id"] = int(parts[2])
                     document["sensor_type"] = int(parts[3])
-                    # 0 ambient_temp
-                    # 1 humidity
-                    # 2 presence
-                    # 3 heart_rate
-                    # 4 vibration
                 except (ValueError, IndexError):
                     logger.warning(f"Invalid bn format: {data['bn']}")
 
@@ -119,26 +165,3 @@ class TimeSeriesDB:
         except Exception as e:
             logger.error(f"Error inserting: {e}")
             return False
-
-
-    def get_sensor_data_by_room_and_time_range(self, room_id, start_time, end_time):
-
-        results = self._execute_query({
-            "room_id": int(room_id),
-            "e.t": {"$gte": start_time, "$lte": end_time}
-        })
-
-        sensors_by_type = defaultdict(list)
-
-        for doc in results:
-            sensor_type = str(doc["sensor_type"])  # stringa per JSON semplice
-
-            for event in doc["e"]:
-                if start_time <= event["t"] <= end_time:
-                    sensors_by_type[sensor_type].append({
-                        "timestamp": event["t"],
-                        "value": event["v"],
-                        "name": event["n"]
-                    })
-
-        return dict(sensors_by_type)
