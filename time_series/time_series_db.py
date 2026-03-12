@@ -133,8 +133,8 @@ class TimeSeriesDB:
             return []
         return self._execute_query_measurements(
             {"room_id": int(room_id)},
-            start_time=int(start_time),
-            end_time=int(end_time)
+            start_time=int(float(start_time)),
+            end_time=int(float(end_time))
         )
 
 

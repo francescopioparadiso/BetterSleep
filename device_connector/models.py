@@ -130,7 +130,15 @@ class BaseIoTComponent:
             comp_id = self.service_info.get("ActuatorID")
 
         if timestamp is None:
-            timestamp = float(self.timestamp_provider())
+            # ensure integer epoch seconds
+            timestamp = int(self.timestamp_provider())
+        else:
+            # coerce provided timestamp to int (accept float or numeric string)
+            try:
+                timestamp = int(float(timestamp))
+            except Exception:
+                # fallback: keep as-is (non-numeric) — downstream code should validate
+                pass
 
         # Use provided name, fallback to sensor_type_long for sensors, or use component type
         measurement_name = name or getattr(self, 'sensor_type_long', self.service_info.get('type', 'Value').title())

@@ -52,9 +52,6 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
     return None, None
 
 
-def _build_command(action, device):
-    return {"action": action, "device": device, "timestamp": datetime.now().timestamp()}
-
 
 def _parse_sensor_topic(topic):
     parts = topic.split("/")
@@ -448,7 +445,7 @@ class SleepCycleManager:
                     bedroomid=bedroomid,
                     device=device
                 )
-                self.publish({"action": 0, "timestamp": datetime.now().timestamp()}, command_topic=topic)
+                self.publish({"action": 0, "timestamp": int(datetime.now().timestamp())}, command_topic=topic)
             return
 
         # Use prefer_fan flag from phase_manager if available
@@ -467,14 +464,14 @@ class SleepCycleManager:
         base_topic = self.topic_publish[0]
 
         # Send command to the target device
-        command = {"action": action, "timestamp": datetime.now().timestamp()}
+        command = {"action": action, "timestamp": int(datetime.now().timestamp())}
         topic = base_topic.format(houseID=houseid, bedroomid=bedroomid, device=device)
         self.publish(command, command_topic=topic)
 
         # Turn OFF the opposite device to prevent both being active simultaneously
         opposite_device = "heater" if device == "fan" else "fan"
         if opposite_device in room_actuator:
-            off_command = {"action": 0, "timestamp": datetime.now().timestamp()}
+            off_command = {"action": 0, "timestamp": int(datetime.now().timestamp())}
             off_topic = base_topic.format(houseID=houseid, bedroomid=bedroomid, device=opposite_device)
             self.publish(off_command, command_topic=off_topic)
 
@@ -497,7 +494,8 @@ class SleepCycleManager:
                     user_data["is_sleeping"] = False
                     user_data["live_values"]["last_seen_bed"] = None
                     user_data["live_values"]["last_left_bed"] = None
-                    self.publish({"action": "FINISH_SLEEP", "timestamp": str(datetime.now())}, command_topic=finish_sleep_topic)
+                    # FINISH_SLEEP timestamp as integer epoch seconds
+                    self.publish({"action": "FINISH_SLEEP", "timestamp": int(datetime.now().timestamp())}, command_topic=finish_sleep_topic)
                     self.logger.info(f"User {userid} finished sleep in {bedroomid}")
             return
         else:
@@ -561,28 +559,36 @@ class SleepCycleManager:
             phase_topic = self.topic_publish[4].format(houseid=houseid, bedroomid=bedroomid)
             phase_data = {
                 "bn": f"{houseid}:{bedroomid}:phase",
-                "e": [{"n": "Phase", "v": phase, "t": time.time()}]
+                # ensure integer epoch seconds for phase events
+                "e": [{"n": "Phase", "v": phase, "t": int(time.time())}]
             }
             self.publish(phase_data, command_topic=phase_topic)
             user_data["live_values"]["phase_published"] = True
             self.logger.info(f"Published phase update: {phase} to topic {phase_topic}")
 
             sensor_ts = user_data['live_values'].get('sensor_ts')
-            ts_str = str(sensor_ts) if sensor_ts else str(datetime.now())
+            # normalize sensor_ts (could be int/float/string) into integer epoch seconds
+            if sensor_ts:
+                try:
+                    ts_int = int(float(sensor_ts))
+                except Exception:
+                    ts_int = int(datetime.now().timestamp())
+            else:
+                ts_int = int(datetime.now().timestamp())
 
             # START_SLEEP: send exactly once per night (first transition into SLEEP)
             if phase == "SLEEP" and not start_sleep_sent:
                 start_topic = self.topic_publish[3].format(userid=userid, bedroomid=bedroomid)
-                self.publish({"action": "START_SLEEP", "timestamp": ts_str}, command_topic=start_topic)
+                self.publish({"action": "START_SLEEP", "timestamp": ts_int}, command_topic=start_topic)
                 user_data["live_values"]["start_sleep_sent"] = True
-                self.logger.info(f"Published START_SLEEP for user {userid} at {ts_str}")
+                self.logger.info(f"Published START_SLEEP for user {userid} at {ts_int}")
 
             # FINISH_SLEEP: send once when leaving SLEEP (→ WAKE_UP or DAY)
             if previous_phase == "SLEEP" and phase != "SLEEP":
                 finish_topic = self.topic_publish[2].format(userid=userid, bedroomid=bedroomid)
-                self.publish({"action": "FINISH_SLEEP", "timestamp": ts_str}, command_topic=finish_topic)
+                self.publish({"action": "FINISH_SLEEP", "timestamp": ts_int}, command_topic=finish_topic)
                 user_data["live_values"]["start_sleep_sent"] = False  # reset for next night
-                self.logger.info(f"Published FINISH_SLEEP for user {userid} at {ts_str}")
+                self.logger.info(f"Published FINISH_SLEEP for user {userid} at {ts_int}")
 
 if __name__ == "__main__":
     # Configure logging before any usage - DEBUG MODE ENABLED
