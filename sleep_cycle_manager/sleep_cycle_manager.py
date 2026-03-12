@@ -480,7 +480,7 @@ class SleepCycleManager:
 
     def handle_presence(self, message_received, userid, houseid, bedroomid):
         presence_value = message_received['e'][0]['v']
-        finish_sleep_topic = self.topic_publish[2].format(userid=userid)
+        finish_sleep_topic = self.topic_publish[2].format(userid=userid, bedroomid=bedroomid)
 
         user_data = self.active_users_cache.get(userid)
         if not user_data:
