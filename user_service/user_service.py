@@ -431,6 +431,7 @@ class UserService:
             "getAllUsers": self._get_all_users,
             "getAllRooms": self._get_all_rooms,
             "getAllInvitations": self._get_all_invitations,
+            "getRoomById": self._get_room_by_id,
             "getUserRoomPreferences": self._get_user_room_preferences,
             "getActiveRoom": self._get_active_room,
             "getActiveRoomsWithUser": self._get_all_active_room_associeted_user,
@@ -459,6 +460,17 @@ class UserService:
         """Get information about all users."""
         users = self.db.get_all_users()
         return json.dumps({"status": "success", "users": users}, default=str)
+
+    def _get_room_by_id(self, params):
+        """Get room information by room id."""
+        room_id = params.get('room_id') or params.get('id')
+        if not room_id:
+            raise cherrypy.HTTPError(400, "Missing 'room_id' parameter")
+
+        room = self.db.get_room_info(room_id)
+        if room:
+            return json.dumps(room, default=str)
+        raise cherrypy.HTTPError(404, "Room not found")
 
     def _get_all_rooms(self, params):
         """Get information about all rooms."""

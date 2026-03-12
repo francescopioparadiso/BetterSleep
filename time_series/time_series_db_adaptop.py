@@ -108,7 +108,9 @@ class TimeSeriesDBAdapter:
             "getSensorById": self._get_sensor_by_id,
             "getAllSensors": self._get_all_sensors,
             "getSensorDataByRoomAndTimeRange": self._get_sensor_data_by_room_and_time_range,
-            "getSleepScoresByUser": self._get_sleep_scores_by_user
+            "getSleepScoresByUser": self._get_sleep_scores_by_user,
+            "getSleepAnalyticsByUser": self._get_sleep_analytics_by_user,
+            "getLatestSleepAnalytics": self._get_latest_sleep_analytics,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -153,6 +155,22 @@ class TimeSeriesDBAdapter:
         if not user_id:
             raise cherrypy.HTTPError(400, "Missing 'user_id' parameter")
         return _json_response(self.db.get_sleep_scores_by_user(user_id))
+
+    def _get_sleep_analytics_by_user(self, params):
+        user_id = params.get("user_id")
+        if not user_id:
+            raise cherrypy.HTTPError(400, "Missing 'user_id' parameter")
+        limit = int(params.get("limit", 30))
+        return _json_response(self.db.get_sleep_analytics_by_user(user_id, limit))
+
+    def _get_latest_sleep_analytics(self, params):
+        user_id = params.get("user_id")
+        if not user_id:
+            raise cherrypy.HTTPError(400, "Missing 'user_id' parameter")
+        result = self.db.get_latest_sleep_analytics(user_id)
+        if result is None:
+            return _json_response({"error": "No sleep analytics found for user"})
+        return _json_response(result)
 
     def _get_all_sensors(self, params):
         return _json_response(self.db.get_all_sensors())

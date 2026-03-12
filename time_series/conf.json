@@ -19,6 +19,7 @@
         "port": 27017,
         "username": "admin",
         "password": "password_mongo",
-        "database": "timeseriesdb"
+      "database": "timeseriesdb",
+      "analyticsDatabase": "sleepanalyticsdb"
     }
 }

@@ -6,13 +6,34 @@ import threading
 import logging
 from datetime import datetime, timedelta
 
-# Path setups
+# Path setups - Add parent directory to Python path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 logging.basicConfig(filename='test_cycle.log', level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # from sleep_cycle_manager.sleep_cycle_manager import SleepCycleManager
 from device_connector.Simulate_Sensor import *
 from common.MQTT.MyMQTT import MyMQTT
+
+
+class MQTTCommandPublisher:
+    """Publish START_SLEEP and FINISH_SLEEP commands for bed analytics."""
+
+    def __init__(self, broker, port):
+        self.client = MyMQTT(f"TestCyclePublisher_{int(time.time())}", broker, port, self)
+
+    def notify(self, topic, payload):
+        return None
+
+    def start(self):
+        self.client.start()
+
+    def stop(self):
+        self.client.stop()
+
+    def publish(self, topic, payload):
+        self.client.myPublish(topic, payload)
 
 def load_test_config(config_path="conf.json"):
     """Load test cycle configuration from JSON file."""
@@ -112,6 +133,11 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
     logger.info(f"Starting test simulation for user {userid} in house {houseid}, bedroom {bedroomid}")
     with open(filepath, "w") as f:
         f.write(f"Simulation Stats for User {userid} | House {houseid} Bedroom {bedroomid}\n")
+
+    command_publisher = MQTTCommandPublisher(broker_ip, port)
+    command_publisher.start()
+    sleep_topic_base = f"BedAnalitics/userid/{userid}/Bedroom/{bedroomid}"
+
     # Helper function to ensure unique sensor/actuator IDs across multiple users
     def make_unique_id(base_id):
         return f"{base_id}_{userid}"
@@ -190,6 +216,13 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
     try:
         time.sleep(2)
 
+        start_ts = int(simulated_timestamp())
+        command_publisher.publish(
+            f"{sleep_topic_base}/StartSleep",
+            {"action": "START_SLEEP", "timestamp": start_ts}
+        )
+        logger.info(f"Published START_SLEEP for user {userid} at {start_ts}")
+
         sim_phases = config["simulation_phases"]
         total_minutes = sim_phases["total_minutes"]
         steps = sim_phases["steps"]
@@ -259,6 +292,14 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
                   f"Phase={phase} | MQTT[L={light_mqtt}, F={fan_mqtt}, H={heater_mqtt}]")
             time.sleep(real_step_seconds)
 
+        if not stop_event.is_set():
+            finish_ts = int(simulated_timestamp())
+            command_publisher.publish(
+                f"{sleep_topic_base}/FinishSleep",
+                {"action": "FINISH_SLEEP", "timestamp": finish_ts}
+            )
+            logger.info(f"Published FINISH_SLEEP for user {userid} at {finish_ts}")
+
     finally:
         # Stop sensors and actuators (if they implement stop)
         for comp in (temp_sensor, heart_rate_sensor, presence_sensor, vibration_sensor,
@@ -274,6 +315,11 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
             mqtt_monitor.stop()
         except Exception:
             logger.exception("Error stopping MQTT monitor")
+
+        try:
+            command_publisher.stop()
+        except Exception:
+            logger.exception("Error stopping MQTT command publisher")
 
 
 def run_multi_user_simulation(duration_seconds=60):

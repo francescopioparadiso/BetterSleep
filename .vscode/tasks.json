@@ -4,7 +4,7 @@
         {
             "label": "1. Database",
             "type": "shell",
-            "command": "docker compose up",
+            "command": "docker compose up --build",
             "options": { "cwd": "${workspaceFolder}/Database" },
             "presentation": { "group": "project", "panel": "dedicated" },
             "problemMatcher": []
@@ -59,6 +59,36 @@
             "command": "python3 setup_db.py",
             "options": { "cwd": "${workspaceFolder}" },
             "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "7. Bed Analytics",
+            "type": "shell",
+            "command": "docker compose up --build bed-analytics",
+            "options": { "cwd": "${workspaceFolder}/Database" },
+            "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "8. Sleep Cycle Manager",
+            "type": "shell",
+            "command": "python3 sleep_cycle_manager.py",
+            "options": { "cwd": "${workspaceFolder}/sleep_cycle_manager" },
+            "presentation": { "group": "project", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "🧪 Test Sleep Cycle",
+            "type": "shell",
+            "command": "python3 test_cycle.py",
+            "options": { "cwd": "${workspaceFolder}/testing" },
+            "presentation": { "group": "test", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "🚀 START ALL SERVICES",
+            "dependsOn": ["1. Database", "2. Catalog", "3. User Service", "4. TimeSeries DB Adapter", "8. Sleep Cycle Manager"],
+            "dependsOrder": "parallel",
             "problemMatcher": []
         }
     ]

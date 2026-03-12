@@ -1,2 +1,7 @@
 cherrypy
 psycopg2-binary
+requests
+pymongo
+numpy
+scikit-learn
+paho-mqtt<2

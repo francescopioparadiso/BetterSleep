@@ -65,8 +65,10 @@ class TimeSeriesDB:
         self.mongo_password = config['timeSeriesDB']['password']
         self.mongo_username = config['timeSeriesDB']['username']
         self.mongo_database = config['timeSeriesDB']['database']
+        self.analytics_database = config['timeSeriesDB'].get('analyticsDatabase', self.mongo_database)
         self.client_mongo = None
         self.db = None
+        self.analytics_db = None
         self.connect()
 
     def connect(self):
@@ -79,10 +81,13 @@ class TimeSeriesDB:
                 serverSelectionTimeoutMS=5000
             )
             self.db = self.client_mongo[self.mongo_database]
+            self.analytics_db = self.client_mongo[self.analytics_database]
             logger.info("Successfully connected to MongoDB")
         except Exception as e:
             logger.error(f"Error connecting to MongoDB: {e}")
             self.client_mongo = None
+            self.db = None
+            self.analytics_db = None
 
     def health_check(self):
         try:
@@ -177,3 +182,36 @@ class TimeSeriesDB:
         except Exception as e:
             logger.error(f"Error inserting sleep score data: {e}")
             return False
+
+    def get_sleep_analytics_by_user(self, user_id, limit=30):
+        """Retrieve sleep analytics summaries for a user, sorted by date descending."""
+        if self.analytics_db is None:
+            logger.warning("Database not connected")
+            return []
+        try:
+            collection = self.analytics_db["sleep_analytics"]
+            cursor = collection.find(
+                {"user_id": int(user_id)},
+                {"_id": 0}
+            ).sort("date", -1).limit(limit)
+            return list(cursor)
+        except Exception as e:
+            logger.error(f"Error retrieving sleep analytics for user {user_id}: {e}")
+            return []
+
+    def get_latest_sleep_analytics(self, user_id):
+        """Retrieve the most recent sleep analytics summary for a user."""
+        if self.analytics_db is None:
+            logger.warning("Database not connected")
+            return None
+        try:
+            collection = self.analytics_db["sleep_analytics"]
+            result = collection.find_one(
+                {"user_id": int(user_id)},
+                {"_id": 0},
+                sort=[("date", -1)]
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Error retrieving latest analytics for user {user_id}: {e}")
+            return None
