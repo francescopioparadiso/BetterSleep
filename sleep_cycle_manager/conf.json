@@ -15,10 +15,10 @@
       "UserService/ChangePreference/#"
     ],
     "topic_publish": [
-      "House/{houseID}/Bedroom/{bedroomID}/actuator/{device}/command",
-      "House/{houseID}/Bedroom/{bedroomID}/heart_rate",
-      "BedAnalitics/userid/{userid}/FinishSleep",
-      "BedAnalitics/userid/{userid}/StartSleep",
+      "House/{houseID}/Bedroom/{bedroomid}/actuator/{device}/command",
+      "House/{houseID}/Bedroom/{bedroomid}/heart_rate",
+      "BedAnalitics/userid/{userid}/Bedroom/{bedroomid}/FinishSleep",
+      "BedAnalitics/userid/{userid}/Bedroom/{bedroomid}/StartSleep",
       "House/{houseid}/Bedroom/{bedroomid}/phase"
     ],
     "clientID": "SleepCycleManagerClientBetterSleep"

@@ -70,7 +70,7 @@ def _parse_preference_topic(topic):
     if len(parts) >= 5 and parts[2] == "User":
         return "user", parts[3]
 
-    # UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userid}/Preference/
+    # UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomid}/User/{userid}/Preference/
     if len(parts) >= 8 and parts[2] == "House":
         return "room", parts[5]
 
@@ -445,7 +445,7 @@ class SleepCycleManager:
                     continue
                 topic = base_topic.format(
                     houseID=houseid,
-                    bedroomID=bedroomid,
+                    bedroomid=bedroomid,
                     device=device
                 )
                 self.publish({"action": 0, "timestamp": datetime.now().timestamp()}, command_topic=topic)
@@ -468,14 +468,14 @@ class SleepCycleManager:
 
         # Send command to the target device
         command = {"action": action, "timestamp": datetime.now().timestamp()}
-        topic = base_topic.format(houseID=houseid, bedroomID=bedroomid, device=device)
+        topic = base_topic.format(houseID=houseid, bedroomid=bedroomid, device=device)
         self.publish(command, command_topic=topic)
 
         # Turn OFF the opposite device to prevent both being active simultaneously
         opposite_device = "heater" if device == "fan" else "fan"
         if opposite_device in room_actuator:
             off_command = {"action": 0, "timestamp": datetime.now().timestamp()}
-            off_topic = base_topic.format(houseID=houseid, bedroomID=bedroomid, device=opposite_device)
+            off_topic = base_topic.format(houseID=houseid, bedroomid=bedroomid, device=opposite_device)
             self.publish(off_command, command_topic=off_topic)
 
     def handle_presence(self, message_received, userid, houseid, bedroomid):
@@ -513,7 +513,7 @@ class SleepCycleManager:
 
         user_data["is_sleeping"] = True
         # Use heart_rate topic from config
-        topic_heart = self.topic_publish[1].format(houseID=houseid, bedroomID=bedroomid)
+        topic_heart = self.topic_publish[1].format(houseID=houseid, bedroomid=bedroomid)
         message = {"action": 1, "timestamp": str(datetime.now())}
         self.publish(message, command_topic=topic_heart)
         self.logger.info(f"User {userid} is now sleeping in {bedroomid}")
@@ -572,14 +572,14 @@ class SleepCycleManager:
 
             # START_SLEEP: send exactly once per night (first transition into SLEEP)
             if phase == "SLEEP" and not start_sleep_sent:
-                start_topic = self.topic_publish[3].format(userid=userid)
+                start_topic = self.topic_publish[3].format(userid=userid, bedroomid=bedroomid)
                 self.publish({"action": "START_SLEEP", "timestamp": ts_str}, command_topic=start_topic)
                 user_data["live_values"]["start_sleep_sent"] = True
                 self.logger.info(f"Published START_SLEEP for user {userid} at {ts_str}")
 
             # FINISH_SLEEP: send once when leaving SLEEP (→ WAKE_UP or DAY)
             if previous_phase == "SLEEP" and phase != "SLEEP":
-                finish_topic = self.topic_publish[2].format(userid=userid)
+                finish_topic = self.topic_publish[2].format(userid=userid, bedroomid=bedroomid)
                 self.publish({"action": "FINISH_SLEEP", "timestamp": ts_str}, command_topic=finish_topic)
                 user_data["live_values"]["start_sleep_sent"] = False  # reset for next night
                 self.logger.info(f"Published FINISH_SLEEP for user {userid} at {ts_str}")

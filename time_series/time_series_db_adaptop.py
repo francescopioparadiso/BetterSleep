@@ -84,6 +84,7 @@ class TimeSeriesDBAdapter:
             "getSensorByRoomAndType": self._get_sensor_by_room_and_type,
             "getSensorById": self._get_sensor_by_id,
             "getAllSensors": self._get_all_sensors,
+            "getSensorDataByRoomAndTimeRange": self._get_sensor_data_by_room_and_time_range
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -117,6 +118,14 @@ class TimeSeriesDBAdapter:
         if not sensor_id:
             raise cherrypy.HTTPError(400, "Missing 'sensor_id' parameter")
         return self._json_response(self.db.get_sensor_by_id(sensor_id))
+
+    def _get_sensor_data_by_room_and_time_range(self, params):
+        room_id = params.get("room_id")
+        start_time = params.get("start_time")
+        end_time = params.get("end_time")
+        if not room_id or not start_time or not end_time:
+            raise cherrypy.HTTPError(400, "Missing 'room_id', 'start_time', or 'end_time' parameter")
+        return self._json_response(self.db.get_sensor_data_by_room_and_time_range(room_id, start_time, end_time))
     def _get_all_sensors(self, params):
         return self._json_response(self.db.get_all_sensors())
     def PUT(self, *uri, **params):

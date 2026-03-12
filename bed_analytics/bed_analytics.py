@@ -28,10 +28,26 @@ class BedAnalytics:
         self.actualTime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.catalog_client = CatalogClient(self.catalog_url, self.service_info, self.remove_interval)
         self.catalog_client.register()
+        self.timeseries_endpoint = self.get_endpoint_timeseries()
         self.mqtt_client = None
         self.MQTT_info = conf['MQTT']
         self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']  # Fix: define topic_subscribe_raw
         self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
+        self.cache_sleep_time = {}  # {userid: {"start": datetime, "end": datetime}}
+
+    def get_endpoint_timeseries(self):
+        data, status, error = self.catalog_client.get(f"getEndpointTimeSeries")
+        if status == 200 and data:
+            endpoint = data.get("endpoint")
+            if endpoint:
+                self.logger.info(f"Timeseries endpoint retrieved: {endpoint}")
+                return endpoint
+            else:
+                self.logger.error("Timeseries endpoint not found in Catalog response")
+                return None
+        else:
+            self.logger.error(f"Error retrieving Timeseries endpoint: {status} - {error}")
+            return None
 
     def init_mqtt_client(self):
         client_id = self.MQTT_info['clientID']
@@ -57,10 +73,35 @@ class BedAnalytics:
     def notify(self, topic, payload):
         try:
             message_received = json.loads(payload)
+            action = message_received.get("action")
+            userid = topic.split("/")[2]  # assuming the topic form its BedAnalytics/userid/{userid}/...
+            bedroomid = topic.split("/")[4]  # assuming the topic form its BedAnalytics/userid/{userid}/bedroom/{bedroomid}/...
+            timestamp = message_received.get("timestamp")
+            if action == "START_SLEEP":
+                self.cache_sleep_time[userid] = {"start": timestamp, "end": None}
+                logger.info(f"Recorded START_SLEEP for user {userid} at {timestamp}")
+            elif action == "END_SLEEP":
+                if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
+                    self.cache_sleep_time[userid]["end"] = timestamp
+                    logger.info(f"Recorded END_SLEEP for user {userid} at {timestamp}")
+                    # Optionally, trigger analytics immediately after receiving END_SLEEP
+                    self.startAnalytics(self.cache_sleep_time[userid],bedroomid)
+                else:
+                    logger.warning(f"Received END_SLEEP for user {userid} without a corresponding START_SLEEP")
+            return
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON payload received on topic {topic}")
-            return
-        print(f"Received MQTT message on topic {topic}: {message_received}")
+
+
+    def startAnalytics(self, sleep_time, bedroomid):
+        start_time= sleep_time.get("start")
+        end_time = sleep_time.get("end")
+
+        if start_time and end_time:
+            # Placeholder for actual analytics logic
+            logger.info(f"Starting analytics for sleep period: {start_time} to {end_time}")
+
+
 
 if __name__ == "__main__":
     # Standard CherryPy startup sequence

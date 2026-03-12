@@ -119,3 +119,26 @@ class TimeSeriesDB:
         except Exception as e:
             logger.error(f"Error inserting: {e}")
             return False
+
+
+    def get_sensor_data_by_room_and_time_range(self, room_id, start_time, end_time):
+
+        results = self._execute_query({
+            "room_id": int(room_id),
+            "e.t": {"$gte": start_time, "$lte": end_time}
+        })
+
+        sensors_by_type = defaultdict(list)
+
+        for doc in results:
+            sensor_type = str(doc["sensor_type"])  # stringa per JSON semplice
+
+            for event in doc["e"]:
+                if start_time <= event["t"] <= end_time:
+                    sensors_by_type[sensor_type].append({
+                        "timestamp": event["t"],
+                        "value": event["v"],
+                        "name": event["n"]
+                    })
+
+        return dict(sensors_by_type)
