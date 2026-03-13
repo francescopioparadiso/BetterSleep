@@ -44,39 +44,23 @@ SENSOR_TYPE = {
 }
 
 
-def parse_sensor_data(raw_data: list) -> dict:
-    """
-    Turn the raw SenML list into a simple dict:
-      { "heart_rate": [(t, v), ...], "vibration": [...], ... }
-
-    bn format: "roomid:userid:deviceid:sensortype"
-    e.g. "2:2:32:2" → sensortype=2 → "presence"
-    """
-    sensors = defaultdict(list)
+def parse_sensor_data(raw_data):
+    sensors = {}
 
     for entry in raw_data:
         bn = entry.get("bn", "")
-        print(f"Parsing entry with bn: '{bn}'")
+
         try:
             sensor_type_id = int(bn.split(":")[-1])
             sensor_name = SENSOR_TYPE.get(sensor_type_id)
-        except (ValueError, IndexError):
-            logger.warning(f"Could not parse sensor type from bn: '{bn}', skipping")
+        except:
             continue
 
-        if sensor_name is None:
-            logger.warning(f"Unknown sensor type {sensor_type_id} in bn: '{bn}', skipping")
-            continue
-
-        for m in entry.get("e", []):
-            sensors[sensor_name].append((m["t"], m["v"]))
-
-    # Sort every sensor by time
-    for name in sensors:
-        sensors[name].sort(key=lambda x: x[0])
+        if sensor_name:
+            print(f"Parsed sensor → {sensor_name}: {entry.get('e', [])}")
+            sensors[sensor_name] = entry.get("e", [])
 
     return sensors
-
 
 def classify_minute(presence, vibration, heart_rate, rhr, rem_threshold) -> str:
     """
@@ -110,67 +94,73 @@ def classify_minute(presence, vibration, heart_rate, rhr, rem_threshold) -> str:
 
 def compute_sleep_analytics(raw_data: list) -> dict:
     """
-    Takes the raw sensor list, classifies every reading, then builds a
-    simple sleep report with a score out of 100.
+    Compute sleep analytics from raw sensor data in SenML format (list of dicts).
+
+    Each sensor in raw_data should look like:
+        {"bn": "...", "e": [{"t": timestamp, "v": value}, ...]}
+
+    Returns a dictionary with sleep score, stage percentages, readings, etc.
     """
     if not raw_data:
         return {"error": "No sensor data available"}
 
     sensors = parse_sensor_data(raw_data)
 
-    vibration_list = sensors.get("vibration",   [])
-    presence_list  = sensors.get("presence",    [])
-    hr_list        = sensors.get("heart_rate",  [])
+    vibration_list = sensors.get("vibration", [])
+    presence_list  = sensors.get("presence", [])
+    hr_list        = sensors.get("heart_rate", [])
     temp_list      = sensors.get("temperature", [])
 
     if not hr_list:
         return {"error": "No Heart Rate data found"}
-
     if not presence_list:
         return {"error": "No Presence data found — cannot determine time in bed"}
 
-    # ── Personal HR baselines derived from this user's own data ──────────────
-    hr_values = [v for _, v in hr_list]
-    rhr           = min(hr_values)                        # Resting HR = lowest of the night
-    hr_sorted     = sorted(hr_values)
-    p75_hr        = hr_sorted[int(len(hr_sorted) * 0.75)] # 75th percentile
-    rem_threshold = rhr + (p75_hr - rhr) * 0.6            # REM = above 60% of the HR range
+    # ── Personal HR baselines ─────────────────────────────
+    hr_values = [m["v"] for m in hr_list]
+    rhr = min(hr_values)                        # resting HR
+    hr_sorted = sorted(hr_values)
+    p75_hr = hr_sorted[int(len(hr_sorted) * 0.75)]
+    rem_threshold = rhr + (p75_hr - rhr) * 0.6
 
     logger.info(f"HR baselines → RHR: {rhr:.1f} bpm | REM threshold: {rem_threshold:.1f} bpm")
 
-    # ── Match every Presence reading with the closest HR / Vibration ──────────
-    # We iterate over PRESENCE (not HR) so every minute in bed is accounted for
+    # ── Helper: find closest value by timestamp ──────────
     def closest_value(data_list, target_time, default):
-        """Return the value from data_list whose timestamp is closest to target_time."""
         if not data_list:
             return default
-        return min(data_list, key=lambda x: abs(x[0] - target_time))[1]
+        return min(data_list, key=lambda m: abs(m["t"] - target_time))["v"]
 
-    # ── Classify each presence reading as a sleep stage ───────────────────────
+    # ── Classify each presence reading ─────────────────────
     classified = []
-    for t, presence in presence_list:
-        hr        = closest_value(hr_list,        t, default=rhr)
-        vibration = closest_value(vibration_list, t, default=0.0)
-        stage     = classify_minute(presence, vibration, hr, rhr, rem_threshold)
-        classified.append({"timestamp": t, "stage": stage, "hr": round(hr, 1),
-                            "vibration": vibration, "presence": presence})
+    for m in presence_list:
+        t = m["t"]
+        presence = m["v"]
 
-    # ── Count how many readings fall in each stage ────────────────────────────
+        hr_value = closest_value(hr_list, t, default=rhr)
+        vibration_value = closest_value(vibration_list, t, default=0.0)
+        stage = classify_minute(presence, vibration_value, hr_value, rhr, rem_threshold)
+
+        classified.append({
+            "timestamp": t,
+            "stage": stage,
+            "hr": round(hr_value, 1),
+            "vibration": vibration_value,
+            "presence": presence
+        })
+
+    # ── Count readings per stage ──────────────────────────
     total = len(classified)
     counts = {"AWAKE": 0, "LIGHT": 0, "DEEP": 0, "REM": 0}
-    for reading in classified:
-        counts[reading["stage"]] += 1
-
-    # Convert counts to percentages (over total time monitored)
+    for r in classified:
+        counts[r["stage"]] += 1
     pct = {stage: round(counts[stage] / total * 100, 1) for stage in counts}
 
-    # Total time asleep (everything except AWAKE), assuming 1 reading per minute
+    # ── Sleep duration ───────────────────────────────────
     sleep_minutes = counts["LIGHT"] + counts["DEEP"] + counts["REM"]
-    sleep_hours   = round(sleep_minutes / 60, 1)
+    sleep_hours = round(sleep_minutes / 60, 1)
 
-    # ── Wake-up count: transitions from a sleep stage back to AWAKE ──────────
-    # Only count wake-ups that happen AFTER the first sleep reading
-    # (ignore the initial AWAKE period before the person falls asleep)
+    # ── Wake-ups ────────────────────────────────────────
     first_sleep_idx = next((i for i, r in enumerate(classified) if r["stage"] != "AWAKE"), None)
     wake_ups = 0
     if first_sleep_idx is not None:
@@ -180,37 +170,29 @@ def compute_sleep_analytics(raw_data: list) -> dict:
             if curr == "AWAKE" and prev != "AWAKE":
                 wake_ups += 1
 
-    # ── Sleep Score (0–100) ───────────────────────────────────────────────────
+    # ── Sleep score (0–100) ─────────────────────────────
     score = 100.0
-
-    # Penalty 1 – too little sleep (ideal = 7–9 h)
     if sleep_hours < 7:
-        score -= (7 - sleep_hours) * 10      # –10 pts per missing hour
-
-    # Penalty 2 – too many wake-ups during the night (ideal ≤ 2)
+        score -= (7 - sleep_hours) * 10
     if wake_ups > 2:
-        score -= (wake_ups - 2) * 5          # –5 pts per extra wake-up
-
-    # Penalty 3 – not enough deep sleep (ideal ≥ 15%)
+        score -= (wake_ups - 2) * 5
     if pct["DEEP"] < 15:
-        score -= (15 - pct["DEEP"]) * 0.5   # gentle penalty
-
-    # Penalty 4 – not enough REM sleep (ideal ≥ 20%)
+        score -= (15 - pct["DEEP"]) * 0.5
     if pct["REM"] < 20:
         score -= (20 - pct["REM"]) * 0.3
 
-    # Penalty 5 – room temperature too far from ideal
+    # ── Temperature penalty ─────────────────────────────
     if temp_list:
-        avg_temp = sum(v for _, v in temp_list) / len(temp_list)
+        avg_temp = sum(m["v"] for m in temp_list) / len(temp_list)
         temp_diff = abs(avg_temp - IDEAL_TEMP)
         if temp_diff > 2:
-            score -= (temp_diff - 2) * 3     # –3 pts per °C outside comfort zone
+            score -= (temp_diff - 2) * 3
     else:
         avg_temp = None
 
     score = round(max(0.0, min(100.0, score)), 1)
 
-    # ── Quality label ─────────────────────────────────────────────────────────
+    # ── Quality label ───────────────────────────────────
     if score >= 85:
         quality = "Excellent"
     elif score >= 70:
@@ -239,7 +221,6 @@ def compute_sleep_analytics(raw_data: list) -> dict:
             f"Light: {pct['LIGHT']}%  Awake: {pct['AWAKE']}%."
         ),
     }
-
 
 # ─────────────────────────────────────────────
 #  ORIGINAL BedAnalytics CLASS (extended)
