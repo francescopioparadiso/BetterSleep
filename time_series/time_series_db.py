@@ -68,7 +68,6 @@ class TimeSeriesDB:
         self.analytics_database = config['timeSeriesDB'].get('analyticsDatabase', self.mongo_database)
         self.client_mongo = None
         self.db = None
-        self.analytics_db = None
         self.connect()
 
     def connect(self):
@@ -171,12 +170,12 @@ class TimeSeriesDB:
             logger.error(f"Error inserting: {e}")
             return False
 
-    def insert_sleep_score(self, collection_name, data):
+    def insert_sleep_score(self, data):
         """Insert sleep score data."""
         if self.db is None:
             return False
         try:
-            collection = self.db[collection_name]
+            collection = self.db["sleep_analytics"]
             collection.insert_one(data)
             return True
         except Exception as e:
@@ -185,11 +184,11 @@ class TimeSeriesDB:
 
     def get_sleep_analytics_by_user(self, user_id, limit=30):
         """Retrieve sleep analytics summaries for a user, sorted by date descending."""
-        if self.analytics_db is None:
+        if self.db is None:
             logger.warning("Database not connected")
             return []
         try:
-            collection = self.analytics_db["sleep_analytics"]
+            collection = self.db["sleep_analytics"]
             cursor = collection.find(
                 {"user_id": int(user_id)},
                 {"_id": 0}
@@ -201,11 +200,11 @@ class TimeSeriesDB:
 
     def get_latest_sleep_analytics(self, user_id):
         """Retrieve the most recent sleep analytics summary for a user."""
-        if self.analytics_db is None:
+        if self.db is None:
             logger.warning("Database not connected")
             return None
         try:
-            collection = self.analytics_db["sleep_analytics"]
+            collection = self.db["sleep_analytics"]
             result = collection.find_one(
                 {"user_id": int(user_id)},
                 {"_id": 0},

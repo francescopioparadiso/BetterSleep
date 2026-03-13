@@ -9,7 +9,8 @@
  "MQTT": {
       "broker": "localhost",
       "port": 1883,
-      "topic_subscribe": "House/+/Bedroom/+/sensor/+/+/data",
+      "topic_subscribe": ["House/+/Bedroom/+/sensor/+/+/data",
+      "BedAnalitics/userid/+/SleepReport"],
       "clientID": "TimeSeriesDBAdapterClientBetterSleepIoT"
     },
   "catalogURL": "http://localhost:8080",

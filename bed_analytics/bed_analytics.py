@@ -1,4 +1,3 @@
-import json
 import sys
 import threading
 import logging
@@ -8,7 +7,7 @@ import os
 import sys
 import re
 from collections import defaultdict
-
+import json
 import requests
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -212,14 +211,7 @@ def compute_sleep_analytics(raw_data: list) -> dict:
         "stage_percent": pct,
         "stage_minutes": {s: round(counts[s], 1) for s in counts},
         "avg_temp_degC": round(avg_temp, 1) if avg_temp is not None else None,
-        "readings":      classified,
-        "summary": (
-            f"{quality} sleep — {score}/100. "
-            f"{sleep_hours}h asleep, {wake_ups} wake-up(s). "
-            f"RHR: {rhr:.0f} bpm. "
-            f"Deep: {pct['DEEP']}%  REM: {pct['REM']}%  "
-            f"Light: {pct['LIGHT']}%  Awake: {pct['AWAKE']}%."
-        ),
+
     }
 
 # ─────────────────────────────────────────────
@@ -245,7 +237,6 @@ class BedAnalytics:
         self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']
         self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
         self.cache_sleep_time = {}   # {userid: {"start": datetime, "end": datetime}}
-        self.analytics_results = {}  # {userid: last analytics report}
 
     def get_endpoint_timeseries(self):
         data, status, error = self.catalog_client.get(f"getEndpointTimeSeries")
@@ -283,28 +274,34 @@ class BedAnalytics:
         self.mqtt_client.stop()
 
     def notify(self, topic, payload):
-        try:
-            message_received = json.loads(payload)
-            action    = message_received.get("action")
-            userid    = topic.split("/")[2]
-            bedroomid = topic.split("/")[4]
-            timestamp = message_received.get("timestamp")
+        print(topic)
+        if not "SleepReport" in topic:
+            try:
+                message_received = json.loads(payload)
+                action    = message_received.get("action")
+                userid    = topic.split("/")[2]
+                bedroomid = topic.split("/")[4]
+                timestamp = message_received.get("timestamp")
 
-            if action == "START_SLEEP":
-                self.cache_sleep_time[userid] = {"start": timestamp, "end": None}
-                logger.info(f"Recorded START_SLEEP for user {userid} at {timestamp}")
+                if action == "START_SLEEP":
+                    self.cache_sleep_time[userid] = {"start": timestamp, "end": None}
+                    logger.info(f"Recorded START_SLEEP for user {userid} at {timestamp}")
 
-            elif action == "FINISH_SLEEP":
-                if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
-                    self.cache_sleep_time[userid]["end"] = timestamp
-                    logger.info(f"Recorded FINISH_SLEEP for user {userid} at {timestamp}")
-                    self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
-                else:
-                    logger.warning(
-                        f"Received FINISH_SLEEP for user {userid} without a corresponding START_SLEEP"
-                    )
-        except json.JSONDecodeError:
-            logger.error(f"Invalid JSON payload received on topic {topic}")
+                elif action == "FINISH_SLEEP":
+                    if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
+                        self.cache_sleep_time[userid]["end"] = timestamp
+                        logger.info(f"Recorded FINISH_SLEEP for user {userid} at {timestamp}")
+                        report =self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
+                        report['user_id']= userid
+                        topic=f"BedAnalitics/userid/{userid}/SleepReport"
+                        self.mqtt_client.myPublish(topic, report)
+                        logger.info(f"Published analytics report for user {userid} to topic {topic}")
+                    else:
+                        logger.warning(
+                            f"Received FINISH_SLEEP for user {userid} without a corresponding START_SLEEP"
+                        )
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON payload received on topic {topic}")
 
     def get_data_from_timeseries(self, bedroomid, start_time, end_time):
         logger.info(f"Retrieving data for bedroom {bedroomid} from {start_time} to {end_time}")
@@ -348,29 +345,13 @@ class BedAnalytics:
             return None
 
         # ── Persist result in memory ──────────────────────────────────────────
-        if userid:
-            self.analytics_results[userid] = {
-                "bedroomid":  bedroomid,
-                "start_time": start_time,
-                "end_time":   end_time,
-                "report":     report,
-            }
 
-        logger.info(
-            f"Analytics completed for bedroom {bedroomid} | "
-            f"Score: {report['sleep_score']}/100 | {report['summary']}"
-        )
+        logger.info(f"Analytics result for user {userid} → Sleep Score: {report['sleep_score']} | "
+                    f"Quality: {report['quality']} | Sleep Hours: {report['sleep_hours']} | "
+                    f"Wake-ups: {report['wake_ups']} | Resting HR: {report['resting_hr']} bpm | REM Threshold: {report['rem_threshold']} bpm | Stage %: {report['stage_percent']} | Avg Temp: {report['avg_temp_degC']}°C")
         return report
 
-    # ── Optional REST endpoint: GET /analytics?userid=<id> ───────────────────
-    @cherrypy.tools.json_out()
-    def GET(self, userid=None):
-        if userid and userid in self.analytics_results:
-            return self.analytics_results[userid]
-        elif userid:
-            raise cherrypy.HTTPError(404, f"No analytics found for user '{userid}'")
-        # Return all results if no userid specified
-        return self.analytics_results
+
 
 
 # ─────────────────────────────────────────────

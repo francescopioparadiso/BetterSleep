@@ -2,6 +2,7 @@ import json
 import logging
 import sys
 import os
+import re
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -9,7 +10,7 @@ import cherrypy
 
 from common import catalog_client
 from common.MQTT.MyMQTT import MyMQTT
-from common.common import json_error_page
+from common.common import json_error_page, mqtt_to_regex
 from time_series.time_series_db import TimeSeriesDB
 
 # Configure logging
@@ -53,48 +54,48 @@ class TimeSeriesDBAdapter:
     exposed = True
 
     def __init__(self, conf):
+        self.logger = logger
         self.catalog_url = conf['catalogURL']
         self.service_info = conf['serviceInfo']
         self.remove_interval = conf.get('removeInterval', 10)
         self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
-        self.clientID=conf['MQTT']['clientID']
-        self.broker=conf['MQTT']['broker']
-        self.port=conf['MQTT']['port']
-        self.topic_subscribe=conf['MQTT']['topic_subscribe']
-        self.mqtt_client_subscriber = MyMQTT(self.clientID, self.broker, self.port, self)
+        self.MQTT_info = conf['MQTT']
+        self.mqtt_client = None
+        self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']
+        self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
 
         try:
             self.db = TimeSeriesDB(conf)
+            self.init_mqtt_client()
             self.catalog.register()
-            self.startClient()
             if not self.db.health_check():
                 logger.critical("Unable to connect to the database.")
                 self.catalog.stop_background_loop()
         except Exception as e:
             logger.error(f"Error initializing TimeSeriesDBAdapter: {e}")
             raise
+
+
+    def init_mqtt_client(self):
+        client_id = self.MQTT_info['clientID']
+        broker = self.MQTT_info['broker']
+        port = self.MQTT_info['port']
+        try:
+            self.mqtt_client = MyMQTT(client_id, broker, port, self)
+            self.startClient()
+            for topic in self.topic_subscribe_raw:
+                self.mqtt_client.mySubscribe(topic)
+            self.logger.info(f"MQTT client initialized and subscribed to {self.topic_subscribe_raw}")
+        except Exception as e:
+            self.logger.error(f"Error initializing MQTT client: {e}")
+            self.catalog.unregister()
+            sys.exit(1)
     # --------------------------------------------------------
     # POST METHOD - Add new resources
     # --------------------------------------------------------
     def POST(self, *uri, **params):
-        """Handle POST requests to add new resources (e.g., measurements)."""
-        if not uri:
-            raise cherrypy.HTTPError(400, "Endpoint not specified")
+        pass
 
-        handlers = {
-            "addSleepScore": self._add_sleep_score,
-        }
-        handler = handlers.get(uri[0])
-        if not handler:
-            raise cherrypy.HTTPError(404, "Endpoint not found")
-        return handler()
-
-    def _add_sleep_score(self):
-        payload = _load_json_body()
-        required_fields = ["user_id", "sleep_score"]
-        require_fields(payload, required_fields)
-        self.db.insert_sleep_score("sleep_scores", payload)
-        return json.dumps({"message": "Sleep score added successfully"}).encode('utf-8')
 
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
@@ -180,20 +181,31 @@ class TimeSeriesDBAdapter:
         pass
 
     def notify(self, topic, payload):
-        message_received = json.loads(payload)
-        if checkSenML(message_received):
-            logger.debug(f"Received valid SenML message: {message_received}")
-            self.db.insert_measurements_data("measurements", message_received)
-        else:
-            logger.warning(f"Received invalid SenML message: {message_received}")
+        try:
+            message_received = json.loads(payload)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON payload received on topic {topic}: {e}")
+            return
+        print(f"Received MQTT message on topic {topic}: {message_received}")
+        if "sensor" in topic:
+            if checkSenML(message_received):
+                logger.debug(f"Received valid SenML message: {message_received}")
+                self.db.insert_measurements_data("measurements", message_received)
+            else:
+                logger.warning(f"Received invalid SenML message: {message_received}")
+        elif "BedAnalitics" in topic:
+            logger.debug(f"Received sleep analytics message: {message_received}")
+            if "user_id" in message_received  :
+                self.db.insert_sleep_score(message_received)
+                logger.info(f"Sleep analytics saved for user {message_received.get('user_id')}")
+            else:
+                logger.warning(f"Sleep analytics message missing user_id : {message_received}")
 
     def startClient(self):
-        self.mqtt_client_subscriber.start()
-        self.mqtt_client_subscriber.mySubscribe(self.topic_subscribe)
+        self.mqtt_client.start()
 
     def stopClient(self):
-        # self.mqtt_client_subscriber.unsubscribe() -> not necessary because stop is already unsubscribing
-        self.mqtt_client_subscriber.stop()
+        self.mqtt_client.stop()
 
 
 if __name__ == "__main__":
