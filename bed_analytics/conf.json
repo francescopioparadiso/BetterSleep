@@ -7,7 +7,7 @@
     "type": "Analytics"
   },
  "MQTT": {
-      "broker": "broker.hivemq.com",
+      "broker": "localhost",
       "port": 1883,
       "topic_subscribe": [
         "BedAnalitics/userid/#"

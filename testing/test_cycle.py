@@ -188,28 +188,27 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
     with open(filepath, "w") as f:
         f.write(f"Simulation Stats for User {userid} | House {houseid} Bedroom {bedroomid}\n")
 
-    def make_unique_id(base_id):
-        return f"{base_id}_{userid}"
+
 
     # ── Sensors ───────────────────────────────────────────────────────────────
     sensor_configs = {}
 
     t_cfg = sensors_config["temperature"]
-    sensor_configs["temp"] = create_config(catalog_url, make_unique_id(t_cfg["sensorID"]), t_cfg["name"], t_cfg["type"],
+    sensor_configs["temp"] = create_config(catalog_url, t_cfg['sensorID'], t_cfg["name"], t_cfg["type"],
                                            houseid, bedroomid, broker_ip, port, topic_publish=t_cfg["topic_publish"])
 
     hr_cfg = sensors_config["heart_rate"]
-    sensor_configs["hr"] = create_config(catalog_url, make_unique_id(hr_cfg["sensorID"]), hr_cfg["name"], hr_cfg["type"],
+    sensor_configs["hr"] = create_config(catalog_url, hr_cfg["sensorID"], hr_cfg["name"], hr_cfg["type"],
                                          houseid, bedroomid, broker_ip, port,
                                          topic_publish=hr_cfg["topic_publish"],
                                          topic_subscribe=hr_cfg["topic_subscribe"])
 
     p_cfg = sensors_config["presence"]
-    sensor_configs["presence"] = create_config(catalog_url, make_unique_id(p_cfg["sensorID"]), p_cfg["name"], p_cfg["type"],
+    sensor_configs["presence"] = create_config(catalog_url, p_cfg["sensorID"], p_cfg["name"], p_cfg["type"],
                                                houseid, bedroomid, broker_ip, port, topic_publish=p_cfg["topic_publish"])
 
     v_cfg = sensors_config["vibration"]
-    sensor_configs["vibration"] = create_config(catalog_url, make_unique_id(v_cfg["sensorID"]), v_cfg["name"], v_cfg["type"],
+    sensor_configs["vibration"] = create_config(catalog_url, v_cfg["sensorID"], v_cfg["name"], v_cfg["type"],
                                                 houseid, bedroomid, broker_ip, port, topic_publish=v_cfg["topic_publish"])
 
     temp_sensor       = TemperatureSensor(sensor_configs["temp"])
@@ -233,17 +232,17 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
 
     # ── Actuators ─────────────────────────────────────────────────────────────
     l_cfg = actuators_config["light"]
-    c_light = create_config(catalog_url, make_unique_id(l_cfg["actuatorID"]), l_cfg["name"], l_cfg["type"],
+    c_light = create_config(catalog_url, l_cfg["actuatorID"], l_cfg["name"], l_cfg["type"],
                             houseid, bedroomid, broker_ip, port,
                             topic_publish=l_cfg["topic_publish"], topic_subscribe=l_cfg["topic_subscribe"], is_sensor=False)
 
     h_cfg = actuators_config["heater"]
-    c_heater = create_config(catalog_url, make_unique_id(h_cfg["actuatorID"]), h_cfg["name"], h_cfg["type"],
+    c_heater = create_config(catalog_url, h_cfg["actuatorID"], h_cfg["name"], h_cfg["type"],
                              houseid, bedroomid, broker_ip, port,
                              topic_publish=h_cfg["topic_publish"], topic_subscribe=h_cfg["topic_subscribe"], is_sensor=False)
 
     f_cfg = actuators_config["fan"]
-    c_fan = create_config(catalog_url, make_unique_id(f_cfg["actuatorID"]), f_cfg["name"], f_cfg["type"],
+    c_fan = create_config(catalog_url, f_cfg["actuatorID"], f_cfg["name"], f_cfg["type"],
                           houseid, bedroomid, broker_ip, port,
                           topic_publish=f_cfg["topic_publish"], topic_subscribe=f_cfg["topic_subscribe"], is_sensor=False)
 
@@ -394,4 +393,4 @@ def run_multi_user_simulation(duration_seconds=60):
 
 
 if __name__ == "__main__":
-    run_multi_user_simulation(duration_seconds=10)  # Run for 2 minutes (adjust as needed)
+    run_multi_user_simulation(duration_seconds=60)  # Run for 2 minutes (adjust as needed)

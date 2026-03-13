@@ -1,22 +1,22 @@
 services:
   # --- 1. PostgreSQL (For Catalog) ---
   catalog-postgres:
-      image: postgres:latest
-      container_name: bs_postgres
-      restart: always
-      environment:
-        POSTGRES_USER: admin
-        POSTGRES_PASSWORD: password
-        POSTGRES_DB: bettersleep
-        PGDATA: /var/lib/postgresql/data
-        TZ: "Europe/Rome"
-      ports:
-        - "5432:5432"
-      volumes:
-        - postgres_data:/var/lib/postgresql/data
-        - ./init_catalog.sql:/docker-entrypoint-initdb.d/init_catalog.sql
-        - /etc/localtime:/etc/localtime:ro
-        - /etc/timezone:/etc/timezone:ro
+    image: postgres:latest
+    container_name: bs_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: bettersleep
+      PGDATA: /var/lib/postgresql/data
+      TZ: "Europe/Rome"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_catalog.sql:/docker-entrypoint-initdb.d/init_catalog.sql
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
 
   # --- 2. MongoDB Time Series Data ---
   timeseries-mongo:
@@ -34,7 +34,24 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
 
+  # --- 3. MQTT Broker ---
+  mqtt-broker:
+    image: eclipse-mosquitto:latest
+    container_name: bs_mqtt
+    restart: always
+    ports:
+      - "1883:1883"      # MQTT
+      - "9001:9001"      # WebSocket (optional)
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+      - mosquitto_config:/mosquitto/config
+    environment:
+      TZ: "Europe/Rome"
 
 volumes:
   postgres_data:
   mongo_data:
+  mosquitto_data:
+  mosquitto_log:
+  mosquitto_config:

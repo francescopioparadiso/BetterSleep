@@ -17,7 +17,7 @@
       "database": "catalogdb"
   },
   "broker": {
-    "host": "broker.hivemq.com",
+    "host": "localhost",
     "port": 1883
   },
   "service_cleanup": {

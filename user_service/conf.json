@@ -9,7 +9,7 @@
   "catalogURL": "http://localhost:8080",
  "MQTT": {
       "client_id": "UserService_Publisher",
-      "broker": "broker.hivemq.com",
+      "broker": "localhost",
     "port": 1883,
        "topic_publish": [
       "UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/",

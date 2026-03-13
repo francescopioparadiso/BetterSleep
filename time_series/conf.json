@@ -7,7 +7,7 @@
     "type": "TimeSeriesDB"
   },
  "MQTT": {
-      "broker": "broker.hivemq.com",
+      "broker": "localhost",
       "port": 1883,
       "topic_subscribe": "House/+/Bedroom/+/sensor/+/+/data",
       "clientID": "TimeSeriesDBAdapterClientBetterSleepIoT"

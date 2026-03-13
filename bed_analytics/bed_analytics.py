@@ -53,8 +53,10 @@ def parse_sensor_data(raw_data: list) -> dict:
     e.g. "2:2:32:2" → sensortype=2 → "presence"
     """
     sensors = defaultdict(list)
+
     for entry in raw_data:
         bn = entry.get("bn", "")
+        print(f"Parsing entry with bn: '{bn}'")
         try:
             sensor_type_id = int(bn.split(":")[-1])
             sensor_name = SENSOR_TYPE.get(sensor_type_id)
