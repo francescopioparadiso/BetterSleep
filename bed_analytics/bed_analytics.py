@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 IDEAL_TEMP      = 20.0   # °C  — comfortable sleep temperature
 VIBRATION_LIMIT = 0.01   # g   — movements above this = restless
-HR_HIGH         = 70     # bpm — heart rate above this = not in deep sleep
+#  HR thresholds are computed dynamically from each user's own resting HR
+#  so these constants are no longer needed here
 
 
 # Sensor type map — last number in bn (e.g. "2:2:32:2" → type 2 → "presence")
@@ -75,14 +76,15 @@ def parse_sensor_data(raw_data: list) -> dict:
     return sensors
 
 
-def classify_minute(presence, vibration, heart_rate, min_hr) -> str:
+def classify_minute(presence, vibration, heart_rate, rhr, rem_threshold) -> str:
     """
     Decide the sleep stage for one reading using simple if/else rules.
 
-    presence   : 1 = person is in bed, anything else = not in bed
-    vibration  : movement value in g
-    heart_rate : bpm reading
-    min_hr     : the lowest HR recorded during the whole night (= resting HR)
+    presence      : 1 = person is in bed, anything else = not in bed
+    vibration     : movement value in g
+    heart_rate    : bpm reading
+    rhr           : resting heart rate = lowest HR of the night
+    rem_threshold : HR above this = REM  (= rhr + 75th-percentile offset)
     """
     # Not in bed → AWAKE
     if presence != 1:
@@ -92,12 +94,12 @@ def classify_minute(presence, vibration, heart_rate, min_hr) -> str:
     if abs(vibration) > VIBRATION_LIMIT:
         return "AWAKE"
 
-    # Still + low heart rate (close to resting) → DEEP sleep
-    if heart_rate <= min_hr + 5:
+    # Still + HR close to personal resting HR → DEEP sleep
+    if heart_rate <= rhr + 5:
         return "DEEP"
 
-    # Still + elevated heart rate → REM sleep
-    if heart_rate > HR_HIGH:
+    # Still + elevated HR (above personal REM threshold) → REM
+    if heart_rate >= rem_threshold:
         return "REM"
 
     # Everything else → LIGHT sleep
@@ -122,23 +124,33 @@ def compute_sleep_analytics(raw_data: list) -> dict:
     if not hr_list:
         return {"error": "No Heart Rate data found"}
 
-    # The lowest HR of the night is used as the personal resting HR baseline
-    min_hr = min(v for _, v in hr_list)
+    if not presence_list:
+        return {"error": "No Presence data found — cannot determine time in bed"}
 
-    # ── Match every Heart Rate reading with the closest Vibration / Presence ──
+    # ── Personal HR baselines derived from this user's own data ──────────────
+    hr_values = [v for _, v in hr_list]
+    rhr           = min(hr_values)                        # Resting HR = lowest of the night
+    hr_sorted     = sorted(hr_values)
+    p75_hr        = hr_sorted[int(len(hr_sorted) * 0.75)] # 75th percentile
+    rem_threshold = rhr + (p75_hr - rhr) * 0.6            # REM = above 60% of the HR range
+
+    logger.info(f"HR baselines → RHR: {rhr:.1f} bpm | REM threshold: {rem_threshold:.1f} bpm")
+
+    # ── Match every Presence reading with the closest HR / Vibration ──────────
+    # We iterate over PRESENCE (not HR) so every minute in bed is accounted for
     def closest_value(data_list, target_time, default):
         """Return the value from data_list whose timestamp is closest to target_time."""
         if not data_list:
             return default
         return min(data_list, key=lambda x: abs(x[0] - target_time))[1]
 
-    # ── Classify each HR reading as a sleep stage ─────────────────────────────
+    # ── Classify each presence reading as a sleep stage ───────────────────────
     classified = []
-    for t, hr in hr_list:
-        presence  = closest_value(presence_list,  t, default=1)
+    for t, presence in presence_list:
+        hr        = closest_value(hr_list,        t, default=rhr)
         vibration = closest_value(vibration_list, t, default=0.0)
-        stage     = classify_minute(presence, vibration, hr, min_hr)
-        classified.append({"timestamp": t, "stage": stage, "hr": hr,
+        stage     = classify_minute(presence, vibration, hr, rhr, rem_threshold)
+        classified.append({"timestamp": t, "stage": stage, "hr": round(hr, 1),
                             "vibration": vibration, "presence": presence})
 
     # ── Count how many readings fall in each stage ────────────────────────────
@@ -147,31 +159,45 @@ def compute_sleep_analytics(raw_data: list) -> dict:
     for reading in classified:
         counts[reading["stage"]] += 1
 
-    # Convert counts to percentages
+    # Convert counts to percentages (over total time monitored)
     pct = {stage: round(counts[stage] / total * 100, 1) for stage in counts}
 
     # Total time asleep (everything except AWAKE), assuming 1 reading per minute
     sleep_minutes = counts["LIGHT"] + counts["DEEP"] + counts["REM"]
     sleep_hours   = round(sleep_minutes / 60, 1)
 
-    # ── Sleep Score (0–100) ───────────────────────────────────────────────────
-    # Start from 100 and subtract penalties
+    # ── Wake-up count: transitions from a sleep stage back to AWAKE ──────────
+    # Only count wake-ups that happen AFTER the first sleep reading
+    # (ignore the initial AWAKE period before the person falls asleep)
+    first_sleep_idx = next((i for i, r in enumerate(classified) if r["stage"] != "AWAKE"), None)
+    wake_ups = 0
+    if first_sleep_idx is not None:
+        for i in range(first_sleep_idx + 1, len(classified)):
+            prev = classified[i - 1]["stage"]
+            curr = classified[i]["stage"]
+            if curr == "AWAKE" and prev != "AWAKE":
+                wake_ups += 1
 
+    # ── Sleep Score (0–100) ───────────────────────────────────────────────────
     score = 100.0
 
     # Penalty 1 – too little sleep (ideal = 7–9 h)
     if sleep_hours < 7:
         score -= (7 - sleep_hours) * 10      # –10 pts per missing hour
 
-    # Penalty 2 – too much awake time during the night
-    if pct["AWAKE"] > 10:
-        score -= (pct["AWAKE"] - 10)         # –1 pt per % above 10%
+    # Penalty 2 – too many wake-ups during the night (ideal ≤ 2)
+    if wake_ups > 2:
+        score -= (wake_ups - 2) * 5          # –5 pts per extra wake-up
 
     # Penalty 3 – not enough deep sleep (ideal ≥ 15%)
     if pct["DEEP"] < 15:
         score -= (15 - pct["DEEP"]) * 0.5   # gentle penalty
 
-    # Penalty 4 – room temperature too far from ideal
+    # Penalty 4 – not enough REM sleep (ideal ≥ 20%)
+    if pct["REM"] < 20:
+        score -= (20 - pct["REM"]) * 0.3
+
+    # Penalty 5 – room temperature too far from ideal
     if temp_list:
         avg_temp = sum(v for _, v in temp_list) / len(temp_list)
         temp_diff = abs(avg_temp - IDEAL_TEMP)
@@ -196,12 +222,17 @@ def compute_sleep_analytics(raw_data: list) -> dict:
         "sleep_score":   score,
         "quality":       quality,
         "sleep_hours":   sleep_hours,
+        "wake_ups":      wake_ups,
+        "resting_hr":    round(rhr, 1),
+        "rem_threshold": round(rem_threshold, 1),
         "stage_percent": pct,
+        "stage_minutes": {s: round(counts[s], 1) for s in counts},
         "avg_temp_degC": round(avg_temp, 1) if avg_temp is not None else None,
         "readings":      classified,
         "summary": (
             f"{quality} sleep — {score}/100. "
-            f"{sleep_hours}h asleep. "
+            f"{sleep_hours}h asleep, {wake_ups} wake-up(s). "
+            f"RHR: {rhr:.0f} bpm. "
             f"Deep: {pct['DEEP']}%  REM: {pct['REM']}%  "
             f"Light: {pct['LIGHT']}%  Awake: {pct['AWAKE']}%."
         ),
