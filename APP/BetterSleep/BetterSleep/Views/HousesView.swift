@@ -101,32 +101,30 @@ struct HouseView: View {
                         
                         // MARK: - Homes Section
                         if !viewModel.houses.isEmpty {
-                            Section(header: Text("My Homes").fontDesign(.rounded).fontWeight(.semibold)) {
-                                ForEach(viewModel.houses) { house in
-                                    NavigationLink(destination: RoomsView(house: house)) {
-                                        HStack(spacing: 14) {
-                                            if activeRoomsByHouse[house.id ?? 0] == true {
-                                                Image(systemName: "star.fill")
-                                                    .font(.title)
-                                                    .foregroundColor(.yellow)
-                                                    .padding(6)
-                                                    .shadow(color: .yellow, radius: 20, x: 0, y: 0)
-                                            } else {
-                                                Text(flagForHouse(house.name))
-                                                    .font(.title)
-                                            }
-                                            
-                                            Text(house.name)
-                                                .font(.headline)
-                                                .fontWeight(.semibold)
-                                                .fontDesign(.rounded)
+                            ForEach(viewModel.houses) { house in
+                                NavigationLink(destination: RoomsView(house: house)) {
+                                    HStack(spacing: 14) {
+                                        if activeRoomsByHouse[house.id ?? 0] == true {
+                                            Image(systemName: "star.fill")
+                                                .font(.title)
+                                                .foregroundColor(.yellow)
+                                                .padding(6)
+                                                .shadow(color: .yellow, radius: 20, x: 0, y: 0)
+                                        } else {
+                                            Text(flagForHouse(house.name))
+                                                .font(.title)
                                         }
-                                        .padding(.vertical, 6)
+                                        
+                                        Text(house.name)
+                                            .font(.headline)
+                                            .fontWeight(.semibold)
+                                            .fontDesign(.rounded)
                                     }
+                                    .padding(.vertical, 6)
                                 }
-                                .onDelete { indexSet in
-                                    Task { await viewModel.deleteHouse(at: indexSet) }
-                                }
+                            }
+                            .onDelete { indexSet in
+                                Task { await viewModel.deleteHouse(at: indexSet) }
                             }
                         }
                     }

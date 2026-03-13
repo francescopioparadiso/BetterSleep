@@ -68,8 +68,39 @@ class ChartsModel: ObservableObject {
     @Published var hrv:           Double = 0   // ms
     @Published var rhr:           Double = 0   // bpm
     @Published var hasActiveRoom  = true
+    @Published var hasData        = false
+    @Published var selectedDate   = Date()
+
+    // MARK: - Navigation title
+
+    var navigationTitle: String {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+
+        if calendar.isDateInToday(selectedDate) {
+            formatter.dateFormat = "MMM d"
+            return "Today, \(formatter.string(from: selectedDate))"
+        } else if calendar.isDateInYesterday(selectedDate) {
+            formatter.dateFormat = "MMM d"
+            return "Yesterday, \(formatter.string(from: selectedDate))"
+        } else {
+            // Check if same year
+            if calendar.component(.year, from: selectedDate) == calendar.component(.year, from: Date()) {
+                formatter.dateFormat = "MMM d"
+            } else {
+                formatter.dateFormat = "MMM d, yyyy"
+            }
+            return formatter.string(from: selectedDate)
+        }
+    }
+
+    // MARK: - Load by date
 
     func load() async {
+        await load(for: selectedDate)
+    }
+
+    func load(for date: Date) async {
         guard let userIdStr = UserDefaults.standard.string(forKey: "currentUserId"),
               let userId = Int(userIdStr) else { return }
 
@@ -85,13 +116,19 @@ class ChartsModel: ObservableObject {
             guard let activeRoomData = json?["active_room"] as? [String: Any],
                   let _ = activeRoomData["id"] as? Int else {
                 hasActiveRoom = false
+                hasData = false
                 return
             }
             hasActiveRoom = true
 
-            // Fetch latest sleep analytics from MongoDB (via TimeSeries adapter)
+            // Build the date string for the query (YYYY-MM-DD)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            let dateStr = formatter.string(from: date)
+
+            // Fetch sleep analytics for the selected date
             let tsURL = try await CatalogClient.shared.getTimeSeriesURL()
-            let analyticsURL = URL(string: "\(tsURL)/getLatestSleepAnalytics?user_id=\(userId)")!
+            let analyticsURL = URL(string: "\(tsURL)/getSleepAnalyticsByDate?user_id=\(userId)&date=\(dateStr)")!
             let (analyticsData, _) = try await URLSession.shared.data(from: analyticsURL)
             let analytics = try JSONSerialization.jsonObject(with: analyticsData) as? [String: Any]
 
@@ -99,40 +136,35 @@ class ChartsModel: ObservableObject {
             if let error = analytics?["error"] as? String {
                 print("No sleep analytics found: \(error)")
                 resetToDefaults()
+                hasData = false
                 return
             }
 
-            // Parse the MongoDB document
+            // Parse the MongoDB document (stored as-is from MQTT payload)
             if let analytics = analytics {
                 sleepScore     = analytics["sleep_score"] as? Double ?? 0
-                
-                // Convert minutes to hours for sleepDuration
-                let durationMin = analytics["sleep_duration_min"] as? Int ?? 0
-                sleepDuration   = Double(durationMin) / 60.0
-                
-                interruptions  = Double(analytics["interruptions"] as? Int ?? 0)
-                
-                // REM and Deep are stored as minutes, but displayed as percentages
-                let remMin = Double(analytics["rem_sleep_min"] as? Int ?? 0)
-                let deepMin = Double(analytics["deep_sleep_min"] as? Int ?? 0)
-                
-                // Calculate percentages (assuming total sleep duration)
-                if durationMin > 0 {
-                    remSleep  = (remMin / Double(durationMin)) * 100.0
-                    deepSleep = (deepMin / Double(durationMin)) * 100.0
+                sleepDuration  = analytics["sleep_hours"] as? Double ?? 0
+                interruptions  = Double(analytics["wake_ups"] as? Int ?? 0)
+
+                if let stagePct = analytics["stage_percent"] as? [String: Any] {
+                    remSleep  = stagePct["REM"] as? Double ?? 0
+                    deepSleep = stagePct["DEEP"] as? Double ?? 0
                 } else {
                     remSleep  = 0
                     deepSleep = 0
                 }
-                
-                hrv = analytics["hrv_ms"] as? Double ?? 0
-                rhr = analytics["rhr_bpm"] as? Double ?? 0
+
+                hrv = analytics["hrv_rmssd_ms"] as? Double ?? 0
+                rhr = analytics["resting_hr"] as? Double ?? 0
+                hasData = true
             } else {
                 resetToDefaults()
+                hasData = false
             }
         } catch {
             print("SleepDashboard error: \(error)")
             resetToDefaults()
+            hasData = false
         }
     }
 

@@ -2,79 +2,45 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "1. Database",
+            "label": "Database",
             "type": "shell",
             "command": "docker compose up --build",
             "options": { "cwd": "${workspaceFolder}/Database" },
-            "presentation": { "group": "project", "panel": "dedicated" },
+            "presentation": { "group": "servers", "panel": "dedicated" },
+            "isBackground": true,
             "problemMatcher": []
         },
         {
-            "label": "2. Catalog",
+            "label": "Catalog",
             "type": "shell",
             "command": "python3 catalog.py",
             "options": { "cwd": "${workspaceFolder}/catalog" },
-            "presentation": { "group": "project", "panel": "dedicated" },
+            "presentation": { "group": "servers", "panel": "dedicated" },
+            "isBackground": true,
             "problemMatcher": []
         },
         {
-            "label": "3. User Service",
+            "label": "User Service",
             "type": "shell",
             "command": "python3 user_service.py",
             "options": { "cwd": "${workspaceFolder}/user_service" },
-            "presentation": { "group": "project", "panel": "dedicated" },
+            "presentation": { "group": "servers", "panel": "dedicated" },
+            "isBackground": true,
             "problemMatcher": []
         },
         {
-            "label": "🚀 START PROJECT",
-            "dependsOn": ["1. Database", "2. Catalog", "3. User Service", "4. TimeSeries DB Adapter", "5. Simulator"],
-            "dependsOrder": "parallel",
-            "problemMatcher": []
-        },
-        {
-            "label": "🚀 START PROJECT + SETUP",
-            "dependsOn": ["1. Database", "2. Catalog", "3. User Service", "4. TimeSeries DB Adapter", "5. Simulator", "6. Setup Database"],
-            "dependsOrder": "parallel",
-            "problemMatcher": []
-        },
-        {
-            "label": "4. TimeSeries DB Adapter",
+            "label": "TimeSeries",
             "type": "shell",
             "command": "python3 time_series_db_adaptop.py",
             "options": { "cwd": "${workspaceFolder}/time_series" },
-            "presentation": { "group": "project", "panel": "dedicated" },
+            "presentation": { "group": "servers", "panel": "dedicated" },
+            "isBackground": true,
             "problemMatcher": []
         },
         {
-            "label": "5. Simulator",
-            "type": "shell",
-            "command": "python3 fakesensor.py",
-            "options": { "cwd": "${workspaceFolder}/time_series" },
-            "presentation": { "group": "project", "panel": "dedicated" },
-            "problemMatcher": []
-        },
-        {
-            "label": "6. Setup Database",
-            "type": "shell",
-            "command": "python3 setup_db.py",
-            "options": { "cwd": "${workspaceFolder}" },
-            "presentation": { "group": "project", "panel": "dedicated" },
-            "problemMatcher": []
-        },
-        {
-            "label": "7. Bed Analytics",
-            "type": "shell",
-            "command": "docker compose up --build bed-analytics",
-            "options": { "cwd": "${workspaceFolder}/Database" },
-            "presentation": { "group": "project", "panel": "dedicated" },
-            "problemMatcher": []
-        },
-        {
-            "label": "8. Sleep Cycle Manager",
-            "type": "shell",
-            "command": "python3 sleep_cycle_manager.py",
-            "options": { "cwd": "${workspaceFolder}/sleep_cycle_manager" },
-            "presentation": { "group": "project", "panel": "dedicated" },
+            "label": "🚀 Start All Servers",
+            "dependsOn": ["Database", "Catalog", "User Service", "TimeSeries"],
+            "dependsOrder": "parallel",
             "problemMatcher": []
         },
         {
@@ -83,12 +49,6 @@
             "command": "python3 test_cycle.py",
             "options": { "cwd": "${workspaceFolder}/testing" },
             "presentation": { "group": "test", "panel": "dedicated" },
-            "problemMatcher": []
-        },
-        {
-            "label": "🚀 START ALL SERVICES",
-            "dependsOn": ["1. Database", "2. Catalog", "3. User Service", "4. TimeSeries DB Adapter", "8. Sleep Cycle Manager"],
-            "dependsOrder": "parallel",
             "problemMatcher": []
         }
     ]

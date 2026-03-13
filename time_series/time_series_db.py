@@ -198,6 +198,22 @@ class TimeSeriesDB:
             logger.error(f"Error retrieving sleep analytics for user {user_id}: {e}")
             return []
 
+    def get_sleep_analytics_by_date(self, user_id, date_str):
+        """Retrieve sleep analytics for a user on a specific date (YYYY-MM-DD)."""
+        if self.db is None:
+            logger.warning("Database not connected")
+            return None
+        try:
+            collection = self.db["sleep_analytics"]
+            result = collection.find_one(
+                {"user_id": str(user_id), "date": date_str},
+                {"_id": 0}
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Error retrieving analytics for user {user_id} on {date_str}: {e}")
+            return None
+
     def get_latest_sleep_analytics(self, user_id):
         """Retrieve the most recent sleep analytics summary for a user."""
         if self.db is None:

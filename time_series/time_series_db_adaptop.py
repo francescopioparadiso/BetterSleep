@@ -112,6 +112,7 @@ class TimeSeriesDBAdapter:
             "getSleepScoresByUser": self._get_sleep_scores_by_user,
             "getSleepAnalyticsByUser": self._get_sleep_analytics_by_user,
             "getLatestSleepAnalytics": self._get_latest_sleep_analytics,
+            "getSleepAnalyticsByDate": self._get_sleep_analytics_by_date,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -163,6 +164,16 @@ class TimeSeriesDBAdapter:
             raise cherrypy.HTTPError(400, "Missing 'user_id' parameter")
         limit = int(params.get("limit", 30))
         return _json_response(self.db.get_sleep_analytics_by_user(user_id, limit))
+
+    def _get_sleep_analytics_by_date(self, params):
+        user_id = params.get("user_id")
+        date_str = params.get("date")
+        if not user_id or not date_str:
+            raise cherrypy.HTTPError(400, "Missing 'user_id' or 'date' parameter")
+        result = self.db.get_sleep_analytics_by_date(user_id, date_str)
+        if result is None:
+            return _json_response({"error": "No sleep analytics found for user on this date"})
+        return _json_response(result)
 
     def _get_latest_sleep_analytics(self, params):
         user_id = params.get("user_id")

@@ -1,4 +1,5 @@
 import sys
+import math
 import threading
 import logging
 from datetime import datetime
@@ -41,6 +42,40 @@ SENSOR_TYPE = {
     3: "heart_rate",
     4: "vibration",
 }
+
+
+def compute_hrv(hr_list: list):
+    """
+    Compute HRV as RMSSD (Root Mean Square of Successive Differences)
+    from a list of heart-rate SenML entries [{"t": ..., "v": bpm}, ...].
+
+    Steps:
+        1. Convert each HR (bpm) → RR interval (ms):  RR = 60 000 / HR
+        2. Compute successive differences of RR intervals.
+        3. Return RMSSD = sqrt(mean(diff²)).
+
+    Returns None if there are fewer than 2 readings.
+    """
+    if len(hr_list) < 2:
+        return None
+
+    # Sort by timestamp so successive differences are meaningful
+    sorted_hr = sorted(hr_list, key=lambda m: m["t"])
+
+    # HR (bpm) → RR interval (ms)
+    rr_intervals = [60_000.0 / m["v"] for m in sorted_hr if m["v"] > 0]
+
+    if len(rr_intervals) < 2:
+        return None
+
+    # Successive differences squared
+    sq_diffs = [
+        (rr_intervals[i + 1] - rr_intervals[i]) ** 2
+        for i in range(len(rr_intervals) - 1)
+    ]
+
+    rmssd = math.sqrt(sum(sq_diffs) / len(sq_diffs))
+    return round(rmssd, 1)
 
 
 def parse_sensor_data(raw_data):
@@ -189,6 +224,9 @@ def compute_sleep_analytics(raw_data: list) -> dict:
     else:
         avg_temp = None
 
+    # ── HRV (RMSSD) ────────────────────────────────────
+    hrv_rmssd = compute_hrv(hr_list)
+
     score = round(max(0.0, min(100.0, score)), 1)
 
     # ── Quality label ───────────────────────────────────
@@ -207,11 +245,10 @@ def compute_sleep_analytics(raw_data: list) -> dict:
         "sleep_hours":   sleep_hours,
         "wake_ups":      wake_ups,
         "resting_hr":    round(rhr, 1),
-        "rem_threshold": round(rem_threshold, 1),
+        "hrv_rmssd_ms":  hrv_rmssd,
         "stage_percent": pct,
         "stage_minutes": {s: round(counts[s], 1) for s in counts},
         "avg_temp_degC": round(avg_temp, 1) if avg_temp is not None else None,
-
     }
 
 # ─────────────────────────────────────────────
@@ -291,8 +328,9 @@ class BedAnalytics:
                     if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
                         self.cache_sleep_time[userid]["end"] = timestamp
                         logger.info(f"Recorded FINISH_SLEEP for user {userid} at {timestamp}")
-                        report =self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
-                        report['user_id']= userid
+                        report = self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
+                        report['user_id'] = userid
+                        report['date'] = datetime.now().strftime("%Y-%m-%d")
                         topic=f"BedAnalitics/userid/{userid}/SleepReport"
                         self.mqtt_client.myPublish(topic, report)
                         logger.info(f"Published analytics report for user {userid} to topic {topic}")
@@ -348,7 +386,8 @@ class BedAnalytics:
 
         logger.info(f"Analytics result for user {userid} → Sleep Score: {report['sleep_score']} | "
                     f"Quality: {report['quality']} | Sleep Hours: {report['sleep_hours']} | "
-                    f"Wake-ups: {report['wake_ups']} | Resting HR: {report['resting_hr']} bpm | REM Threshold: {report['rem_threshold']} bpm | Stage %: {report['stage_percent']} | Avg Temp: {report['avg_temp_degC']}°C")
+                    f"Wake-ups: {report['wake_ups']} | Resting HR: {report['resting_hr']} bpm | "
+                    f"HRV (RMSSD): {report['hrv_rmssd_ms']} ms | Stage %: {report['stage_percent']} | Avg Temp: {report['avg_temp_degC']}°C")
         return report
 
 

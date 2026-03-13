@@ -6,6 +6,9 @@ struct ChartsView: View {
     @StateObject private var vm: ChartsModel
     private let shouldAutoLoad: Bool
 
+    @State private var showingProfile = false
+    @State private var showingDatePicker = false
+
     @MainActor
     init(shouldAutoLoad: Bool = true) {
         _vm = StateObject(wrappedValue: ChartsModel())
@@ -22,6 +25,10 @@ struct ChartsView: View {
             VStack {
                 if !vm.hasActiveRoom {
                     noActiveRoomView
+                } else if vm.isLoading {
+                    ProgressView("Loading sleep data...")
+                } else if !vm.hasData {
+                    noDataView
                 } else {
                     List {
                         sleepScoreGauge
@@ -44,10 +51,36 @@ struct ChartsView: View {
                     .scrollIndicators(.hidden)
                 }
             }
-            .navigationTitle("Sleep Analysis")
+            .navigationTitle(vm.navigationTitle)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { showingProfile = true }) {
+                        Image(systemName: "person.fill")
+                            .font(.title3)
+                            .foregroundColor(.primary)
+                    }
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { showingDatePicker = true }) {
+                        Image(systemName: "calendar")
+                            .font(.title3)
+                            .foregroundColor(.primary)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingProfile) {
+                ProfileView()
+            }
+            .sheet(isPresented: $showingDatePicker) {
+                datePickerSheet
+            }
         }
         .task {
             if shouldAutoLoad { await vm.load() }
+        }
+        .onChange(of: vm.selectedDate) {
+            Task { await vm.load(for: vm.selectedDate) }
         }
     }
 
@@ -144,7 +177,7 @@ struct ChartsView: View {
             let hours   = Int(value)
             let minutes = Int((value - Double(hours)) * 60)
             return ("\(hours)h \(minutes)m", "")
-        case .interruptions: return (value > 0 ? String(format: "%.0f", value) : "--", "times")
+        case .interruptions: return (value > 0 ? String(format: "%.0f", value) : "0", "times")
         case .remSleep:      return (value > 0 ? String(format: "%.0f", value) : "--", "%")
         case .deepSleep:     return (value > 0 ? String(format: "%.0f", value) : "--", "%")
         case .hrv:           return (value > 0 ? String(format: "%.0f", value) : "--", "ms")
@@ -152,21 +185,63 @@ struct ChartsView: View {
         }
     }
 
+    // MARK: - Date Picker Sheet
+
+    private var datePickerSheet: some View {
+        NavigationStack {
+            DatePicker(
+                "Select Date",
+                selection: $vm.selectedDate,
+                in: ...Date(),
+                displayedComponents: .date
+            )
+            .datePickerStyle(.graphical)
+            .padding()
+            .navigationTitle("Select Night")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        showingDatePicker = false
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    // MARK: - No Data View
+
+    private var noDataView: some View {
+        ContentUnavailableView {
+            Label {
+                Text("No Sleep Data")
+            } icon: {
+                Image(systemName: "zzz")
+                    .font(.system(size: 48))
+                    .foregroundColor(.indigo)
+                    .shadow(color: .indigo, radius: 30, x: 0, y: 0)
+            }
+        } description: {
+            Text("No sleep analysis is available for this night.\nWear your sensors and get a good night's rest!")
+        }
+    }
+
     // MARK: - No Active Room
 
     private var noActiveRoomView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "moon.zzz.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.secondary)
-            Text("No Active Room")
-                .font(.title2).fontWeight(.semibold)
+        ContentUnavailableView {
+            Label {
+                Text("No Active Room")
+            } icon: {
+                Image(systemName: "moon.zzz.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.indigo)
+                    .shadow(color: .indigo, radius: 30, x: 0, y: 0)
+            }
+        } description: {
             Text("Set a room as active in My Homes\nto see your sleep analytics.")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
     }
 }
 
@@ -179,10 +254,12 @@ private func makePreviewVM(
     deepSleep: Double = 15,
     hrv: Double = 50,
     rhr: Double = 16,
-    hasActiveRoom: Bool = true
+    hasActiveRoom: Bool = true,
+    hasData: Bool = true
 ) -> ChartsModel {
     let vm = ChartsModel()
     vm.hasActiveRoom = hasActiveRoom
+    vm.hasData = hasData
     vm.sleepScore = score
     vm.sleepDuration = duration
     vm.interruptions = interruptions
@@ -219,7 +296,8 @@ private func makePreviewVM(
 
 #Preview("No Data") {
     ChartsView(vm: makePreviewVM(score: 0, duration: 0, interruptions: 0,
-                                 remSleep: 0, deepSleep: 0, hrv: 0, rhr: 0),
+                                 remSleep: 0, deepSleep: 0, hrv: 0, rhr: 0,
+                                 hasData: false),
                shouldAutoLoad: false)
 }
 

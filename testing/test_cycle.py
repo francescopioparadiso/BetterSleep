@@ -7,7 +7,9 @@ import logging
 import math
 from datetime import datetime, timedelta
 
-# Path setups
+# Path setups — add project root so sibling packages (device_connector, common) are importable
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 logging.basicConfig(filename='test_cycle.log', level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -259,6 +261,16 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
     mqtt_monitor = MQTTFeedbackMonitor(broker_ip, port, userid, houseid, bedroomid, initial_light=50)
     mqtt_monitor.start()
 
+    # ── MQTT client for sleep lifecycle messages (START_SLEEP / FINISH_SLEEP) ──
+    sleep_lifecycle_client = MyMQTT(
+        f"TestSleepLifecycle_{userid}_{int(time.time())}",
+        broker_ip, port, None
+    )
+    sleep_lifecycle_client.start()
+    sleep_topic = f"BedAnalitics/userid/{userid}/bedroomid/{bedroomid}"
+    _sent_start_sleep = [False]
+    _sent_finish_sleep = [False]
+
     try:
         time.sleep(2)
 
@@ -310,6 +322,16 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
             presence_value = 1 if (hour >= _sleep_start_hour or hour < 7) else 0
             presence_sensor.publish_data(presence_value, timestamp=sim_ts)
 
+            # ── Sleep lifecycle messages for BedAnalytics ──────────────────
+            if presence_value == 1 and not _sent_start_sleep[0]:
+                sleep_lifecycle_client.myPublish(sleep_topic, {"action": "START_SLEEP", "timestamp": int(sim_ts)})
+                _sent_start_sleep[0] = True
+                print(f"  >>> [User {userid}] Sent START_SLEEP")
+
+            if presence_value == 0 and _sent_start_sleep[0] and not _sent_finish_sleep[0]:
+                sleep_lifecycle_client.myPublish(sleep_topic, {"action": "FINISH_SLEEP", "timestamp": int(sim_ts)})
+                _sent_finish_sleep[0] = True
+                print(f"  >>> [User {userid}] Sent FINISH_SLEEP")
             # ── Sleep stage based on minutes elapsed since sleep start ──────
             # Compute how many minutes have passed since _sleep_start_hour
             # Works correctly across midnight (e.g. 22:00 → 00:00 → 07:00)
@@ -362,6 +384,10 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
             mqtt_monitor.stop()
         except Exception:
             logger.exception("Error stopping MQTT monitor")
+        try:
+            sleep_lifecycle_client.stop()
+        except Exception:
+            logger.exception("Error stopping sleep lifecycle client")
 
 
 def run_multi_user_simulation(duration_seconds=60):
