@@ -310,6 +310,24 @@ class BedAnalytics:
     def stopClient(self):
         self.mqtt_client.stop()
 
+    def _process_finish_sleep(self, userid, bedroomid, timestamp):
+        logger.info(f"Recorded FINISH_SLEEP for user {userid} at {timestamp}")
+        report = self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
+        if report:
+            report['user_id'] = userid
+            try:
+                dt = datetime.fromtimestamp(timestamp)
+                report['date'] = dt.strftime("%Y-%m-%d")
+            except Exception as e:
+                logger.error(f"Error parsing timestamp {timestamp}: {e}")
+                report['date'] = datetime.now().strftime("%Y-%m-%d")
+            
+            topic = f"BedAnalitics/userid/{userid}/SleepReport"
+            self.mqtt_client.myPublish(topic, report)
+            logger.info(f"Published analytics report for user {userid} to topic {topic}")
+        else:
+            logger.error(f"Analytics failed for user {userid} - no report generated")
+
     def notify(self, topic, payload):
         print(topic)
         if not "SleepReport" in topic:
@@ -327,19 +345,15 @@ class BedAnalytics:
                 elif action == "FINISH_SLEEP":
                     if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
                         self.cache_sleep_time[userid]["end"] = timestamp
-                        logger.info(f"Recorded FINISH_SLEEP for user {userid} at {timestamp}")
-                        report = self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
-                        report['user_id'] = userid
-                        report['date'] = datetime.now().strftime("%Y-%m-%d")
-                        topic=f"BedAnalitics/userid/{userid}/SleepReport"
-                        self.mqtt_client.myPublish(topic, report)
-                        logger.info(f"Published analytics report for user {userid} to topic {topic}")
+                        threading.Thread(target=self._process_finish_sleep, args=(userid, bedroomid, timestamp)).start()
                     else:
                         logger.warning(
                             f"Received FINISH_SLEEP for user {userid} without a corresponding START_SLEEP"
                         )
             except json.JSONDecodeError:
                 logger.error(f"Invalid JSON payload received on topic {topic}")
+            except Exception as e:
+                logger.error(f"Error processing payload on topic {topic}: {e}")
 
     def get_data_from_timeseries(self, bedroomid, start_time, end_time):
         logger.info(f"Retrieving data for bedroom {bedroomid} from {start_time} to {end_time}")

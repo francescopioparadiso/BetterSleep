@@ -85,6 +85,7 @@ struct SensorsView: View {
                                             Image(systemName: "sun.max.fill")
                                                 .foregroundColor(.orange)
                                                 .shadow(color: .orange, radius: 20, x: 0, y: 0)
+                                            
                                             Text("Morning: \(room.temperature_morning ?? 22)°C")
                                                 .font(.subheadline)
                                                 .fontWeight(.bold)

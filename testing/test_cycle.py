@@ -1,30 +1,198 @@
 import json
-import sys
-import os
-import time
-import threading
 import logging
 import math
+import os
+import sys
+import threading
+import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 
-# Path setups — add project root so sibling packages (device_connector, common) are importable
+# Ensure sibling packages are importable when running from /testing
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-logging.basicConfig(filename='test_cycle.log', level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
+logging.basicConfig(
+    filename='test_cycle.log',
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s: %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-from device_connector.Simulate_Sensor import *
+try:
+    import requests
+except ImportError:  # pragma: no cover - requests should be available in test env
+    requests = None
+
+from device_connector.Simulate_Sensor import *  # noqa: F401,F403
 from common.MQTT.MyMQTT import MyMQTT
 
-def load_test_config(config_path="conf.json"):
+
+# ─────────────────────────────────────────────
+#  DATA MODELS
+# ─────────────────────────────────────────────
+
+@dataclass
+class SleepWindow:
+    label: str
+    sleep_start: datetime
+    sleep_end: datetime
+    sim_start: datetime
+    sim_minutes: int
+    sleep_minutes: int
+
+
+@dataclass
+class UserContext:
+    userid: str
+    houseid: str
+    bedroomid: str
+    night_time: str
+    morning_time: str
+
+
+# ─────────────────────────────────────────────
+#  CONFIG / DISCOVERY HELPERS
+# ─────────────────────────────────────────────
+
+def load_test_config(config_path: str = "conf.json") -> Dict:
     with open(config_path, "r") as f:
         return json.load(f)
 
 
+def _get_user_service_endpoint(catalog_url: str) -> Optional[str]:
+    if not requests:
+        logger.error("requests not available; cannot reach Catalog")
+        return None
+    try:
+        res = requests.get(f"{catalog_url}/getEndpointUserService", timeout=5)
+        if res.status_code == 200:
+            return res.json().get("endpoint")
+    except Exception as exc:  # pragma: no cover - network
+        logger.error(f"Error getting UserService endpoint from Catalog: {exc}")
+    return None
+
+
+def fetch_users_from_user_service(config: Dict) -> List[Dict[str, str]]:
+    """
+    Return [{userid, houseid, bedroomid}] for all active users.
+    Falls back to config['users'] if discovery fails.
+    """
+    catalog_url = config["catalog"]["url"]
+    us_endpoint = _get_user_service_endpoint(catalog_url)
+    if not (requests and us_endpoint):
+        logger.warning("Falling back to users from conf.json (user service unavailable)")
+        return config.get("users", [config["simulation"]])
+
+    try:
+        users_res = requests.get(f"{us_endpoint}/getAllUsers", timeout=5)
+        users_payload = users_res.json() if users_res.status_code == 200 else {}
+        user_list = users_payload.get("users", [])
+    except Exception as exc:  # pragma: no cover - network
+        logger.error(f"Error fetching users from UserService: {exc}")
+        return config.get("users", [config["simulation"]])
+
+    try:
+        active_res = requests.get(f"{us_endpoint}/getActiveRoomsWithUser", timeout=5)
+        active_payload = active_res.json() if active_res.status_code == 200 else {}
+        active_rooms = active_payload.get("active_rooms", {}) or {}
+    except Exception:
+        active_rooms = {}
+
+    discovered: List[Dict[str, str]] = []
+    for user in user_list:
+        uid = str(user.get("id") or user.get("userid") or "").strip()
+        if not uid:
+            continue
+
+        room_id = active_rooms.get(uid) or active_rooms.get(int(uid)) if isinstance(active_rooms, dict) else None
+        room_info: Optional[Dict] = None
+
+        try:
+            if room_id:
+                room_res = requests.get(f"{us_endpoint}/getRoomById?room_id={room_id}", timeout=5)
+                if room_res.status_code == 200:
+                    room_info = room_res.json()
+        except Exception:
+            room_info = None
+
+        if not room_info:
+            try:
+                active_res = requests.get(f"{us_endpoint}/getActiveRoom?user_id={uid}", timeout=5)
+                if active_res.status_code == 200:
+                    room_info = active_res.json().get("active_room") or active_res.json()
+            except Exception:
+                room_info = None
+
+        houseid = str(room_info.get("house_id")) if room_info and room_info.get("house_id") is not None else None
+        bedroomid = str(room_info.get("id")) if room_info and room_info.get("id") is not None else None
+
+        if houseid and bedroomid:
+            discovered.append({"userid": uid, "houseid": houseid, "bedroomid": bedroomid})
+        else:
+            logger.warning(f"User {uid} has no active room; skipping for simulation")
+
+    if not discovered:
+        logger.warning("No active users discovered; falling back to users from conf.json")
+        return config.get("users", [config["simulation"]])
+    return discovered
+
+
+def build_user_contexts(config: Dict) -> List[UserContext]:
+    users = fetch_users_from_user_service(config)
+    contexts: List[UserContext] = []
+    for user_info in users:
+        night, morning = get_user_sleep_times(config["catalog"]["url"], user_info["userid"])
+        contexts.append(UserContext(
+            userid=str(user_info["userid"]),
+            houseid=str(user_info["houseid"]),
+            bedroomid=str(user_info["bedroomid"]),
+            night_time=night,
+            morning_time=morning
+        ))
+    return contexts
+
+
+def default_night_bases() -> List[Tuple[str, datetime]]:
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    two_days_ago = today - timedelta(days=2)
+    return [
+        (f"{two_days_ago.strftime('%Y%m%d')}_to_{(two_days_ago + timedelta(days=1)).strftime('%Y%m%d')}", two_days_ago),
+        (f"{yesterday.strftime('%Y%m%d')}_to_{today.strftime('%Y%m%d')}", yesterday),
+    ]
+
+
+def build_sleep_window(night_str: str, morning_str: str, base_date, label: str) -> SleepWindow:
+    night_hr, night_min = map(int, night_str.split(":"))
+    morning_hr, morning_min = map(int, morning_str.split(":"))
+
+    sleep_start = datetime.combine(base_date, datetime.min.time()).replace(hour=night_hr, minute=night_min)
+    sleep_end = datetime.combine(base_date, datetime.min.time()).replace(hour=morning_hr, minute=morning_min)
+    if sleep_end <= sleep_start:
+        sleep_end += timedelta(days=1)
+
+    sim_start = sleep_start - timedelta(hours=1)
+    sleep_minutes = int((sleep_end - sleep_start).total_seconds() / 60)
+    sim_minutes = sleep_minutes + 120  # 1h before + 1h after
+
+    return SleepWindow(
+        label=label,
+        sleep_start=sleep_start,
+        sleep_end=sleep_end,
+        sim_start=sim_start,
+        sim_minutes=sim_minutes,
+        sleep_minutes=sleep_minutes,
+    )
+
+
+def build_sleep_windows(night_str: str, morning_str: str, bases: Optional[List[Tuple[str, datetime]]] = None) -> List[SleepWindow]:
+    bases = bases or default_night_bases()
+    return [build_sleep_window(night_str, morning_str, base_date, label) for label, base_date in bases]
+
+
 # ─────────────────────────────────────────────
 #  SLEEP STAGE SIMULATOR
-#  Simulates a realistic night with ~4 sleep cycles
-#  Each cycle (~90 min): Light → Deep → Light → REM
 # ─────────────────────────────────────────────
 
 def get_sleep_stage(minute_of_night: int) -> str:
@@ -42,74 +210,55 @@ def get_sleep_stage(minute_of_night: int) -> str:
         return "AWAKE"
 
     cycle_length = 90
-    cycle_number = minute_of_night // cycle_length      # 0, 1, 2, 3 ...
+    cycle_number = minute_of_night // cycle_length
     minute_in_cycle = minute_of_night % cycle_length
 
-    # Deep sleep shrinks each cycle; REM grows
-    deep_end   = max(10, 30 - cycle_number * 7)         # 30 → 23 → 16 → 9 min
+    deep_end = max(10, 30 - cycle_number * 7)
     light1_end = deep_end + 15
-    rem_end    = light1_end + min(20 + cycle_number * 10, 40)  # 20 → 30 → 40 min
+    rem_end = light1_end + min(20 + cycle_number * 10, 40)
 
     if minute_in_cycle < 10:
         return "LIGHT"
-    elif minute_in_cycle < deep_end:
+    if minute_in_cycle < deep_end:
         return "DEEP"
-    elif minute_in_cycle < light1_end:
+    if minute_in_cycle < light1_end:
         return "LIGHT"
-    elif minute_in_cycle < rem_end:
+    if minute_in_cycle < rem_end:
         return "REM"
-    else:
-        return "LIGHT"
+    return "LIGHT"
 
 
 def get_hr_for_stage(stage: str, step: int, resting_hr: float = 58.0) -> float:
-    """
-    Returns a realistic heart rate (bpm) for a given sleep stage.
-    Adds a small oscillation so values aren't perfectly flat.
-
-    AWAKE : 72–80 bpm
-    LIGHT : 62–68 bpm
-    DEEP  : resting_hr to resting_hr+4  (lowest of the night)
-    REM   : 66–74 bpm  (elevated and variable, brain is active)
-    """
-    noise = math.sin(step * 0.3) * 1.5   # gentle oscillation ±1.5 bpm
+    noise = math.sin(step * 0.3) * 1.5
 
     if stage == "AWAKE":
         return resting_hr + 16 + noise
-    elif stage == "LIGHT":
+    if stage == "LIGHT":
         return resting_hr + 6 + noise
-    elif stage == "DEEP":
-        return resting_hr + 1 + abs(noise) * 0.5   # very steady, lowest HR
-    elif stage == "REM":
-        return resting_hr + 10 + math.sin(step * 0.7) * 3   # more variable
+    if stage == "DEEP":
+        return resting_hr + 1 + abs(noise) * 0.5
+    if stage == "REM":
+        return resting_hr + 10 + math.sin(step * 0.7) * 3
     return resting_hr
 
 
 def get_vibration_for_stage(stage: str, step: int) -> float:
-    """
-    Returns a realistic vibration value (g) for a given sleep stage.
-
-    AWAKE : 0.05–0.15 g  (turning, adjusting)
-    LIGHT : 0.003–0.007 g (small shifts)
-    DEEP  : 0.000–0.002 g (nearly motionless)
-    REM   : 0.002–0.006 g (slight twitching — REM behaviour)
-    """
     if stage == "AWAKE":
-        # Occasional larger movements
         base = 0.08 + 0.05 * abs(math.sin(step * 0.5))
-        return round(base, 4)
     elif stage == "LIGHT":
         base = 0.004 + 0.003 * abs(math.sin(step * 0.4))
-        return round(base, 4)
     elif stage == "DEEP":
         base = 0.001 + 0.001 * abs(math.sin(step * 0.1))
-        return round(base, 4)
     elif stage == "REM":
-        # Small twitches
         base = 0.003 + 0.003 * abs(math.sin(step * 0.9))
-        return round(base, 4)
-    return 0.0
+    else:
+        base = 0.0
+    return round(base, 4)
 
+
+# ─────────────────────────────────────────────
+#  MQTT FEEDBACK MONITOR
+# ─────────────────────────────────────────────
 
 class MQTTFeedbackMonitor:
     """Monitor MQTT feedback from actuators and sleep_cycle_manager."""
@@ -173,84 +322,120 @@ class MQTTFeedbackMonitor:
         }
 
 
-def simulate_single_user(user_info, config, duration_seconds, stop_event):
-    userid    = user_info["userid"]
-    houseid   = user_info["houseid"]
-    bedroomid = user_info["bedroomid"]
+# ─────────────────────────────────────────────
+#  USER PREFERENCES
+# ─────────────────────────────────────────────
 
-    catalog_url    = config["catalog"]["url"]
-    broker_ip      = config["mqtt"]["broker"]
-    port           = config["mqtt"]["port"]
+def get_user_sleep_times(catalog_url: str, userid: str) -> Tuple[str, str]:
+    default_night = "22:00"
+    default_morning = "07:00"
+
+    if not requests:
+        logger.error("requests not available; using default sleep times")
+        return default_night, default_morning
+
+    try:
+        cat_res = requests.get(f"{catalog_url}/getEndpointUserService", timeout=5)
+        if cat_res.status_code == 200:
+            us_endpoint = cat_res.json().get("endpoint")
+            if us_endpoint:
+                pref_res = requests.get(f"{us_endpoint}/getUserRoomPreferences?user_id={userid}", timeout=5)
+                if pref_res.status_code == 200:
+                    prefs = pref_res.json().get("preferences", {})
+                    night = prefs.get("night_time", default_night)
+                    morning = prefs.get("morning_time", default_morning)
+                    if len(night) > 5:
+                        night = night[:5]
+                    if len(morning) > 5:
+                        morning = morning[:5]
+                    return night, morning
+    except Exception as e:  # pragma: no cover - network
+        logger.error(f"Error fetching user preferences for user {userid}: {e}")
+    return default_night, default_morning
+
+
+# ─────────────────────────────────────────────
+#  SIMULATION CORE
+# ─────────────────────────────────────────────
+
+def simulate_single_user_night(user: UserContext, config: Dict, window: SleepWindow, duration_seconds: int, stop_event: threading.Event):
+    catalog_url = config["catalog"]["url"]
+    broker_ip = config["mqtt"]["broker"]
+    port = config["mqtt"]["port"]
     sensors_config = config["sensors"]
     actuators_config = config["actuators"]
     thermal_config = config["thermal_dynamics"]
-    filepath = f"SimulationStats_User{userid}.txt"
+    filepath = f"SimulationStats_User{user.userid}_{window.label}.txt"
 
-    logger.info(f"Starting simulation for user {userid} in house {houseid}, bedroom {bedroomid}")
+    logger.info(f"Starting simulation ({window.label}) for user {user.userid} in house {user.houseid}, bedroom {user.bedroomid}")
     with open(filepath, "w") as f:
-        f.write(f"Simulation Stats for User {userid} | House {houseid} Bedroom {bedroomid}\n")
+        f.write(f"Simulation Stats for User {user.userid} | House {user.houseid} Bedroom {user.bedroomid} | Window {window.label}\n")
 
-
-
-    # ── Sensors ───────────────────────────────────────────────────────────────
     sensor_configs = {}
-
     t_cfg = sensors_config["temperature"]
-    sensor_configs["temp"] = create_config(catalog_url, t_cfg['sensorID'], t_cfg["name"], t_cfg["type"],
-                                           houseid, bedroomid, broker_ip, port, topic_publish=t_cfg["topic_publish"])
+    sensor_configs["temp"] = create_config(
+        catalog_url, t_cfg['sensorID'], t_cfg["name"], t_cfg["type"],
+        user.houseid, user.bedroomid, broker_ip, port, topic_publish=t_cfg["topic_publish"]
+    )
 
     hr_cfg = sensors_config["heart_rate"]
-    sensor_configs["hr"] = create_config(catalog_url, hr_cfg["sensorID"], hr_cfg["name"], hr_cfg["type"],
-                                         houseid, bedroomid, broker_ip, port,
-                                         topic_publish=hr_cfg["topic_publish"],
-                                         topic_subscribe=hr_cfg["topic_subscribe"])
+    sensor_configs["hr"] = create_config(
+        catalog_url, hr_cfg["sensorID"], hr_cfg["name"], hr_cfg["type"],
+        user.houseid, user.bedroomid, broker_ip, port,
+        topic_publish=hr_cfg["topic_publish"],
+        topic_subscribe=hr_cfg["topic_subscribe"]
+    )
 
     p_cfg = sensors_config["presence"]
-    sensor_configs["presence"] = create_config(catalog_url, p_cfg["sensorID"], p_cfg["name"], p_cfg["type"],
-                                               houseid, bedroomid, broker_ip, port, topic_publish=p_cfg["topic_publish"])
+    sensor_configs["presence"] = create_config(
+        catalog_url, p_cfg["sensorID"], p_cfg["name"], p_cfg["type"],
+        user.houseid, user.bedroomid, broker_ip, port, topic_publish=p_cfg["topic_publish"]
+    )
 
     v_cfg = sensors_config["vibration"]
-    sensor_configs["vibration"] = create_config(catalog_url, v_cfg["sensorID"], v_cfg["name"], v_cfg["type"],
-                                                houseid, bedroomid, broker_ip, port, topic_publish=v_cfg["topic_publish"])
+    sensor_configs["vibration"] = create_config(
+        catalog_url, v_cfg["sensorID"], v_cfg["name"], v_cfg["type"],
+        user.houseid, user.bedroomid, broker_ip, port, topic_publish=v_cfg["topic_publish"]
+    )
 
-    temp_sensor       = TemperatureSensor(sensor_configs["temp"])
+    temp_sensor = TemperatureSensor(sensor_configs["temp"])
     heart_rate_sensor = HeartRateSensor(sensor_configs["hr"])
-    presence_sensor   = PresenceSensor(sensor_configs["presence"])
-    vibration_sensor  = VibrationSensor(sensor_configs["vibration"])
+    presence_sensor = PresenceSensor(sensor_configs["presence"])
+    vibration_sensor = VibrationSensor(sensor_configs["vibration"])
 
     _sim_step = [0]
-    _sim_start_str = config["simulation"].get("simulation_start", "2026-03-10 22:00")
-    _sim_start_dt  = datetime.strptime(_sim_start_str, "%Y-%m-%d %H:%M")
-
-    # Sleep starts at 22:00 — minute 0 of the night
-    _sleep_start_hour = 22
 
     def simulated_timestamp():
-        vt = _sim_start_dt + timedelta(minutes=_sim_step[0])
+        vt = window.sim_start + timedelta(minutes=_sim_step[0])
         return vt.timestamp()
 
     for sensor in (temp_sensor, heart_rate_sensor, vibration_sensor, presence_sensor):
         sensor.timestamp_provider = simulated_timestamp
 
-    # ── Actuators ─────────────────────────────────────────────────────────────
     l_cfg = actuators_config["light"]
-    c_light = create_config(catalog_url, l_cfg["actuatorID"], l_cfg["name"], l_cfg["type"],
-                            houseid, bedroomid, broker_ip, port,
-                            topic_publish=l_cfg["topic_publish"], topic_subscribe=l_cfg["topic_subscribe"], is_sensor=False)
+    c_light = create_config(
+        catalog_url, l_cfg["actuatorID"], l_cfg["name"], l_cfg["type"],
+        user.houseid, user.bedroomid, broker_ip, port,
+        topic_publish=l_cfg["topic_publish"], topic_subscribe=l_cfg["topic_subscribe"], is_sensor=False
+    )
 
     h_cfg = actuators_config["heater"]
-    c_heater = create_config(catalog_url, h_cfg["actuatorID"], h_cfg["name"], h_cfg["type"],
-                             houseid, bedroomid, broker_ip, port,
-                             topic_publish=h_cfg["topic_publish"], topic_subscribe=h_cfg["topic_subscribe"], is_sensor=False)
+    c_heater = create_config(
+        catalog_url, h_cfg["actuatorID"], h_cfg["name"], h_cfg["type"],
+        user.houseid, user.bedroomid, broker_ip, port,
+        topic_publish=h_cfg["topic_publish"], topic_subscribe=h_cfg["topic_subscribe"], is_sensor=False
+    )
 
     f_cfg = actuators_config["fan"]
-    c_fan = create_config(catalog_url, f_cfg["actuatorID"], f_cfg["name"], f_cfg["type"],
-                          houseid, bedroomid, broker_ip, port,
-                          topic_publish=f_cfg["topic_publish"], topic_subscribe=f_cfg["topic_subscribe"], is_sensor=False)
+    c_fan = create_config(
+        catalog_url, f_cfg["actuatorID"], f_cfg["name"], f_cfg["type"],
+        user.houseid, user.bedroomid, broker_ip, port,
+        topic_publish=f_cfg["topic_publish"], topic_subscribe=f_cfg["topic_subscribe"], is_sensor=False
+    )
 
-    fan_actuator    = FanActuator(c_fan)
+    fan_actuator = FanActuator(c_fan)
     heater_actuator = HeaterActuator(c_heater)
-    light_actuator  = LightActuator(c_light)
+    light_actuator = LightActuator(c_light)
 
     for actuator in (fan_actuator, heater_actuator, light_actuator):
         actuator.timestamp_provider = simulated_timestamp
@@ -258,44 +443,46 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
     light_actuator.value = 50
     light_actuator.publish_data(light_actuator.value, unit="%", name="LightLevel")
 
-    mqtt_monitor = MQTTFeedbackMonitor(broker_ip, port, userid, houseid, bedroomid, initial_light=50)
+    mqtt_monitor = MQTTFeedbackMonitor(broker_ip, port, user.userid, user.houseid, user.bedroomid, initial_light=50)
     mqtt_monitor.start()
 
-    # ── MQTT client for sleep lifecycle messages (START_SLEEP / FINISH_SLEEP) ──
     sleep_lifecycle_client = MyMQTT(
-        f"TestSleepLifecycle_{userid}_{int(time.time())}",
+        f"TestSleepLifecycle_{user.userid}_{int(time.time())}",
         broker_ip, port, None
     )
     sleep_lifecycle_client.start()
-    sleep_topic = f"BedAnalitics/userid/{userid}/bedroomid/{bedroomid}"
+    sleep_topic = f"BedAnalitics/userid/{user.userid}/bedroomid/{user.bedroomid}"
     _sent_start_sleep = [False]
     _sent_finish_sleep = [False]
 
     try:
         time.sleep(2)
 
-        sim_phases      = config["simulation_phases"]
-        total_minutes   = sim_phases["total_minutes"]
-        steps           = sim_phases["steps"]
+        total_minutes = window.sim_minutes
+        steps = max(total_minutes, 1)
         real_step_seconds = duration_seconds / steps
 
         def get_virtual_time(step):
-            vt = _sim_start_dt + timedelta(minutes=step)
+            vt = window.sim_start + timedelta(minutes=step)
             return vt.hour, vt.minute, step
 
         def get_baseline_temp(minute):
-            sleep_end_min = int(sim_phases["sleep_end"] * 60) - _sleep_start_hour * 60
+            sleep_end_min = 60 + window.sleep_minutes
+            if sleep_end_min <= 0:
+                sleep_end_min = 1
             if minute <= sleep_end_min:
                 return 23 - (5.0 / sleep_end_min) * minute
             morning_duration = total_minutes - sleep_end_min
+            if morning_duration <= 0:
+                morning_duration = 1
             return 18 + (4.0 / morning_duration) * (minute - sleep_end_min)
 
-        fan_cooling_per_min    = thermal_config["fan_cooling_per_min"]
+        fan_cooling_per_min = thermal_config["fan_cooling_per_min"]
         heater_warming_per_min = thermal_config["heater_warming_per_min"]
-        ambient_pull_factor    = thermal_config["ambient_pull_factor"]
-        min_temp               = thermal_config["min_temp"]
-        max_temp               = thermal_config["max_temp"]
-        current_temp           = thermal_config["starting_temp"]
+        ambient_pull_factor = thermal_config["ambient_pull_factor"]
+        min_temp = thermal_config["min_temp"]
+        max_temp = thermal_config["max_temp"]
+        current_temp = thermal_config["starting_temp"]
 
         for step in range(steps):
             if stop_event.is_set():
@@ -305,12 +492,14 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
             hour, minute, virtual_minute = get_virtual_time(step)
             baseline_temp = get_baseline_temp(virtual_minute)
 
-            fan_on    = getattr(fan_actuator,    'state', 'OFF') == "ON"
+            fan_on = getattr(fan_actuator, 'state', 'OFF') == "ON"
             heater_on = getattr(heater_actuator, 'state', 'OFF') == "ON"
 
             current_temp += (baseline_temp - current_temp) * ambient_pull_factor
-            if fan_on:    current_temp -= fan_cooling_per_min
-            if heater_on: current_temp += heater_warming_per_min
+            if fan_on:
+                current_temp -= fan_cooling_per_min
+            if heater_on:
+                current_temp += heater_warming_per_min
             current_temp = max(min_temp, min(max_temp, current_temp))
 
             sim_ts = simulated_timestamp()
@@ -318,53 +507,44 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
             temp_sensor.value = current_temp
             temp_sensor.publish_data(round(current_temp, 2), unit="degC", timestamp=sim_ts)
 
-            # ── Presence: in bed from 22:00 to 07:00 ─────────────────────────
-            presence_value = 1 if (hour >= _sleep_start_hour or hour < 7) else 0
+            vt = window.sim_start + timedelta(minutes=step)
+
+            presence_value = 1 if (window.sleep_start <= vt < window.sleep_end) else 0
             presence_sensor.publish_data(presence_value, timestamp=sim_ts)
 
-            # ── Sleep lifecycle messages for BedAnalytics ──────────────────
             if presence_value == 1 and not _sent_start_sleep[0]:
                 sleep_lifecycle_client.myPublish(sleep_topic, {"action": "START_SLEEP", "timestamp": int(sim_ts)})
                 _sent_start_sleep[0] = True
-                print(f"  >>> [User {userid}] Sent START_SLEEP")
+                print(f"  >>> [User {user.userid} | {window.label}] Sent START_SLEEP")
 
             if presence_value == 0 and _sent_start_sleep[0] and not _sent_finish_sleep[0]:
                 sleep_lifecycle_client.myPublish(sleep_topic, {"action": "FINISH_SLEEP", "timestamp": int(sim_ts)})
                 _sent_finish_sleep[0] = True
-                print(f"  >>> [User {userid}] Sent FINISH_SLEEP")
-            # ── Sleep stage based on minutes elapsed since sleep start ──────
-            # Compute how many minutes have passed since _sleep_start_hour
-            # Works correctly across midnight (e.g. 22:00 → 00:00 → 07:00)
-            vt = _sim_start_dt + timedelta(minutes=step)
-            sleep_start_dt = vt.replace(hour=_sleep_start_hour, minute=0, second=0, microsecond=0)
-            if vt < sleep_start_dt:
-                sleep_start_dt -= timedelta(days=1)
-            minute_of_night = int((vt - sleep_start_dt).total_seconds() / 60)
+                print(f"  >>> [User {user.userid} | {window.label}] Sent FINISH_SLEEP")
 
-            if presence_value == 1:
-                stage = get_sleep_stage(minute_of_night)
-            else:
-                stage = "AWAKE"
+            minute_of_night = int((vt - window.sleep_start).total_seconds() / 60)
+            stage = get_sleep_stage(minute_of_night) if presence_value == 1 else "AWAKE"
 
-            # ── Heart rate and vibration driven by stage ───────────────────────
-            heart_rate_value  = get_hr_for_stage(stage, step)
-            vibration_value   = get_vibration_for_stage(stage, step)
+            heart_rate_value = get_hr_for_stage(stage, step)
+            vibration_value = get_vibration_for_stage(stage, step)
 
             heart_rate_sensor.publish_data(round(heart_rate_value, 2), unit="bpm", timestamp=sim_ts)
             vibration_sensor.publish_data(round(vibration_value, 4), unit="g", timestamp=sim_ts)
 
-            mqtt_states  = mqtt_monitor.get_states()
-            light_mqtt   = mqtt_states.get("light", "?")
-            heater_mqtt  = "ON" if mqtt_states.get("heater") == 1 else "OFF"
-            fan_mqtt     = "ON" if mqtt_states.get("fan") == 1 else "OFF"
-            phase        = mqtt_states.get("phase", "DAY")
+            mqtt_states = mqtt_monitor.get_states()
+            light_mqtt = mqtt_states.get("light", "?")
+            heater_mqtt = "ON" if mqtt_states.get("heater") == 1 else "OFF"
+            fan_mqtt = "ON" if mqtt_states.get("fan") == 1 else "OFF"
+            phase = mqtt_states.get("phase", "DAY")
 
-            vt_str = (_sim_start_dt + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
+            vt_str = (window.sim_start + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
 
-            line = (f"[User {userid} | {vt_str}] Stage={stage:<5} "
-                    f"Temp={current_temp:.2f}°C, Pres={presence_value}, "
-                    f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.4f}g | "
-                    f"Phase={phase} | MQTT[L={light_mqtt}, F={fan_mqtt}, H={heater_mqtt}]\n")
+            line = (
+                f"[User {user.userid} | {vt_str} | {window.label}] Stage={stage:<5} "
+                f"Temp={current_temp:.2f}°C, Pres={presence_value}, "
+                f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.4f}g | "
+                f"Phase={phase} | MQTT[L={light_mqtt}, F={fan_mqtt}, H={heater_mqtt}]\n"
+            )
 
             print(line, end="")
             with open(filepath, "a") as f:
@@ -379,7 +559,7 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
                 if hasattr(comp, 'stop') and callable(getattr(comp, 'stop')):
                     comp.stop()
             except Exception as e:
-                logger.exception(f"Error stopping component for user {userid}: {e}")
+                logger.exception(f"Error stopping component for user {user.userid}: {e}")
         try:
             mqtt_monitor.stop()
         except Exception:
@@ -390,20 +570,29 @@ def simulate_single_user(user_info, config, duration_seconds, stop_event):
             logger.exception("Error stopping sleep lifecycle client")
 
 
-def run_multi_user_simulation(duration_seconds=60):
+def run_multi_user_simulation(duration_seconds: int = 60, night_bases: Optional[List[Tuple[str, datetime]]] = None):
     config = load_test_config()
-    users_to_simulate = config.get("users", [config["simulation"]])
-    print(f"--- Starting Multi-User Simulation ({len(users_to_simulate)} users) ---")
+    user_contexts = build_user_contexts(config)
+    bases = night_bases or default_night_bases()
+
+    if not user_contexts:
+        logger.warning("No users to simulate. Exiting.")
+        return
+
+    print(f"--- Starting Multi-User Simulation for {len(user_contexts)} users across {len(bases)} nights ---")
 
     stop_event = threading.Event()
     threads = []
 
-    for user_info in users_to_simulate:
-        t = threading.Thread(
-            target=simulate_single_user,
-            args=(user_info, config, duration_seconds, stop_event),
-            name=f"Thread-User-{user_info['userid']}"
-        )
+    def _run_user(user_ctx: UserContext):
+        windows = build_sleep_windows(user_ctx.night_time, user_ctx.morning_time, bases)
+        for window in windows:
+            if stop_event.is_set():
+                break
+            simulate_single_user_night(user_ctx, config, window, duration_seconds, stop_event)
+
+    for user_ctx in user_contexts:
+        t = threading.Thread(target=_run_user, name=f"Thread-User-{user_ctx.userid}", args=(user_ctx,))
         threads.append(t)
         t.start()
 
@@ -419,4 +608,4 @@ def run_multi_user_simulation(duration_seconds=60):
 
 
 if __name__ == "__main__":
-    run_multi_user_simulation(duration_seconds=60)  # Run for 2 minutes (adjust as needed)
+    run_multi_user_simulation(duration_seconds=60)

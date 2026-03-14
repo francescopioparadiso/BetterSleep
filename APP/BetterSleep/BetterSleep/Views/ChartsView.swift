@@ -1,4 +1,31 @@
 import SwiftUI
+import Charts
+
+// MARK: - Sleep Stage Types
+
+enum SleepStage: String, CaseIterable, Identifiable {
+    case awake = "Awake"
+    case rem = "REM"
+    case light = "Light"
+    case deep = "Deep"
+    
+    var id: String { self.rawValue }
+    
+    var color: Color {
+        switch self {
+        case .awake: return Color(red: 1.0, green: 0.5, blue: 0.4) // Salmon/Red
+        case .rem: return Color(red: 0.4, green: 0.8, blue: 1.0)   // Light Blue
+        case .light: return Color(red: 0.2, green: 0.5, blue: 0.9) // Medium Blue
+        case .deep: return Color(red: 0.1, green: 0.2, blue: 0.6)  // Dark Blue
+        }
+    }
+}
+
+struct SleepStageData: Identifiable {
+    let id = UUID()
+    let stage: SleepStage
+    let minutes: Double
+}
 
 // MARK: - Main View
 
@@ -34,6 +61,16 @@ struct ChartsView: View {
                         sleepScoreGauge
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
+
+                        Section(header: Text("Sleep Stages")) {
+                            SleepStageChart(data: [
+                                SleepStageData(stage: .deep, minutes: vm.deepMinutes),
+                                SleepStageData(stage: .light, minutes: vm.lightMinutes),
+                                SleepStageData(stage: .rem, minutes: vm.remMinutes),
+                                SleepStageData(stage: .awake, minutes: vm.awakeMinutes)
+                            ])
+                            .padding(.vertical, 8)
+                        }
 
                         Section(header: Text("Sleep Metrics")) {
                             ForEach([SleepMetricType.duration, .interruptions, .remSleep, .deepSleep], id: \.self) { type in
@@ -133,7 +170,7 @@ struct ChartsView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
+        .padding(.top, 32)
     }
 
     // MARK: - Metric Row
@@ -245,6 +282,38 @@ struct ChartsView: View {
     }
 }
 
+// MARK: - Sleep Stage Chart
+
+struct SleepStageChart: View {
+    let data: [SleepStageData]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Chart {
+                ForEach(data) { item in
+                    BarMark(
+                        x: .value("Minutes", item.minutes),
+                        y: .value("Stage", item.stage.rawValue)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .foregroundStyle(item.stage.color)
+                    .annotation(position: .trailing) {
+                        if item.minutes > 0 {
+                            Text("\(Int(item.minutes))m")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+            .chartYScale(domain: ["Deep", "Light", "REM", "Awake"])
+            .chartYAxis {
+                AxisMarks(position: .leading)
+            }
+            .frame(height: 200)
+        }
+    }
+}
 
 private func makePreviewVM(
     score: Double,
@@ -265,6 +334,10 @@ private func makePreviewVM(
     vm.interruptions = interruptions
     vm.remSleep = remSleep
     vm.deepSleep = deepSleep
+    vm.awakeMinutes = 15
+    vm.lightMinutes = 200
+    vm.deepMinutes = deepSleep * duration * 60 / 100
+    vm.remMinutes = remSleep * duration * 60 / 100
     vm.hrv = hrv
     vm.rhr = rhr
     return vm

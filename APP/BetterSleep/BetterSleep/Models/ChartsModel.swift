@@ -65,6 +65,13 @@ class ChartsModel: ObservableObject {
     @Published var interruptions: Double = 0   // count
     @Published var remSleep:      Double = 0   // percentage
     @Published var deepSleep:     Double = 0   // percentage
+    
+    // Stage durations (minutes)
+    @Published var awakeMinutes:  Double = 0
+    @Published var lightMinutes:  Double = 0
+    @Published var deepMinutes:   Double = 0
+    @Published var remMinutes:    Double = 0
+
     @Published var hrv:           Double = 0   // ms
     @Published var rhr:           Double = 0   // bpm
     @Published var hasActiveRoom  = true
@@ -138,6 +145,11 @@ class ChartsModel: ObservableObject {
                 resetToDefaults()
                 hasData = false
                 return
+            } else {
+                print("Sleep analytics loaded successfully for date: \(dateStr)")
+                if let analytics = analytics {
+                    print("Raw analytics data: \(analytics)")
+                }
             }
 
             // Parse the MongoDB document (stored as-is from MQTT payload)
@@ -152,6 +164,18 @@ class ChartsModel: ObservableObject {
                 } else {
                     remSleep  = 0
                     deepSleep = 0
+                }
+
+                if let stageMin = analytics["stage_minutes"] as? [String: Any] {
+                    awakeMinutes = (stageMin["AWAKE"] as? NSNumber)?.doubleValue ?? 0
+                    lightMinutes = (stageMin["LIGHT"] as? NSNumber)?.doubleValue ?? 0
+                    deepMinutes  = (stageMin["DEEP"]  as? NSNumber)?.doubleValue ?? 0
+                    remMinutes   = (stageMin["REM"]   as? NSNumber)?.doubleValue ?? 0
+                } else {
+                    awakeMinutes = 0
+                    lightMinutes = 0
+                    deepMinutes  = 0
+                    remMinutes   = 0
                 }
 
                 hrv = analytics["hrv_rmssd_ms"] as? Double ?? 0
@@ -174,6 +198,10 @@ class ChartsModel: ObservableObject {
         interruptions = 0
         remSleep      = 0
         deepSleep     = 0
+        awakeMinutes  = 0
+        lightMinutes  = 0
+        deepMinutes   = 0
+        remMinutes    = 0
         hrv           = 0
         rhr           = 0
     }

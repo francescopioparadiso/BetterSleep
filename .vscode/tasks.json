@@ -44,7 +44,15 @@
             "problemMatcher": []
         },
         {
-            "label": "🧪 Test Sleep Cycle",
+            "label": "� Clean DB (Previous Test Cycle)",
+            "type": "shell",
+            "command": "python3 clean_db.py",
+            "options": { "cwd": "${workspaceFolder}/testing" },
+            "presentation": { "group": "test", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "�🧪 Test Sleep Cycle",
             "type": "shell",
             "command": "python3 test_cycle.py",
             "options": { "cwd": "${workspaceFolder}/testing" },
