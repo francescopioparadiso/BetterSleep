@@ -13,7 +13,7 @@ COPY . /app
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Set working directory to testing
+# Set working directory to Simulation
 WORKDIR /app/testing
 
 # Run the test cycle

@@ -11,7 +11,7 @@ import cherrypy
 from common import catalog_client
 from common.MQTT.MyMQTT import MyMQTT
 from common.common import json_error_page, mqtt_to_regex
-from time_series.mongo_db import MongoDB
+from mongo_db import MongoDB
 
 # Configure logging
 logger = logging.getLogger(__name__)

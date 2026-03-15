@@ -24,17 +24,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────
-#  SLEEP ANALYTICS ENGINE
-# ─────────────────────────────────────────────
 
-IDEAL_TEMP      = 20.0   # °C  — comfortable sleep temperature
-VIBRATION_LIMIT = 0.01   # g   — movements above this = restless
-#  HR thresholds are computed dynamically from each user's own resting HR
-#  so these constants are no longer needed here
+IDEAL_TEMP      = 20.0
+VIBRATION_LIMIT = 0.01
 
-
-# Sensor type map — last number in bn (e.g. "2:2:32:2" → type 2 → "presence")
 SENSOR_TYPE = {
     0: "temperature",
     1: "humidity",
@@ -45,30 +38,12 @@ SENSOR_TYPE = {
 
 
 def compute_hrv(hr_list):
-    """
-    Compute HRV as RMSSD (Root Mean Square of Successive Differences)
-    from a list of heart-rate SenML entries [{"t": ..., "v": bpm}, ...].
-
-    Steps:
-        1. Convert each HR (bpm) → RR interval (ms):  RR = 60 000 / HR
-        2. Compute successive differences of RR intervals.
-        3. Return RMSSD = sqrt(mean(diff²)).
-
-    Returns None if there are fewer than 2 readings.
-    """
     if len(hr_list) < 2:
         return None
-
-    # Sort by timestamp so successive differences are meaningful
     sorted_hr = sorted(hr_list, key=lambda m: m["t"])
-
-    # HR (bpm) → RR interval (ms)
     rr_intervals = [60_000.0 / m["v"] for m in sorted_hr if m["v"] > 0]
-
     if len(rr_intervals) < 2:
         return None
-
-    # Successive differences squared
     sq_diffs = [
         (rr_intervals[i + 1] - rr_intervals[i]) ** 2
         for i in range(len(rr_intervals) - 1)
@@ -78,61 +53,48 @@ def compute_hrv(hr_list):
     return round(rmssd, 1)
 
 
-def parse_sensor_data(raw_data):
+def get_sleep_state(presence, vibration, heart_rate, rhr, rem_threshold):
+    if presence != 1:
+        return "AWAKE"
+    if abs(vibration) > VIBRATION_LIMIT:
+        return "AWAKE"
+    if heart_rate <= rhr + 5:
+        return "DEEP"
+    if heart_rate >= rem_threshold:
+        return "REM"
+    return "LIGHT"
+
+
+def parse_and_cleaning_data(raw_data):
     sensors = {}
 
     for entry in raw_data:
         bn = entry.get("bn", "")
-
         try:
             sensor_type_id = int(bn.split(":")[-1])
             sensor_name = SENSOR_TYPE.get(sensor_type_id)
-        except:
+        except ValueError, IndexError:
+            logger.error("Invalid sensor type in bn: {bn}")
             continue
-
         if sensor_name:
-            sensors[sensor_name] = entry.get("e", [])
-
+            # remove outliers of temparture or heart rate
+            if sensor_name == "temperature":
+                valid_readings = [m for m in entry.get("e", []) if -10 <= m["v"] <= 40]
+                sensors[sensor_name] = valid_readings
+            elif sensor_name == "heart_rate":
+                valid_readings = [m for m in entry.get("e", []) if 30 <= m["v"] <= 220]
+                sensors[sensor_name] = valid_readings
+            else:
+                sensors[sensor_name] = entry.get("e", [])
     return sensors
 
-def classify_minute(presence, vibration, heart_rate, rhr, rem_threshold):
-    """
-    Decide the sleep stage for one reading using simple if/else rules.
 
-    presence      : 1 = person is in bed, anything else = not in bed
-    vibration     : movement value in g
-    heart_rate    : bpm reading
-    rhr           : resting heart rate = lowest HR of the night
-    rem_threshold : HR above this = REM  (= rhr + 75th-percentile offset)
-    """
-    # Not in bed → AWAKE
-    if presence != 1:
-        return "AWAKE"
+def elaborate_sleep_analytics(raw_data) :
 
-    # Moving around → AWAKE
-    if abs(vibration) > VIBRATION_LIMIT:
-        return "AWAKE"
-
-    # Still + HR close to personal resting HR → DEEP sleep
-    if heart_rate <= rhr + 5:
-        return "DEEP"
-
-    # Still + elevated HR (above personal REM threshold) → REM
-    if heart_rate >= rem_threshold:
-        return "REM"
-
-    # Everything else → LIGHT sleep
-    return "LIGHT"
-
-
-def compute_sleep_analytics(raw_data) :
-    """
-    Compute sleep analytics from raw sensor data in SenML format (list of dicts).
-    """
     if not raw_data:
         return {"error": "No sensor data available"}
 
-    sensors = parse_sensor_data(raw_data)
+    sensors= parse_and_cleaning_data(raw_data)
 
     vibration_list = sensors.get("vibration", [])
     presence_list  = sensors.get("presence", [])
@@ -143,23 +105,15 @@ def compute_sleep_analytics(raw_data) :
         return {"error": "No Heart Rate data found"}
     if not presence_list:
         return {"error": "No Presence data found — cannot determine time in bed"}
-
-    # ── Personal HR baselines ─────────────────────────────
     hr_values = [m["v"] for m in hr_list]
-    rhr = min(hr_values)                        # resting HR
+    rhr = min(hr_values)
     hr_sorted = sorted(hr_values)
     p75_hr = hr_sorted[int(len(hr_sorted) * 0.75)]
     rem_threshold = rhr + (p75_hr - rhr) * 0.6
-
-    logger.info(f"HR baselines → RHR: {rhr:.1f} bpm | REM threshold: {rem_threshold:.1f} bpm")
-
-    # ── Helper: find closest value by timestamp ──────────
     def closest_value(data_list, target_time, default):
         if not data_list:
             return default
         return min(data_list, key=lambda m: abs(m["t"] - target_time))["v"]
-
-    # ── Classify each presence reading ─────────────────────
     classified = []
     for m in presence_list:
         t = m["t"]
@@ -167,7 +121,7 @@ def compute_sleep_analytics(raw_data) :
 
         hr_value = closest_value(hr_list, t, default=rhr)
         vibration_value = closest_value(vibration_list, t, default=0.0)
-        stage = classify_minute(presence, vibration_value, hr_value, rhr, rem_threshold)
+        stage = get_sleep_state(presence, vibration_value, hr_value, rhr, rem_threshold)
 
         classified.append({
             "timestamp": t,
@@ -177,18 +131,15 @@ def compute_sleep_analytics(raw_data) :
             "presence": presence
         })
 
-    # ── Count readings per stage ──────────────────────────
     total = len(classified)
     counts = {"AWAKE": 0, "LIGHT": 0, "DEEP": 0, "REM": 0}
     for r in classified:
         counts[r["stage"]] += 1
     pct = {stage: round(counts[stage] / total * 100, 1) for stage in counts}
 
-    # ── Sleep duration ───────────────────────────────────
     sleep_minutes = counts["LIGHT"] + counts["DEEP"] + counts["REM"]
     sleep_hours = round(sleep_minutes / 60, 1)
 
-    # ── Wake-ups ────────────────────────────────────────
     first_sleep_idx = next((i for i, r in enumerate(classified) if r["stage"] != "AWAKE"), None)
     wake_ups = 0
     if first_sleep_idx is not None:
@@ -198,7 +149,6 @@ def compute_sleep_analytics(raw_data) :
             if curr == "AWAKE" and prev != "AWAKE":
                 wake_ups += 1
 
-    # ── Sleep score (0–100) ─────────────────────────────
     score = 100.0
     if sleep_hours < 7:
         score -= (7 - sleep_hours) * 10
@@ -209,7 +159,6 @@ def compute_sleep_analytics(raw_data) :
     if pct["REM"] < 20:
         score -= (20 - pct["REM"]) * 0.3
 
-    # ── Temperature penalty ─────────────────────────────
     if temp_list:
         avg_temp = sum(m["v"] for m in temp_list) / len(temp_list)
         temp_diff = abs(avg_temp - IDEAL_TEMP)
@@ -218,12 +167,10 @@ def compute_sleep_analytics(raw_data) :
     else:
         avg_temp = None
 
-    # ── HRV (RMSSD) ────────────────────────────────────
     hrv_rmssd = compute_hrv(hr_list)
 
     score = round(max(0.0, min(100.0, score)), 1)
 
-    # ── Quality label ───────────────────────────────────
     if score >= 85:
         quality = "Excellent"
     elif score >= 70:
@@ -245,9 +192,6 @@ def compute_sleep_analytics(raw_data) :
         "avg_temp_degC": round(avg_temp, 1) if avg_temp is not None else None,
     }
 
-# ─────────────────────────────────────────────
-#  ORIGINAL BedAnalytics CLASS (extended)
-# ─────────────────────────────────────────────
 
 class BedAnalytics:
     exposed = True
@@ -364,10 +308,7 @@ class BedAnalytics:
             return None
 
     def startAnalytics(self, sleep_time: dict, bedroomid: str, userid: str = None):
-        """
-        Fetch sensor data for the sleep window, run the analytics engine,
-        store the result and log a summary.
-        """
+
         start_time = sleep_time.get("start")
         end_time   = sleep_time.get("end")
 
@@ -382,14 +323,11 @@ class BedAnalytics:
             logger.warning(f"No data available for analytics for bedroom {bedroomid}")
             return None
 
-        # ── Run the analytics engine ──────────────────────────────────────────
-        report = compute_sleep_analytics(raw_data)
+        report = elaborate_sleep_analytics(raw_data)
 
         if "error" in report:
             logger.error(f"Analytics error for bedroom {bedroomid}: {report['error']}")
             return None
-
-        # ── Persist result in memory ──────────────────────────────────────────
 
         logger.info(f"Analytics result for user {userid} → Sleep Score: {report['sleep_score']} | "
                     f"Quality: {report['quality']} | Sleep Hours: {report['sleep_hours']} | "
@@ -400,9 +338,6 @@ class BedAnalytics:
 
 
 
-# ─────────────────────────────────────────────
-#  ENTRY POINT
-# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     try:
