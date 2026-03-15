@@ -2,6 +2,6 @@ telegram_bot/.env
 /.idea
 .
 *.pyc
-/testing/SimulationStats_User2.txt
+/testing/SimulationStats*.txt
 /testing/test_cycle.log
-/testing/SimulationStats_User1.txt
+

@@ -446,15 +446,6 @@ def simulate_single_user_night(user: UserContext, config: Dict, window: SleepWin
     mqtt_monitor = MQTTFeedbackMonitor(broker_ip, port, user.userid, user.houseid, user.bedroomid, initial_light=50)
     mqtt_monitor.start()
 
-    sleep_lifecycle_client = MyMQTT(
-        f"TestSleepLifecycle_{user.userid}_{int(time.time())}",
-        broker_ip, port, None
-    )
-    sleep_lifecycle_client.start()
-    sleep_topic = f"BedAnalitics/userid/{user.userid}/bedroomid/{user.bedroomid}"
-    _sent_start_sleep = [False]
-    _sent_finish_sleep = [False]
-
     try:
         time.sleep(2)
 
@@ -512,16 +503,6 @@ def simulate_single_user_night(user: UserContext, config: Dict, window: SleepWin
             presence_value = 1 if (window.sleep_start <= vt < window.sleep_end) else 0
             presence_sensor.publish_data(presence_value, timestamp=sim_ts)
 
-            if presence_value == 1 and not _sent_start_sleep[0]:
-                sleep_lifecycle_client.myPublish(sleep_topic, {"action": "START_SLEEP", "timestamp": int(sim_ts)})
-                _sent_start_sleep[0] = True
-                print(f"  >>> [User {user.userid} | {window.label}] Sent START_SLEEP")
-
-            if presence_value == 0 and _sent_start_sleep[0] and not _sent_finish_sleep[0]:
-                sleep_lifecycle_client.myPublish(sleep_topic, {"action": "FINISH_SLEEP", "timestamp": int(sim_ts)})
-                _sent_finish_sleep[0] = True
-                print(f"  >>> [User {user.userid} | {window.label}] Sent FINISH_SLEEP")
-
             minute_of_night = int((vt - window.sleep_start).total_seconds() / 60)
             stage = get_sleep_stage(minute_of_night) if presence_value == 1 else "AWAKE"
 
@@ -564,10 +545,7 @@ def simulate_single_user_night(user: UserContext, config: Dict, window: SleepWin
             mqtt_monitor.stop()
         except Exception:
             logger.exception("Error stopping MQTT monitor")
-        try:
-            sleep_lifecycle_client.stop()
-        except Exception:
-            logger.exception("Error stopping sleep lifecycle client")
+        # Lifecycle events are emitted by sleep_cycle_manager; no direct publisher in test.
 
 
 def run_multi_user_simulation(duration_seconds: int = 60, night_bases: Optional[List[Tuple[str, datetime]]] = None):

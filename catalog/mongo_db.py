@@ -308,6 +308,34 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error deleting actuator {actuator_id}: {e}", exc_info=True)
             return False
+    def update_actuator_last_update(self, actuator_id, last_update):
+
+        try:
+            logger.debug(f"Updating actuator {actuator_id} last_update to: {last_update} (type: {type(last_update).__name__})")
+
+            # Try both possible field names when building the query
+            query = {"ActuatorID": actuator_id}
+            result = self.db.actuators.update_one(
+                query,
+                {"$set": {"last_update": last_update}}
+            )
+            if result.matched_count > 0:
+                logger.info(f"Actuator {actuator_id} last_update timestamp updated to {last_update}")
+                return True
+            # Fall back to lower-case key
+            query = {"actuatorID": actuator_id}
+            result = self.db.actuators.update_one(
+                query,
+                {"$set": {"last_update": last_update}}
+            )
+            if result.matched_count > 0:
+                logger.info(f"Actuator {actuator_id} last_update timestamp updated to {last_update} with lowercase key")
+                return True
+            logger.warning(f"Actuator {actuator_id} not found for last_update update")
+            return False
+        except Exception as e:
+            logger.error(f"Error updating actuator last_update: {e}", exc_info=True)
+            raise
 
     def get_sensor_by_room (self, room_id):
         try:

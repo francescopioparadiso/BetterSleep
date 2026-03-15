@@ -44,7 +44,7 @@ SENSOR_TYPE = {
 }
 
 
-def compute_hrv(hr_list: list):
+def compute_hrv(hr_list):
     """
     Compute HRV as RMSSD (Root Mean Square of Successive Differences)
     from a list of heart-rate SenML entries [{"t": ..., "v": bpm}, ...].
@@ -96,7 +96,7 @@ def parse_sensor_data(raw_data):
 
     return sensors
 
-def classify_minute(presence, vibration, heart_rate, rhr, rem_threshold) -> str:
+def classify_minute(presence, vibration, heart_rate, rhr, rem_threshold):
     """
     Decide the sleep stage for one reading using simple if/else rules.
 
@@ -126,14 +126,9 @@ def classify_minute(presence, vibration, heart_rate, rhr, rem_threshold) -> str:
     return "LIGHT"
 
 
-def compute_sleep_analytics(raw_data: list) -> dict:
+def compute_sleep_analytics(raw_data) :
     """
     Compute sleep analytics from raw sensor data in SenML format (list of dicts).
-
-    Each sensor in raw_data should look like:
-        {"bn": "...", "e": [{"t": timestamp, "v": value}, ...]}
-
-    Returns a dictionary with sleep score, stage percentages, readings, etc.
     """
     if not raw_data:
         return {"error": "No sensor data available"}
