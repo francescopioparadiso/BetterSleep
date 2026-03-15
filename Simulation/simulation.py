@@ -5,11 +5,8 @@ import os
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-
-# Ensure sibling packages are importable when running from /Simulation
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 logging.basicConfig(
@@ -21,247 +18,13 @@ logger = logging.getLogger(__name__)
 
 try:
     import requests
-except ImportError:  # pragma: no cover - requests should be available in test env
+except ImportError:
     requests = None
 
-from device_connector.Simulate_Sensor import *  # noqa: F401,F403
+from device_connector.Simulate_Sensor import *
 from common.MQTT.MyMQTT import MyMQTT
 
-
-# ─────────────────────────────────────────────
-#  DATA MODELS
-# ─────────────────────────────────────────────
-
-@dataclass
-class SleepWindow:
-    label: str
-    sleep_start: datetime
-    sleep_end: datetime
-    sim_start: datetime
-    sim_minutes: int
-    sleep_minutes: int
-
-
-@dataclass
-class UserContext:
-    userid: str
-    houseid: str
-    bedroomid: str
-    night_time: str
-    morning_time: str
-
-
-# ─────────────────────────────────────────────
-#  CONFIG / DISCOVERY HELPERS
-# ─────────────────────────────────────────────
-
-def load_test_config(config_path: str = "conf.json") -> Dict:
-    with open(config_path, "r") as f:
-        return json.load(f)
-
-
-def _get_user_service_endpoint(catalog_url: str) -> Optional[str]:
-    if not requests:
-        logger.error("requests not available; cannot reach Catalog")
-        return None
-    try:
-        res = requests.get(f"{catalog_url}/getEndpointUserService", timeout=5)
-        if res.status_code == 200:
-            return res.json().get("endpoint")
-    except Exception as exc:  # pragma: no cover - network
-        logger.error(f"Error getting UserService endpoint from Catalog: {exc}")
-    return None
-
-
-def fetch_users_from_user_service(config: Dict) -> List[Dict[str, str]]:
-    """
-    Return [{userid, houseid, bedroomid}] for all active users.
-    Falls back to config['users'] if discovery fails.
-    """
-    catalog_url = config["catalog"]["url"]
-    us_endpoint = _get_user_service_endpoint(catalog_url)
-    if not (requests and us_endpoint):
-        logger.warning("Falling back to users from conf.json (user service unavailable)")
-        return config.get("users", [config["simulation"]])
-
-    try:
-        users_res = requests.get(f"{us_endpoint}/getAllUsers", timeout=5)
-        users_payload = users_res.json() if users_res.status_code == 200 else {}
-        user_list = users_payload.get("users", [])
-    except Exception as exc:  # pragma: no cover - network
-        logger.error(f"Error fetching users from UserService: {exc}")
-        return config.get("users", [config["simulation"]])
-
-    try:
-        active_res = requests.get(f"{us_endpoint}/getActiveRoomsWithUser", timeout=5)
-        active_payload = active_res.json() if active_res.status_code == 200 else {}
-        active_rooms = active_payload.get("active_rooms", {}) or {}
-    except Exception:
-        active_rooms = {}
-
-    discovered: List[Dict[str, str]] = []
-    for user in user_list:
-        uid = str(user.get("id") or user.get("userid") or "").strip()
-        if not uid:
-            continue
-
-        room_id = active_rooms.get(uid) or active_rooms.get(int(uid)) if isinstance(active_rooms, dict) else None
-        room_info: Optional[Dict] = None
-
-        try:
-            if room_id:
-                room_res = requests.get(f"{us_endpoint}/getRoomById?room_id={room_id}", timeout=5)
-                if room_res.status_code == 200:
-                    room_info = room_res.json()
-        except Exception:
-            room_info = None
-
-        if not room_info:
-            try:
-                active_res = requests.get(f"{us_endpoint}/getActiveRoom?user_id={uid}", timeout=5)
-                if active_res.status_code == 200:
-                    room_info = active_res.json().get("active_room") or active_res.json()
-            except Exception:
-                room_info = None
-
-        houseid = str(room_info.get("house_id")) if room_info and room_info.get("house_id") is not None else None
-        bedroomid = str(room_info.get("id")) if room_info and room_info.get("id") is not None else None
-
-        if houseid and bedroomid:
-            discovered.append({"userid": uid, "houseid": houseid, "bedroomid": bedroomid})
-        else:
-            logger.warning(f"User {uid} has no active room; skipping for simulation")
-
-    if not discovered:
-        logger.warning("No active users discovered; falling back to users from conf.json")
-        return config.get("users", [config["simulation"]])
-    return discovered
-
-
-def build_user_contexts(config: Dict) -> List[UserContext]:
-    users = fetch_users_from_user_service(config)
-    contexts: List[UserContext] = []
-    for user_info in users:
-        night, morning = get_user_sleep_times(config["catalog"]["url"], user_info["userid"])
-        contexts.append(UserContext(
-            userid=str(user_info["userid"]),
-            houseid=str(user_info["houseid"]),
-            bedroomid=str(user_info["bedroomid"]),
-            night_time=night,
-            morning_time=morning
-        ))
-    return contexts
-
-
-def default_night_bases() -> List[Tuple[str, datetime]]:
-    today = datetime.now().date()
-    yesterday = today - timedelta(days=1)
-    two_days_ago = today - timedelta(days=2)
-    return [
-        (f"{two_days_ago.strftime('%Y%m%d')}_to_{(two_days_ago + timedelta(days=1)).strftime('%Y%m%d')}", two_days_ago),
-        (f"{yesterday.strftime('%Y%m%d')}_to_{today.strftime('%Y%m%d')}", yesterday),
-    ]
-
-
-def build_sleep_window(night_str: str, morning_str: str, base_date, label: str) -> SleepWindow:
-    night_hr, night_min = map(int, night_str.split(":"))
-    morning_hr, morning_min = map(int, morning_str.split(":"))
-
-    sleep_start = datetime.combine(base_date, datetime.min.time()).replace(hour=night_hr, minute=night_min)
-    sleep_end = datetime.combine(base_date, datetime.min.time()).replace(hour=morning_hr, minute=morning_min)
-    if sleep_end <= sleep_start:
-        sleep_end += timedelta(days=1)
-
-    sim_start = sleep_start - timedelta(hours=1)
-    sleep_minutes = int((sleep_end - sleep_start).total_seconds() / 60)
-    sim_minutes = sleep_minutes + 120  # 1h before + 1h after
-
-    return SleepWindow(
-        label=label,
-        sleep_start=sleep_start,
-        sleep_end=sleep_end,
-        sim_start=sim_start,
-        sim_minutes=sim_minutes,
-        sleep_minutes=sleep_minutes,
-    )
-
-
-def build_sleep_windows(night_str: str, morning_str: str, bases: Optional[List[Tuple[str, datetime]]] = None) -> List[SleepWindow]:
-    bases = bases or default_night_bases()
-    return [build_sleep_window(night_str, morning_str, base_date, label) for label, base_date in bases]
-
-
-# ─────────────────────────────────────────────
-#  SLEEP STAGE SIMULATOR
-# ─────────────────────────────────────────────
-
-def get_sleep_stage(minute_of_night: int) -> str:
-    """
-    Returns the expected sleep stage at a given minute after lights out.
-    One full sleep cycle is ~90 minutes:
-      0–10   min : falling asleep (LIGHT)
-      10–30  min : DEEP sleep
-      30–50  min : back to LIGHT
-      50–80  min : REM
-      80–90  min : brief LIGHT before next cycle
-    Early cycles have more DEEP; later cycles have more REM.
-    """
-    if minute_of_night < 0:
-        return "AWAKE"
-
-    cycle_length = 90
-    cycle_number = minute_of_night // cycle_length
-    minute_in_cycle = minute_of_night % cycle_length
-
-    deep_end = max(10, 30 - cycle_number * 7)
-    light1_end = deep_end + 15
-    rem_end = light1_end + min(20 + cycle_number * 10, 40)
-
-    if minute_in_cycle < 10:
-        return "LIGHT"
-    if minute_in_cycle < deep_end:
-        return "DEEP"
-    if minute_in_cycle < light1_end:
-        return "LIGHT"
-    if minute_in_cycle < rem_end:
-        return "REM"
-    return "LIGHT"
-
-
-def get_hr_for_stage(stage: str, step: int, resting_hr: float = 58.0) -> float:
-    noise = math.sin(step * 0.3) * 1.5
-
-    if stage == "AWAKE":
-        return resting_hr + 16 + noise
-    if stage == "LIGHT":
-        return resting_hr + 6 + noise
-    if stage == "DEEP":
-        return resting_hr + 1 + abs(noise) * 0.5
-    if stage == "REM":
-        return resting_hr + 10 + math.sin(step * 0.7) * 3
-    return resting_hr
-
-
-def get_vibration_for_stage(stage: str, step: int) -> float:
-    if stage == "AWAKE":
-        base = 0.08 + 0.05 * abs(math.sin(step * 0.5))
-    elif stage == "LIGHT":
-        base = 0.004 + 0.003 * abs(math.sin(step * 0.4))
-    elif stage == "DEEP":
-        base = 0.001 + 0.001 * abs(math.sin(step * 0.1))
-    elif stage == "REM":
-        base = 0.003 + 0.003 * abs(math.sin(step * 0.9))
-    else:
-        base = 0.0
-    return round(base, 4)
-
-
-# ─────────────────────────────────────────────
-#  MQTT FEEDBACK MONITOR
-# ─────────────────────────────────────────────
-
-class MQTTFeedbackMonitor:
-    """Monitor MQTT feedback from actuators and sleep_cycle_manager."""
+class MQTTSubscriber:
 
     def __init__(self, broker, port, userid, houseid, bedroomid, initial_light=50):
         self.broker = broker
@@ -322,11 +85,211 @@ class MQTTFeedbackMonitor:
         }
 
 
-# ─────────────────────────────────────────────
-#  USER PREFERENCES
-# ─────────────────────────────────────────────
 
-def get_user_sleep_times(catalog_url: str, userid: str) -> Tuple[str, str]:
+class SleepWindow:
+    def __init__(self, label, sleep_start, sleep_end, sim_start, sim_minutes, sleep_minutes):
+        self.label = label
+        self.sleep_start = sleep_start
+        self.sleep_end = sleep_end
+        self.sim_start = sim_start
+        self.sim_minutes = sim_minutes
+        self.sleep_minutes = sleep_minutes
+
+
+class UserContext:
+    def __init__(self, userid, houseid, bedroomid, night_time, morning_time):
+        self.userid = userid
+        self.houseid = houseid
+        self.bedroomid = bedroomid
+        self.night_time = night_time
+        self.morning_time = morning_time
+
+
+def load_test_config(config_path="conf.json"):
+    with open(config_path, "r") as f:
+        return json.load(f)
+
+
+def _get_user_service_endpoint(catalog_url):
+    if not requests:
+        logger.error("requests not available; cannot reach Catalog")
+        return None
+    try:
+        res = requests.get(f"{catalog_url}/getEndpointUserService", timeout=5)
+        if res.status_code == 200:
+            return res.json().get("endpoint")
+    except Exception as exc:
+        logger.error(f"Error getting UserService endpoint from Catalog: {exc}")
+    return None
+
+
+def fetch_users_from_user_service(config):
+    catalog_url = config["catalog"]["url"]
+    us_endpoint = _get_user_service_endpoint(catalog_url)
+    if not (requests and us_endpoint):
+        logger.warning("Falling back to users from conf.json (user service unavailable)")
+        return config.get("users", [config["simulation"]])
+
+    try:
+        users_res = requests.get(f"{us_endpoint}/getAllUsers", timeout=5)
+        users_payload = users_res.json() if users_res.status_code == 200 else {}
+        user_list = users_payload.get("users", [])
+    except Exception as exc:
+        logger.error(f"Error fetching users from UserService: {exc}")
+        return config.get("users", [config["simulation"]])
+
+    try:
+        active_res = requests.get(f"{us_endpoint}/getActiveRoomsWithUser", timeout=5)
+        active_payload = active_res.json() if active_res.status_code == 200 else {}
+        active_rooms = active_payload.get("active_rooms", {}) or {}
+    except Exception:
+        active_rooms = {}
+
+    discovered = []
+    for user in user_list:
+        uid = str(user.get("id") or user.get("userid") or "").strip()
+        if not uid:
+            continue
+
+        room_id = active_rooms.get(uid) or active_rooms.get(int(uid)) if isinstance(active_rooms, dict) else None
+        room_info = None
+
+        try:
+            if room_id:
+                room_res = requests.get(f"{us_endpoint}/getRoomById?room_id={room_id}", timeout=5)
+                if room_res.status_code == 200:
+                    room_info = room_res.json()
+        except Exception:
+            room_info = None
+
+        if not room_info:
+            try:
+                active_res = requests.get(f"{us_endpoint}/getActiveRoom?user_id={uid}", timeout=5)
+                if active_res.status_code == 200:
+                    room_info = active_res.json().get("active_room") or active_res.json()
+            except Exception:
+                room_info = None
+
+        houseid = str(room_info.get("house_id")) if room_info and room_info.get("house_id") is not None else None
+        bedroomid = str(room_info.get("id")) if room_info and room_info.get("id") is not None else None
+
+        if houseid and bedroomid:
+            discovered.append({"userid": uid, "houseid": houseid, "bedroomid": bedroomid})
+        else:
+            logger.warning(f"User {uid} has no active room; skipping for simulation")
+
+    if not discovered:
+        logger.warning("No active users discovered; falling back to users from conf.json")
+        return config.get("users", [config["simulation"]])
+    return discovered
+
+
+def build_user_contexts(config):
+    users = fetch_users_from_user_service(config)
+    contexts = []
+    for user_info in users:
+        night, morning = get_user_sleep_times(config["catalog"]["url"], user_info["userid"])
+        contexts.append(UserContext(
+            userid=str(user_info["userid"]),
+            houseid=str(user_info["houseid"]),
+            bedroomid=str(user_info["bedroomid"]),
+            night_time=night,
+            morning_time=morning
+        ))
+    return contexts
+
+
+def default_night_bases():
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    two_days_ago = today - timedelta(days=2)
+    return [
+        (f"{two_days_ago.strftime('%Y%m%d')}_to_{(two_days_ago + timedelta(days=1)).strftime('%Y%m%d')}", two_days_ago),
+        (f"{yesterday.strftime('%Y%m%d')}_to_{today.strftime('%Y%m%d')}", yesterday),
+    ]
+
+
+def build_sleep_window(night_str, morning_str, base_date, label):
+    night_hr, night_min = map(int, night_str.split(":"))
+    morning_hr, morning_min = map(int, morning_str.split(":"))
+
+    sleep_start = datetime.combine(base_date, datetime.min.time()).replace(hour=night_hr, minute=night_min)
+    sleep_end = datetime.combine(base_date, datetime.min.time()).replace(hour=morning_hr, minute=morning_min)
+    if sleep_end <= sleep_start:
+        sleep_end += timedelta(days=1)
+
+    sim_start = sleep_start - timedelta(hours=1)
+    sleep_minutes = int((sleep_end - sleep_start).total_seconds() / 60)
+    sim_minutes = sleep_minutes + 120
+
+    return SleepWindow(
+        label=label,
+        sleep_start=sleep_start,
+        sleep_end=sleep_end,
+        sim_start=sim_start,
+        sim_minutes=sim_minutes,
+        sleep_minutes=sleep_minutes,
+    )
+
+
+def build_sleep_windows(night_str, morning_str, bases=None):
+    bases = bases or default_night_bases()
+    return [build_sleep_window(night_str, morning_str, base_date, label) for label, base_date in bases]
+
+
+def get_sleep_stage(minute_of_night):
+    if minute_of_night < 0:
+        return "AWAKE"
+
+    cycle_length = 90
+    cycle_number = minute_of_night // cycle_length
+    minute_in_cycle = minute_of_night % cycle_length
+
+    deep_end = max(10, 30 - cycle_number * 7)
+    light1_end = deep_end + 15
+    rem_end = light1_end + min(20 + cycle_number * 10, 40)
+
+    if minute_in_cycle < 10:
+        return "LIGHT"
+    if minute_in_cycle < deep_end:
+        return "DEEP"
+    if minute_in_cycle < light1_end:
+        return "LIGHT"
+    if minute_in_cycle < rem_end:
+        return "REM"
+    return "LIGHT"
+
+
+def get_hr_for_stage(stage, step, resting_hr=58.0):
+    noise = math.sin(step * 0.3) * 1.5
+
+    if stage == "AWAKE":
+        return resting_hr + 16 + noise
+    if stage == "LIGHT":
+        return resting_hr + 4 + noise
+    if stage == "DEEP":
+        return resting_hr + 1 + abs(noise) * 0.5
+    if stage == "REM":
+        return resting_hr + 13 + math.sin(step * 0.7) * 3
+    return resting_hr
+
+
+def get_vibration_for_stage(stage, step):
+    if stage == "AWAKE":
+        base = 0.08 + 0.05 * abs(math.sin(step * 0.5))
+    elif stage == "LIGHT":
+        base = 0.004 + 0.003 * abs(math.sin(step * 0.4))
+    elif stage == "DEEP":
+        base = 0.001 + 0.001 * abs(math.sin(step * 0.1))
+    elif stage == "REM":
+        base = 0.003 + 0.003 * abs(math.sin(step * 0.9))
+    else:
+        base = 0.0
+    return round(base, 4)
+
+
+
+def get_user_sleep_times(catalog_url, userid):
     default_night = "22:00"
     default_morning = "07:00"
 
@@ -349,16 +312,12 @@ def get_user_sleep_times(catalog_url: str, userid: str) -> Tuple[str, str]:
                     if len(morning) > 5:
                         morning = morning[:5]
                     return night, morning
-    except Exception as e:  # pragma: no cover - network
+    except Exception as e:
         logger.error(f"Error fetching user preferences for user {userid}: {e}")
     return default_night, default_morning
 
 
-# ─────────────────────────────────────────────
-#  SIMULATION CORE
-# ─────────────────────────────────────────────
-
-def simulate_single_user_night(user: UserContext, config: Dict, window: SleepWindow, duration_seconds: int, stop_event: threading.Event):
+def simulate_single_user_night(user, config, window, duration_seconds, stop_event):
     catalog_url = config["catalog"]["url"]
     broker_ip = config["mqtt"]["broker"]
     port = config["mqtt"]["port"]
@@ -443,7 +402,7 @@ def simulate_single_user_night(user: UserContext, config: Dict, window: SleepWin
     light_actuator.value = 50
     light_actuator.publish_data(light_actuator.value, unit="%", name="LightLevel")
 
-    mqtt_monitor = MQTTFeedbackMonitor(broker_ip, port, user.userid, user.houseid, user.bedroomid, initial_light=50)
+    mqtt_monitor = MQTTSubscriber(broker_ip, port, user.userid, user.houseid, user.bedroomid, initial_light=50)
     mqtt_monitor.start()
 
     try:
@@ -545,10 +504,9 @@ def simulate_single_user_night(user: UserContext, config: Dict, window: SleepWin
             mqtt_monitor.stop()
         except Exception:
             logger.exception("Error stopping MQTT monitor")
-        # Lifecycle events are emitted by sleep_cycle_manager; no direct publisher in test.
 
 
-def run_multi_user_simulation(duration_seconds: int = 60, night_bases: Optional[List[Tuple[str, datetime]]] = None):
+def run_simulation(duration_seconds=60, night_bases=None):
     config = load_test_config()
     user_contexts = build_user_contexts(config)
     bases = night_bases or default_night_bases()
@@ -557,12 +515,12 @@ def run_multi_user_simulation(duration_seconds: int = 60, night_bases: Optional[
         logger.warning("No users to simulate. Exiting.")
         return
 
-    print(f"--- Starting Multi-User Simulation for {len(user_contexts)} users across {len(bases)} nights ---")
+    print(f"--- Starting Simulation for {len(user_contexts)} users across {len(bases)} nights ---")
 
     stop_event = threading.Event()
     threads = []
 
-    def _run_user(user_ctx: UserContext):
+    def _run_user(user_ctx):
         windows = build_sleep_windows(user_ctx.night_time, user_ctx.morning_time, bases)
         for window in windows:
             if stop_event.is_set():
@@ -586,4 +544,4 @@ def run_multi_user_simulation(duration_seconds: int = 60, night_bases: Optional[
 
 
 if __name__ == "__main__":
-    run_multi_user_simulation(duration_seconds=60)
+    run_simulation(duration_seconds=60)

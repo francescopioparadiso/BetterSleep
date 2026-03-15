@@ -7,15 +7,13 @@ import threading
 import cherrypy
 import requests
 import re
+from datetime import datetime
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
-from common.MQTT.MyMQTT import MyMQTT
-from datetime import datetime
-
-from common.common import mqtt_to_regex, json_error_page
+from common.common import mqtt_to_regex, json_error_page, init_mqtt_helper
 from PhaseManager import PhaseManager
-
 
 # ---------------------------------------------------------------------------
 # Pure helpers
@@ -111,9 +109,6 @@ class SleepCycleManager:
         self.USER_CACHE_TTL_SECONDS    = int(conf.get('userCacheTTLSec',     self._DEFAULT_USER_CACHE_TTL_SECONDS))
         self.EVICTION_INTERVAL_SECONDS = int(conf.get('evictionIntervalSec', self._DEFAULT_EVICTION_INTERVAL_SECONDS))
 
-        # All three dicts are owned by this lock. Use RLock because some
-        # internal helpers call each other (e.g. _get_or_fetch_user ->
-        # _fetch_and_cache_room_preference -> already holding the lock).
         self._lock = threading.RLock()
 
         self.active_users_cache: dict = {}
@@ -131,9 +126,6 @@ class SleepCycleManager:
         self.get_active_room_for_user()
         self._start_eviction_loop()
 
-    # ------------------------------------------------------------------
-    # Startup helpers
-    # ------------------------------------------------------------------
 
     def _get_endpoint_user_service(self):
         data, status, error = self.catalog_client.get("getEndpointUserService")
@@ -162,10 +154,6 @@ class SleepCycleManager:
         with self._lock:
             self.room_to_user_map = mapping
         self.logger.info(f"Association map synchronised: {mapping}")
-
-    # ------------------------------------------------------------------
-    # Cache eviction
-    # ------------------------------------------------------------------
 
     def _start_eviction_loop(self):
         threading.Thread(
@@ -199,17 +187,10 @@ class SleepCycleManager:
         if to_evict:
             self.logger.info(f"[EVICTION] Evicted {len(to_evict)} user(s): {to_evict}")
 
-    # ------------------------------------------------------------------
-    # User preference cache
-    # ------------------------------------------------------------------
 
     def _fetch_and_cache_room_preference(self, userid):
         """
         Fetch user preferences from the user service and store them in cache.
-        Returns the cache entry on success, None on any failure.
-
-        Must be called with self._lock held (or not yet shared), because it
-        reads and writes active_users_cache / room_to_user_map atomically.
         """
         try:
             res = requests.get(
@@ -278,21 +259,13 @@ class SleepCycleManager:
         Must be called with self._lock held."""
         return self.active_users_cache.get(userid) or self._fetch_and_cache_room_preference(userid)
 
-    # ------------------------------------------------------------------
-    # MQTT
-    # ------------------------------------------------------------------
 
     def _init_mqtt_client(self):
         try:
-            self.mqtt_client = MyMQTT(
-                self.MQTT_info['clientID'],
-                self.MQTT_info['broker'],
-                self.MQTT_info['port'],
-                self,
-            )
-            self.mqtt_client.start()
-            for topic in self.topic_subscribe_raw:
-                self.mqtt_client.mySubscribe(topic)
+            self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, self.logger)
+            if self.mqtt_client is None:
+                self.catalog_client.unregister()
+                sys.exit(1)
             self.logger.info(f"MQTT client initialised and subscribed to {self.topic_subscribe_raw}")
         except Exception as e:
             self.logger.error(f"Error initialising MQTT client: {e}")
@@ -343,7 +316,6 @@ class SleepCycleManager:
         room_id     = parts[3]
         sensor_type = parts[5]
 
-        # --- lock: look up user and grab a stable reference to user_data ---
         with self._lock:
             userid = self.room_to_user_map.get(room_id)
             if userid is None:
@@ -446,9 +418,6 @@ class SleepCycleManager:
     def _get_actuators_in_room(self, room_id):
         """
         Return actuator types for room_id, fetching from the catalog if not cached.
-        Must be called with self._lock held (reads/writes _actuator_cache).
-        The outbound HTTP call temporarily releases no lock — callers should be
-        aware the call can block for a network round-trip.
         """
         if room_id in self._actuator_cache:
             return self._actuator_cache[room_id]

@@ -8,8 +8,8 @@ import random
 # Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from common.MQTT.MyMQTT import MyMQTT
 from common.catalog_client import CatalogClient
+from common.common import init_mqtt_helper
 
 logger = logging.getLogger(__name__)
 
@@ -84,18 +84,14 @@ class BaseIoTComponent:
 
     def init_mqtt_client(self):
         try:
-            # Ensure clientID exists
-            client_id = self.MQTT_info.get("clientID") or f"{self.category}_{self.comp_id}_{random.randint(0, 1000)}"
-            broker = self.MQTT_info["broker"]
-            port = self.MQTT_info["port"]
+            # Fallback generator for clientID
+            def generate_client_id():
+                return f"{self.category}_{self.comp_id}_{random.randint(0, 1000)}"
 
-            self.mqtt_client = MyMQTT(client_id, broker, port, self)
-            self.mqtt_client.start()
+            self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, logger, clientid_fallback=generate_client_id)
+            if self.mqtt_client is None:
+                sys.exit(1)
 
-            # Subscribe to all resolved topics
-            for topic in self.topic_subscribe_list:
-                self.mqtt_client.mySubscribe(topic)
-                logger.info(f"[{self.comp_id}] Subscribed to: {topic}")
 
         except Exception as e:
             logger.error(f"MQTT init failed: {e}")

@@ -4,15 +4,14 @@ import os
 # This tells Python to add the parent directory to its searchable paths
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from common.MQTT.MyMQTT import MyMQTT
-from common.common import _load_json_body, json_error_page
+from common.common import _load_json_body, json_error_page, init_mqtt_helper
 
 import json
 import logging
 from datetime import datetime
 import cherrypy
 from postgres_db import PostgresDB
-from common import catalog_client  
+from common import catalog_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -42,12 +41,11 @@ class UserService:
             raise Exception
 
     def init_mqtt_client(self):
-        client_id = self.MQTT_info['client_id']
-        broker = self.MQTT_info['broker']
-        port = self.MQTT_info['port']
         try:
-            self.mqtt_client_publish = MyMQTT(client_id, broker, port, self)
-            self.startClient()
+            self.mqtt_client_publish = init_mqtt_helper(self, self.MQTT_info, logger)
+            if self.mqtt_client_publish is None:
+                self.catalog.unregister()
+                sys.exit(1)
         except Exception as e:
             logger.error(f"Error initializing MQTT client: {e}")
             self.catalog.unregister()

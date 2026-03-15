@@ -1,4 +1,5 @@
 import json
+import logging
 
 import cherrypy
 
@@ -31,3 +32,59 @@ def _load_json_body():
         return json.loads(body)
     except Exception:
         raise cherrypy.HTTPError(400, "Invalid JSON format")
+
+
+def init_mqtt_helper(service_instance, mqtt_info, logger=None, clientid_fallback=None):
+    """
+    Initialize MQTT client for any service.
+
+    Args:
+        service_instance: The service object (must have mqtt_client, MQTT_info, topic_subscribe_raw)
+        mqtt_info: Dict with 'clientID', 'broker', 'port'
+        logger: Logger instance (optional, defaults to logging.getLogger)
+        clientid_fallback: Fallback function to generate clientID if not in mqtt_info
+
+    Returns:
+        The initialized MyMQTT client, or None if initialization failed
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    try:
+        from .MQTT.MyMQTT import MyMQTT
+
+        # Get clientID with optional fallback
+        client_id = mqtt_info.get('clientID')
+        if not client_id and clientid_fallback:
+            client_id = clientid_fallback()
+
+        broker = mqtt_info.get('broker')
+        port = mqtt_info.get('port')
+
+        if not all([client_id, broker, port]):
+            logger.error("Missing MQTT configuration: clientID, broker, or port")
+            return None
+
+        mqtt_client = MyMQTT(client_id, broker, port, service_instance)
+        mqtt_client.start()
+
+        # Subscribe to topics if available
+        if hasattr(service_instance, 'topic_subscribe_raw'):
+            for topic in service_instance.topic_subscribe_raw:
+                mqtt_client.mySubscribe(topic)
+            logger.info(f"MQTT client initialized and subscribed to {service_instance.topic_subscribe_raw}")
+        elif hasattr(service_instance, 'topic_subscribe_list'):
+            for topic in service_instance.topic_subscribe_list:
+                mqtt_client.mySubscribe(topic)
+            logger.info(f"MQTT client initialized and subscribed to {service_instance.topic_subscribe_list}")
+        else:
+            logger.info(f"MQTT client initialized")
+
+        return mqtt_client
+
+    except Exception as e:
+        logger.error(f"Error initializing MQTT client: {e}")
+        return None
+
+
+

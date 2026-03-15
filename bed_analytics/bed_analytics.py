@@ -5,17 +5,14 @@ import logging
 from datetime import datetime
 import cherrypy
 import os
-import sys
 import re
-from collections import defaultdict
 import json
 import requests
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
-from common.MQTT.MyMQTT import MyMQTT
-from common.common import json_error_page, mqtt_to_regex
+from common.common import json_error_page, mqtt_to_regex, init_mqtt_helper
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,7 +55,7 @@ def get_sleep_state(presence, vibration, heart_rate, rhr, rem_threshold):
         return "AWAKE"
     if abs(vibration) > VIBRATION_LIMIT:
         return "AWAKE"
-    if heart_rate <= rhr + 5:
+    if heart_rate <= rhr + 3:
         return "DEEP"
     if heart_rate >= rem_threshold:
         return "REM"
@@ -109,7 +106,7 @@ def elaborate_sleep_analytics(raw_data) :
     rhr = min(hr_values)
     hr_sorted = sorted(hr_values)
     p75_hr = hr_sorted[int(len(hr_sorted) * 0.75)]
-    rem_threshold = rhr + (p75_hr - rhr) * 0.6
+    rem_threshold = rhr + (p75_hr - rhr) * 0.75
     def closest_value(data_list, target_time, default):
         if not data_list:
             return default
@@ -228,15 +225,11 @@ class BedAnalytics:
             return None
 
     def init_mqtt_client(self):
-        client_id = self.MQTT_info['clientID']
-        broker    = self.MQTT_info['broker']
-        port      = self.MQTT_info['port']
         try:
-            self.mqtt_client = MyMQTT(client_id, broker, port, self)
-            self.startClient()
-            for topic in self.topic_subscribe_raw:
-                self.mqtt_client.mySubscribe(topic)
-            logger.info(f"MQTT client initialized and subscribed to {self.topic_subscribe_raw}")
+            self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, logger)
+            if self.mqtt_client is None:
+                self.catalog_client.unregister()
+                sys.exit(1)
         except Exception as e:
             logger.error(f"Error initializing MQTT client: {e}")
             self.catalog_client.unregister()

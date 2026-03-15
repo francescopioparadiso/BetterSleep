@@ -9,8 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import cherrypy
 
 from common import catalog_client
-from common.MQTT.MyMQTT import MyMQTT
-from common.common import json_error_page, mqtt_to_regex
+from common.common import json_error_page, mqtt_to_regex, init_mqtt_helper
 from mongo_db import MongoDB
 
 # Configure logging
@@ -77,15 +76,11 @@ class TimeSeries:
 
 
     def init_mqtt_client(self):
-        client_id = self.MQTT_info['clientID']
-        broker = self.MQTT_info['broker']
-        port = self.MQTT_info['port']
         try:
-            self.mqtt_client = MyMQTT(client_id, broker, port, self)
-            self.startClient()
-            for topic in self.topic_subscribe_raw:
-                self.mqtt_client.mySubscribe(topic)
-            self.logger.info(f"MQTT client initialized and subscribed to {self.topic_subscribe_raw}")
+            self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, self.logger)
+            if self.mqtt_client is None:
+                self.catalog.unregister()
+                sys.exit(1)
         except Exception as e:
             self.logger.error(f"Error initializing MQTT client: {e}")
             self.catalog.unregister()
