@@ -31,7 +31,7 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
     desired_temperature = float(desired_temperature)
     tol                 = max(0.0, float(tolerance))
 
-    too_hot = temp_value > desired_temperature + tol
+    too_hot  = temp_value > desired_temperature + tol
     too_cold = temp_value < desired_temperature - tol
 
     if too_hot:
@@ -39,13 +39,13 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
             return 1, "fan"
         if "heater" in room_actuators:
             return 0, "heater"
-        if "fan" in room_actuators:       # fallback even if not preferred
+        if "fan" in room_actuators:
             return 1, "fan"
 
     if too_cold:
         if "heater" in room_actuators:
             return 1, "heater"
-        if "fan" in room_actuators:       # turn fan off if it was running
+        if "fan" in room_actuators:
             return 0, "fan"
 
     return None, None
@@ -62,6 +62,16 @@ def _parse_preference_topic(topic):
     return None, None
 
 
+def _sensor_ts_int(lv: dict):
+    raw = lv.get("sensor_ts")
+    if raw is None:
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Main service
 # ---------------------------------------------------------------------------
@@ -69,11 +79,10 @@ def _parse_preference_topic(topic):
 class SleepCycleManager:
     exposed = True
 
-    # Defaults — overridden by conf.json keys below
-    _DEFAULT_SLEEP_DETECTION_SECONDS   = 1800   # 30 min in bed  -> mark sleeping
-    _DEFAULT_WAKE_DETECTION_SECONDS    = 300    # 5 min out of bed -> finish sleep
-    _DEFAULT_USER_CACHE_TTL_SECONDS    = 7200   # 2 h idle        -> evict from cache
-    _DEFAULT_EVICTION_INTERVAL_SECONDS = 300    # run eviction every 5 min
+    _DEFAULT_SLEEP_DETECTION_SECONDS   = 1800
+    _DEFAULT_WAKE_DETECTION_SECONDS    = 300
+    _DEFAULT_USER_CACHE_TTL_SECONDS    = 7200
+    _DEFAULT_EVICTION_INTERVAL_SECONDS = 300
 
     def __init__(self, conf, logger=None):
         self.mqtt_client = None
@@ -102,11 +111,13 @@ class SleepCycleManager:
         self.USER_CACHE_TTL_SECONDS    = int(conf.get('userCacheTTLSec',     self._DEFAULT_USER_CACHE_TTL_SECONDS))
         self.EVICTION_INTERVAL_SECONDS = int(conf.get('evictionIntervalSec', self._DEFAULT_EVICTION_INTERVAL_SECONDS))
 
-        # userid  -> user data dict
+        # All three dicts are owned by this lock. Use RLock because some
+        # internal helpers call each other (e.g. _get_or_fetch_user ->
+        # _fetch_and_cache_room_preference -> already holding the lock).
+        self._lock = threading.RLock()
+
         self.active_users_cache: dict = {}
-        # room_id -> userid  (derived index, kept in sync)
         self.room_to_user_map:   dict = {}
-        # room_id -> list[str] of actuator types  (lazy, cleared on user eviction)
         self._actuator_cache:    dict = {}
 
         self.phase_manager = PhaseManager(
@@ -140,14 +151,17 @@ class SleepCycleManager:
             if res.status_code != 200:
                 self.logger.error(f"Failed to sync associations: {res.status_code}")
                 return
-            # user service returns {user_id: room_id}, we need {room_id: user_id}
-            self.room_to_user_map = {
+            mapping = {
                 str(room_id): user_id
                 for user_id, room_id in res.json().get("active_rooms", {}).items()
             }
-            self.logger.info(f"Association map synchronised: {self.room_to_user_map}")
         except Exception as e:
             self.logger.error(f"Exception during association sync: {e}")
+            return
+
+        with self._lock:
+            self.room_to_user_map = mapping
+        self.logger.info(f"Association map synchronised: {mapping}")
 
     # ------------------------------------------------------------------
     # Cache eviction
@@ -171,15 +185,17 @@ class SleepCycleManager:
                 self.logger.error(f"[EVICTION] Unexpected error: {e}")
 
     def _evict_stale_users(self):
-        now      = time.monotonic()
-        to_evict = [
-            uid for uid, data in self.active_users_cache.items()
-            if (now - data.get("_last_seen_monotonic", 0)) > self.USER_CACHE_TTL_SECONDS
-        ]
-        for uid in to_evict:
-            room_id = self.active_users_cache.pop(uid).get("active_room_id")
-            self.room_to_user_map.pop(room_id, None)
-            self._actuator_cache.pop(room_id, None)
+        now = time.monotonic()
+        with self._lock:
+            to_evict = [
+                uid for uid, data in self.active_users_cache.items()
+                if (now - data.get("_last_seen_monotonic", 0)) > self.USER_CACHE_TTL_SECONDS
+            ]
+            for uid in to_evict:
+                room_id = self.active_users_cache.pop(uid).get("active_room_id")
+                self.room_to_user_map.pop(room_id, None)
+                self._actuator_cache.pop(room_id, None)
+
         if to_evict:
             self.logger.info(f"[EVICTION] Evicted {len(to_evict)} user(s): {to_evict}")
 
@@ -191,6 +207,9 @@ class SleepCycleManager:
         """
         Fetch user preferences from the user service and store them in cache.
         Returns the cache entry on success, None on any failure.
+
+        Must be called with self._lock held (or not yet shared), because it
+        reads and writes active_users_cache / room_to_user_map atomically.
         """
         try:
             res = requests.get(
@@ -206,7 +225,6 @@ class SleepCycleManager:
             return None
 
         pref = res.json().get("preferences", {})
-        # Backward compatibility with nested response shape
         pref = pref.get("user_preferences", pref)
 
         r_id     = pref.get("room_id")
@@ -214,7 +232,6 @@ class SleepCycleManager:
         prev_lv  = previous.get("live_values", {})
         prev_lt  = previous.get("live_targets", {})
 
-        # If the user moved rooms, clean up the old mapping and actuator cache
         old_room = previous.get("active_room_id")
         if old_room and old_room != r_id:
             if self.room_to_user_map.get(old_room) == userid:
@@ -249,7 +266,6 @@ class SleepCycleManager:
                 "last_left_bed":    prev_lv.get("last_left_bed"),
                 "sensor_ts":        prev_lv.get("sensor_ts"),
             },
-            # Initialise to now so a freshly-fetched entry is not immediately evicted
             "_last_seen_monotonic": previous.get("_last_seen_monotonic", time.monotonic()),
         }
 
@@ -258,7 +274,8 @@ class SleepCycleManager:
         return entry
 
     def _get_or_fetch_user(self, userid):
-        """Return cached user data, fetching from user service if missing."""
+        """Return cached user data, fetching from user service if missing.
+        Must be called with self._lock held."""
         return self.active_users_cache.get(userid) or self._fetch_and_cache_room_preference(userid)
 
     # ------------------------------------------------------------------
@@ -282,7 +299,6 @@ class SleepCycleManager:
             self.catalog_client.unregister()
             sys.exit(1)
 
-    # Keep original names so PhaseManager can call them
     def startClient(self):
         self.mqtt_client.start()
 
@@ -309,20 +325,15 @@ class SleepCycleManager:
 
             if index == 0:
                 self._handle_sensor_topic(topic, message_received)
-                return
-
-            if index == 1:
+            elif index == 1:
                 self._handle_actuator_topic(topic, message_received)
-                return
-
-            if index == 2:
+            elif index == 2:
                 self._handle_preference_topic(topic, message_received)
-                return
+            return
 
         self.logger.warning(f"Message on unrecognised topic: {topic}")
 
     def _handle_sensor_topic(self, topic, msg):
-        # House/{houseid}/Bedroom/{roomid}/sensor/{sensor_type}/{sensorid}/data
         parts = topic.split("/")
         if len(parts) < 8:
             self.logger.warning(f"Invalid sensor topic format: {topic}")
@@ -332,24 +343,34 @@ class SleepCycleManager:
         room_id     = parts[3]
         sensor_type = parts[5]
 
-        userid = self.room_to_user_map.get(room_id)
-        if userid is None:
-            self.logger.warning(
-                f"[SENSOR SKIPPED] room_id={room_id!r} not in room_to_user_map "
-                f"(keys: {list(self.room_to_user_map.keys())})"
-            )
-            return
+        # --- lock: look up user and grab a stable reference to user_data ---
+        with self._lock:
+            userid = self.room_to_user_map.get(room_id)
+            if userid is None:
+                self.logger.warning(
+                    f"[SENSOR SKIPPED] room_id={room_id!r} not in room_to_user_map "
+                    f"(keys: {list(self.room_to_user_map.keys())})"
+                )
+                return
+            user_data = self._get_or_fetch_user(userid)
+            if not user_data:
+                return
+            user_data["_last_seen_monotonic"] = time.monotonic()
 
-        user_data = self._get_or_fetch_user(userid)
-        if not user_data:
-            return
+            ts = msg['e'][0].get('t') if msg.get('e') else None
+            if ts is not None:
+                user_data['live_values']['sensor_ts'] = ts
+            else:
+                self.logger.warning(f"[PHASE SYNC SKIPPED] no timestamp in payload for user={userid}")
 
-        user_data["_last_seen_monotonic"] = time.monotonic()
+            # snapshot what we need before releasing the lock
+            phase       = user_data['live_values'].get('phase')
+            live_tgt    = user_data['live_targets']
+            config      = user_data['config']
+            actuators   = self._get_actuators_in_room(room_id)   # also needs lock, RLock is fine
 
-        # Extract and store timestamp; sync PhaseManager clock
-        ts = msg['e'][0].get('t') if msg.get('e') else None
+        # --- phase sync is lock-free (PhaseManager has its own state) ---
         if ts is not None:
-            user_data['live_values']['sensor_ts'] = ts
             try:
                 self.logger.info(
                     f"[PHASE SYNC] user={userid} sensor_ts={ts} "
@@ -358,52 +379,48 @@ class SleepCycleManager:
                 self.phase_manager.sync_from_sensor_time(float(ts), userid)
             except Exception as e:
                 self.logger.error(f"[PHASE SYNC ERROR] {e}")
-        else:
-            self.logger.warning(f"[PHASE SYNC SKIPPED] no timestamp in payload for user={userid}")
 
         if sensor_type == "ambient_temp":
-            phase        = user_data['live_values'].get('phase')
-            desired_temp = user_data['live_targets']['temperature'] or (
-                user_data['config']['temperature_night']
-                if phase == "SLEEP"
-                else user_data['config']['temperature_morning']
+            desired_temp = live_tgt.get('temperature') or (
+                config['temperature_night'] if phase == "SLEEP"
+                else config['temperature_morning']
             )
-            self._handle_temperature(msg, self._get_actuators_in_room(room_id),
-                                     desired_temp, house_id, room_id)
+            self._handle_temperature(msg, actuators, desired_temp, house_id, room_id)
 
         elif sensor_type == "presence":
             self._handle_presence(msg, userid, house_id, room_id)
 
         elif sensor_type == "light":
-            try:
-                user_data['live_values']['light'] = float(msg['e'][0]['v'])
-            except Exception:
-                self.logger.warning(f"Invalid light payload for user {userid}: {msg}")
+            with self._lock:
+                user_data = self.active_users_cache.get(userid)
+                if user_data:
+                    try:
+                        user_data['live_values']['light'] = float(msg['e'][0]['v'])
+                    except Exception:
+                        self.logger.warning(f"Invalid light payload for user {userid}: {msg}")
 
     def _handle_actuator_topic(self, topic, msg):
-        # House/{houseid}/Bedroom/{roomid}/actuator/{device_type}/data
         parts = topic.split("/")
         if len(parts) < 7:
             self.logger.warning(f"Invalid actuator topic format: {topic}")
             return
 
         room_id     = parts[3]
-        device_type = parts[5]   # light | heater | fan
+        device_type = parts[5]
 
-        userid = self.room_to_user_map.get(room_id)
-        if not userid:
-            return
+        with self._lock:
+            userid = self.room_to_user_map.get(room_id)
+            if not userid:
+                return
+            user_data = self._get_or_fetch_user(userid)
+            if not user_data or not msg.get('e'):
+                return
 
-        user_data = self._get_or_fetch_user(userid)
-        if not user_data or not msg.get('e'):
-            return
-
-        value = msg['e'][0].get('v')
-        key_map = {"light": "light_actuator", "heater": "heater_state", "fan": "fan_state"}
-        if device_type in key_map:
-            user_data['live_values'][key_map[device_type]] = value
-            self.logger.info(f"Actuator {device_type} state={value} (user={userid}, room={room_id})")
-
+            value = msg['e'][0].get('v')
+            key_map = {"light": "light_actuator", "heater": "heater_state", "fan": "fan_state"}
+            if device_type in key_map:
+                user_data['live_values'][key_map[device_type]] = value
+                self.logger.info(f"Actuator {device_type} state={value} (user={userid}, room={room_id})")
 
     def _handle_preference_topic(self, topic, msg):
         preference_kind, entity_id = _parse_preference_topic(topic)
@@ -417,24 +434,27 @@ class SleepCycleManager:
         if not keys:
             return
 
-        user_cache = self.active_users_cache.get(userid)
-        if not user_cache:
-            self.logger.warning(f"User {userid} not in cache; preference update ignored")
-            return
-
-        for k in keys:
-            user_cache[k] = msg[k]
-            self.logger.info(f"Updated {k} for user {userid}: {msg[k]}")
-
+        with self._lock:
+            user_cache = self.active_users_cache.get(userid)
+            if not user_cache:
+                self.logger.warning(f"User {userid} not in cache; preference update ignored")
+                return
+            for k in keys:
+                user_cache[k] = msg[k]
+                self.logger.info(f"Updated {k} for user {userid}: {msg[k]}")
 
     def _get_actuators_in_room(self, room_id):
         """
-        Return the list of actuator types for room_id.
-        Cached after the first successful call; cleared automatically on eviction.
+        Return actuator types for room_id, fetching from the catalog if not cached.
+        Must be called with self._lock held (reads/writes _actuator_cache).
+        The outbound HTTP call temporarily releases no lock — callers should be
+        aware the call can block for a network round-trip.
         """
         if room_id in self._actuator_cache:
             return self._actuator_cache[room_id]
 
+        # HTTP happens while lock is held; acceptable here because the lock is
+        # only contended by MQTT callbacks, not by time-sensitive loops.
         try:
             res = requests.get(f"{self.catalog_url}/getActuatorByRoom",
                                params={"room_id": room_id})
@@ -459,17 +479,16 @@ class SleepCycleManager:
             self.logger.error(f"Error decoding actuator response for room {room_id}: {e}")
             return []
 
-
     def _handle_temperature(self, msg, room_actuators, desired_temperature, houseid, bedroomid):
         entry = msg['e'][0]
         if entry.get('t') is None:
             self.logger.warning(f"[TEMP] Missing timestamp in payload for room {bedroomid}, skipping")
             return
+
         temp_value  = float(entry['v'])
         sensor_ts   = int(float(entry['t']))
-        desired_temperature = float(desired_temperature)
-        tol                 = max(0.0, self.temperature_tolerance)
-        base_topic          = self.topic_publish[0]
+        tol         = max(0.0, self.temperature_tolerance)
+        base_topic  = self.topic_publish[0]
 
         def _send(device, action):
             self.publish(
@@ -477,8 +496,7 @@ class SleepCycleManager:
                 command_topic=base_topic.format(houseID=houseid, bedroomid=bedroomid, device=device),
             )
 
-        # In deadband: turn both HVAC devices off to avoid oscillation
-        if abs(temp_value - desired_temperature) <= tol:
+        if abs(temp_value - float(desired_temperature)) <= tol:
             for device in ("fan", "heater"):
                 if device in room_actuators:
                     _send(device, 0)
@@ -493,140 +511,139 @@ class SleepCycleManager:
             return
 
         _send(device, action)
-        # Ensure mutual exclusivity
         opposite = "heater" if device == "fan" else "fan"
         if opposite in room_actuators:
             _send(opposite, 0)
-
 
     def _handle_presence(self, msg, userid, houseid, bedroomid):
         entry = msg['e'][0]
         if entry.get('t') is None:
             self.logger.warning(f"[PRESENCE] Missing timestamp in payload for room {bedroomid}, skipping")
             return
+
         presence_value = entry['v']
         sensor_ts      = int(float(entry['t']))
+        finish_topic   = self.topic_publish[2].format(userid=userid, bedroomid=bedroomid)
 
-        user_data = self.active_users_cache.get(userid)
-        if not user_data:
-            self.logger.warning(f"User {userid} not found in cache for presence handling")
-            return
+        with self._lock:
+            user_data = self.active_users_cache.get(userid)
+            if not user_data:
+                self.logger.warning(f"User {userid} not found in cache for presence handling")
+                return
 
-        lv              = user_data["live_values"]
-        finish_topic    = self.topic_publish[2].format(userid=userid, bedroomid=bedroomid)
+            lv = user_data["live_values"]
 
-        if presence_value != 1:
-            # User is out of bed
-            if lv.get("last_left_bed") is None:
-                lv["last_left_bed"] = datetime.now()
-            elif (
-                user_data.get("is_sleeping", False)
-                and (datetime.now() - lv["last_left_bed"]).total_seconds() >= self.WAKE_DETECTION_SECONDS
-            ):
-                user_data["is_sleeping"] = False
-                lv["last_seen_bed"] = lv["last_left_bed"] = None
-                self.publish({"action": "FINISH_SLEEP", "timestamp": sensor_ts}, command_topic=finish_topic)
-                self.logger.info(f"User {userid} finished sleep in {bedroomid}")
-            return
+            if presence_value != 1:
+                if lv.get("last_left_bed") is None:
+                    lv["last_left_bed"] = datetime.now()
+                elif (
+                    user_data.get("is_sleeping", False)
+                    and (datetime.now() - lv["last_left_bed"]).total_seconds() >= self.WAKE_DETECTION_SECONDS
+                ):
+                    user_data["is_sleeping"] = False
+                    lv["last_seen_bed"] = lv["last_left_bed"] = None
+                    should_finish = True
+                else:
+                    should_finish = False
+            else:
+                lv["last_left_bed"] = None
+                if lv.get("last_seen_bed") is None:
+                    lv["last_seen_bed"] = datetime.now()
+                    should_finish = False
+                elif (
+                    not user_data.get("is_sleeping", False)
+                    and (datetime.now() - lv["last_seen_bed"]).total_seconds() >= self.SLEEP_DETECTION_SECONDS
+                ):
+                    user_data["is_sleeping"] = True
+                    should_finish = None   # signal: publish START_SLEEP
+                else:
+                    should_finish = False
 
-        # User is in bed
-        lv["last_left_bed"] = None
-        if lv.get("last_seen_bed") is None:
-            lv["last_seen_bed"] = datetime.now()
-            return
-
-        if (
-            not user_data.get("is_sleeping", False)
-            and (datetime.now() - lv["last_seen_bed"]).total_seconds() >= self.SLEEP_DETECTION_SECONDS
-        ):
-            user_data["is_sleeping"] = True
+        # publish outside the lock so we don't block while waiting on I/O
+        if presence_value != 1 and 'should_finish' in dir() and should_finish:
+            self.publish({"action": "FINISH_SLEEP", "timestamp": sensor_ts}, command_topic=finish_topic)
+            self.logger.info(f"User {userid} finished sleep in {bedroomid}")
+        elif presence_value == 1 and 'should_finish' in dir() and should_finish is None:
             self.publish(
                 {"action": 1, "timestamp": sensor_ts},
                 command_topic=self.topic_publish[1].format(houseID=houseid, bedroomid=bedroomid),
             )
             self.logger.info(f"User {userid} is now sleeping in {bedroomid}")
 
-
     def change_target_temperature_light(self, userid, target_temperature=None,
                                          target_light=None, phase=None):
         """Update live targets and publish light/phase/sleep events via MQTT."""
-        user_data = self.active_users_cache.get(userid)
-        if not user_data:
-            self.logger.warning(f"User {userid} not found in cache for target update")
-            return
-
-        lt = user_data["live_targets"]
-        lv = user_data["live_values"]
-
-        previous_light   = lt.get("light")
-        previous_phase   = lv.get("phase")
-        phase_published  = lv.get("phase_published",  False)
-        start_sleep_sent = lv.get("start_sleep_sent", False)
-
-        if target_temperature is not None:
-            lt["temperature"] = target_temperature
-        if target_light is not None:
-            lt["light"] = target_light
-        if phase is not None:
-            lv["phase"] = phase
-
-        houseid   = user_data.get("house_id")
-        bedroomid = user_data.get("active_room_id")
-
-        # Publish light only when the rounded integer value actually changes
-        if target_light is not None:
-            new_val = int(round(max(0.0, min(100.0, float(target_light)))))
-            old_val = None if previous_light is None else int(round(previous_light))
-            if old_val != new_val:
-                self.publish(
-                    {"action": "SET", "value": new_val},
-                    command_topic=f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command",
-                )
-                self.logger.info(f"Light SET value={new_val} phase={phase} user={userid}")
-
-        # Publish phase on first call, on change, or during active transitions
-        is_transition = phase in ("WIND_DOWN", "WAKE_UP")
-        if phase is not None and (not phase_published or phase != previous_phase or is_transition):
-            self.publish(
-                {"bn": f"{houseid}:{bedroomid}:phase",
-                 "e": [{"n": "Phase", "v": phase, "t": int(time.time())}]},
-                command_topic=self.topic_publish[4].format(houseid=houseid, bedroomid=bedroomid),
-            )
-            lv["phase_published"] = True
-            self.logger.info(f"Published phase={phase} for user={userid}")
-
-            ts = _sensor_ts_int(lv)
-            if ts is None:
-                self.logger.warning(f"[PHASE] Missing sensor_ts for user={userid}, sleep events skipped")
+        with self._lock:
+            user_data = self.active_users_cache.get(userid)
+            if not user_data:
+                self.logger.warning(f"User {userid} not found in cache for target update")
                 return
 
-            if phase == "SLEEP" and not start_sleep_sent:
-                self.publish(
-                    {"action": "START_SLEEP", "timestamp": ts},
-                    command_topic=self.topic_publish[3].format(userid=userid, bedroomid=bedroomid),
-                )
-                lv["start_sleep_sent"] = True
-                self.logger.info(f"START_SLEEP user={userid} ts={ts}")
+            lt = user_data["live_targets"]
+            lv = user_data["live_values"]
 
-            if previous_phase == "SLEEP" and phase != "SLEEP":
-                self.publish(
-                    {"action": "FINISH_SLEEP", "timestamp": ts},
-                    command_topic=self.topic_publish[2].format(userid=userid, bedroomid=bedroomid),
-                )
-                lv["start_sleep_sent"] = False
-                self.logger.info(f"FINISH_SLEEP user={userid} ts={ts}")
+            previous_light   = lt.get("light")
+            previous_phase   = lv.get("phase")
+            phase_published  = lv.get("phase_published",  False)
+            start_sleep_sent = lv.get("start_sleep_sent", False)
 
+            if target_temperature is not None:
+                lt["temperature"] = target_temperature
+            if target_light is not None:
+                lt["light"] = target_light
+            if phase is not None:
+                lv["phase"] = phase
 
-def _sensor_ts_int(lv: dict):
-    """Extract sensor_ts from live_values as an integer epoch second. Returns None if missing."""
-    raw = lv.get("sensor_ts")
-    if raw is None:
-        return None
-    try:
-        return int(float(raw))
-    except (TypeError, ValueError):
-        return None
+            houseid   = user_data.get("house_id")
+            bedroomid = user_data.get("active_room_id")
 
+            # Collect what to publish before releasing the lock
+            publishes = []
+
+            if target_light is not None:
+                new_val = int(round(max(0.0, min(100.0, float(target_light)))))
+                old_val = None if previous_light is None else int(round(previous_light))
+                if old_val != new_val:
+                    publishes.append((
+                        {"action": "SET", "value": new_val},
+                        f"House/{houseid}/Bedroom/{bedroomid}/actuator/light/command",
+                        f"Light SET value={new_val} phase={phase} user={userid}",
+                    ))
+
+            is_transition = phase in ("WIND_DOWN", "WAKE_UP")
+            if phase is not None and (not phase_published or phase != previous_phase or is_transition):
+                publishes.append((
+                    {"bn": f"{houseid}:{bedroomid}:phase",
+                     "e": [{"n": "Phase", "v": phase, "t": int(time.time())}]},
+                    self.topic_publish[4].format(houseid=houseid, bedroomid=bedroomid),
+                    f"Published phase={phase} for user={userid}",
+                ))
+                lv["phase_published"] = True
+
+                ts = _sensor_ts_int(lv)
+                if ts is None:
+                    self.logger.warning(f"[PHASE] Missing sensor_ts for user={userid}, sleep events skipped")
+                else:
+                    if phase == "SLEEP" and not start_sleep_sent:
+                        publishes.append((
+                            {"action": "START_SLEEP", "timestamp": ts},
+                            self.topic_publish[3].format(userid=userid, bedroomid=bedroomid),
+                            f"START_SLEEP user={userid} ts={ts}",
+                        ))
+                        lv["start_sleep_sent"] = True
+
+                    if previous_phase == "SLEEP" and phase != "SLEEP":
+                        publishes.append((
+                            {"action": "FINISH_SLEEP", "timestamp": ts},
+                            self.topic_publish[2].format(userid=userid, bedroomid=bedroomid),
+                            f"FINISH_SLEEP user={userid} ts={ts}",
+                        ))
+                        lv["start_sleep_sent"] = False
+
+        # publish after releasing the lock
+        for message, topic, log_msg in publishes:
+            self.publish(message, command_topic=topic)
+            self.logger.info(log_msg)
 
 
 if __name__ == "__main__":
@@ -649,9 +666,7 @@ if __name__ == "__main__":
         logger.error(f"Error reading configuration file: {e}")
         sys.exit(1)
 
-    # Configure the dispatcher to use GET/POST/PUT/DELETE methods
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
-
 
     try:
         sleep_cycle_manager = SleepCycleManager(full_conf, logger=logger)
