@@ -197,7 +197,6 @@ class TimeSeriesDBAdapter:
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON payload received on topic {topic}: {e}")
             return
-        print(f"Received MQTT message on topic {topic}: {message_received}")
         if "sensor" in topic:
             if checkSenML(message_received):
                 logger.debug(f"Received valid SenML message: {message_received}")

@@ -91,7 +91,6 @@ def parse_sensor_data(raw_data):
             continue
 
         if sensor_name:
-            print(f"Parsed sensor → {sensor_name}: {entry.get('e', [])}")
             sensors[sensor_name] = entry.get("e", [])
 
     return sensors
@@ -324,7 +323,6 @@ class BedAnalytics:
             logger.error(f"Analytics failed for user {userid} - no report generated")
 
     def notify(self, topic, payload):
-        print(topic)
         if not "SleepReport" in topic:
             try:
                 message_received = json.loads(payload)

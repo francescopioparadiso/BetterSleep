@@ -27,5 +27,9 @@
   "removeInterval": 10,
   "transitionWindowMin": 30,
   "transitionCurveExponent": 1.0,
-  "inactiveUserTtlSec": 10800
+  "inactiveUserTtlSec": 10800,
+  "sleepDetectionSec":   1800,
+  "wakeDetectionSec":    300,
+  "userCacheTTLSec":     7200,
+  "evictionIntervalSec": 300
 }
