@@ -58,7 +58,7 @@ def _get_senml_aggregation(filter_query, start_time=None, end_time=None):
     return pipeline
 
 
-class TimeSeriesDB:
+class MongoDB:
     def __init__(self, config):
         self.mongo_port = config['timeSeriesDB']['port']
         self.mongo_host = config['timeSeriesDB']['host']

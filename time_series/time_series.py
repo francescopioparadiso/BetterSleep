@@ -11,7 +11,7 @@ import cherrypy
 from common import catalog_client
 from common.MQTT.MyMQTT import MyMQTT
 from common.common import json_error_page, mqtt_to_regex
-from time_series.time_series_db import TimeSeriesDB
+from time_series.mongo_db import MongoDB
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def _json_response(data):
     return json.dumps(data).encode('utf-8')
 
 
-class TimeSeriesDBAdapter:
+class TimeSeries:
     exposed = True
 
     def __init__(self, conf):
@@ -65,7 +65,7 @@ class TimeSeriesDBAdapter:
         self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
 
         try:
-            self.db = TimeSeriesDB(conf)
+            self.db = MongoDB(conf)
             self.init_mqtt_client()
             self.catalog.register()
             if not self.db.health_check():
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
     try:
-        time_series_db_adapter = TimeSeriesDBAdapter(full_conf)
+        time_series_db_adapter = TimeSeries(full_conf)
         cherrypy.tree.mount(time_series_db_adapter, '/', conf)
         cherrypy.config.update({
             'server.socket_host': full_conf['serviceInfo']['host'],
