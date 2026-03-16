@@ -13,11 +13,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
 from common.common import mqtt_to_regex, json_error_page, init_mqtt_helper
-from PhaseManager import PhaseManager
+from phase_manager import PhaseManager
 
-# ---------------------------------------------------------------------------
-# Pure helpers
-# ---------------------------------------------------------------------------
 
 def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
                                  prefer_fan=True, tolerance=0.0):

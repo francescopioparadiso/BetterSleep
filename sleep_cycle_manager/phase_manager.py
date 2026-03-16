@@ -6,13 +6,10 @@ def _parse_to_min(val):
     if val is None:
         return None
     try:
-        if hasattr(val, 'hour') and hasattr(val, 'minute'):
-            return int(val.hour) * 60 + int(val.minute)
         parts = str(val).split(":")
         return int(parts[0]) * 60 + int(parts[1])
-    except Exception:
+    except ValueError:
         return None
-
 
 def _is_in_range(p, s, e):
     if s <= e:
@@ -20,12 +17,18 @@ def _is_in_range(p, s, e):
     return p >= s or p < e
 
 
-def _get_progress(p, s, e):
-    duration = (e - s) % 1440
-    elapsed  = (p - s) % 1440
+def _get_progress(current_min, start_min, end_min):
+    # total duration of the transition (in minutes)
+    duration = (end_min - start_min) % 1440
+
+    # minutes passed since the start of the transition
+    elapsed = (current_min - start_min) % 1440
     if duration == 0:
         return 1.0
-    return max(0.0, min(1.0, elapsed / duration))
+
+    progress = elapsed / duration
+
+    return max(0.0, min(1.0, progress))
 
 
 class PhaseManager:
