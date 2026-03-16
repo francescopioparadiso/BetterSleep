@@ -70,7 +70,7 @@ def parse_and_cleaning_data(raw_data):
         try:
             sensor_type_id = int(bn.split(":")[-1])
             sensor_name = SENSOR_TYPE.get(sensor_type_id)
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             logger.error("Invalid sensor type in bn: {bn}")
             continue
         if sensor_name:

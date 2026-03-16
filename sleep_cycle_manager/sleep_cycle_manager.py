@@ -21,10 +21,6 @@ from PhaseManager import PhaseManager
 
 def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
                                  prefer_fan=True, tolerance=0.0):
-    """
-    Called only when temp is OUTSIDE the deadband (caller handles in-band).
-    prefer_fan=False (SLEEP phase) avoids turning on the fan to reduce noise.
-    """
     temp_value          = float(temp_value)
     desired_temperature = float(desired_temperature)
     tol                 = max(0.0, float(tolerance))
@@ -51,10 +47,8 @@ def _resolve_temperature_action(temp_value, desired_temperature, room_actuators,
 
 def _parse_preference_topic(topic):
     parts = topic.split("/")
-    # UserService/ChangePreference/User/{userid}/Preference/
     if len(parts) >= 5 and parts[2] == "User":
         return "user", parts[3]
-    # UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomid}/User/{userid}/Preference/
     if len(parts) >= 8 and parts[2] == "House":
         return "room", parts[5]
     return None, None
@@ -84,7 +78,7 @@ class SleepCycleManager:
 
     def __init__(self, conf, logger=None):
         self.mqtt_client = None
-        self.logger      = logger or logging.getLogger(__name__)
+        self.logger= logger or logging.getLogger(__name__)
 
         self.catalog_url     = conf['catalogURL']
         self.service_info    = conf['serviceInfo']
@@ -118,14 +112,13 @@ class SleepCycleManager:
         self.phase_manager = PhaseManager(
             manager_instance=self,
             transition_window_min=conf.get('transitionWindowMin', 30),
-            check_interval=conf.get('phaseCheckIntervalSec', 60),
             transition_curve_exponent=conf.get('transitionCurveExponent', 1.0),
+            prefer_fan=conf.get('preferFan', True),
         )
 
         self._init_mqtt_client()
         self.get_active_room_for_user()
         self._start_eviction_loop()
-
 
     def _get_endpoint_user_service(self):
         data, status, error = self.catalog_client.get("getEndpointUserService")
@@ -137,7 +130,6 @@ class SleepCycleManager:
         return None
 
     def get_active_room_for_user(self):
-        """Fetch active user->room associations and populate room_to_user_map."""
         try:
             res = requests.get(f"{self.user_service_endpoint}/getActiveRoomsWithUser")
             if res.status_code != 200:
@@ -187,11 +179,7 @@ class SleepCycleManager:
         if to_evict:
             self.logger.info(f"[EVICTION] Evicted {len(to_evict)} user(s): {to_evict}")
 
-
     def _fetch_and_cache_room_preference(self, userid):
-        """
-        Fetch user preferences from the user service and store them in cache.
-        """
         try:
             res = requests.get(
                 f"{self.user_service_endpoint}/getUserRoomPreferences",
@@ -255,10 +243,7 @@ class SleepCycleManager:
         return entry
 
     def _get_or_fetch_user(self, userid):
-        """Return cached user data, fetching from user service if missing.
-        Must be called with self._lock held."""
         return self.active_users_cache.get(userid) or self._fetch_and_cache_room_preference(userid)
-
 
     def _init_mqtt_client(self):
         try:
@@ -335,13 +320,11 @@ class SleepCycleManager:
             else:
                 self.logger.warning(f"[PHASE SYNC SKIPPED] no timestamp in payload for user={userid}")
 
-            # snapshot what we need before releasing the lock
-            phase       = user_data['live_values'].get('phase')
-            live_tgt    = user_data['live_targets']
-            config      = user_data['config']
-            actuators   = self._get_actuators_in_room(room_id)   # also needs lock, RLock is fine
+            phase     = user_data['live_values'].get('phase')
+            live_tgt  = user_data['live_targets']
+            config    = user_data['config']
+            actuators = self._get_actuators_in_room(room_id)
 
-        # --- phase sync is lock-free (PhaseManager has its own state) ---
         if ts is not None:
             try:
                 self.logger.info(
@@ -416,14 +399,9 @@ class SleepCycleManager:
                 self.logger.info(f"Updated {k} for user {userid}: {msg[k]}")
 
     def _get_actuators_in_room(self, room_id):
-        """
-        Return actuator types for room_id, fetching from the catalog if not cached.
-        """
         if room_id in self._actuator_cache:
             return self._actuator_cache[room_id]
 
-        # HTTP happens while lock is held; acceptable here because the lock is
-        # only contended by MQTT callbacks, not by time-sensitive loops.
         try:
             res = requests.get(f"{self.catalog_url}/getActuatorByRoom",
                                params={"room_id": room_id})
@@ -454,10 +432,10 @@ class SleepCycleManager:
             self.logger.warning(f"[TEMP] Missing timestamp in payload for room {bedroomid}, skipping")
             return
 
-        temp_value  = float(entry['v'])
-        sensor_ts   = int(float(entry['t']))
-        tol         = max(0.0, self.temperature_tolerance)
-        base_topic  = self.topic_publish[0]
+        temp_value = float(entry['v'])
+        sensor_ts  = int(float(entry['t']))
+        tol        = max(0.0, self.temperature_tolerance)
+        base_topic = self.topic_publish[0]
 
         def _send(device, action):
             self.publish(
@@ -471,10 +449,10 @@ class SleepCycleManager:
                     _send(device, 0)
             return
 
-        prefer_fan = getattr(self.phase_manager, 'prefer_fan', True)
         action, device = _resolve_temperature_action(
             temp_value, desired_temperature, room_actuators,
-            prefer_fan=prefer_fan, tolerance=tol,
+            prefer_fan=self.phase_manager.prefer_fan,
+            tolerance=tol,
         )
         if device is None:
             return
@@ -494,6 +472,9 @@ class SleepCycleManager:
         sensor_ts      = int(float(entry['t']))
         finish_topic   = self.topic_publish[2].format(userid=userid, bedroomid=bedroomid)
 
+        publish_finish_sleep = False
+        publish_start_sleep  = False
+
         with self._lock:
             user_data = self.active_users_cache.get(userid)
             if not user_data:
@@ -511,28 +492,23 @@ class SleepCycleManager:
                 ):
                     user_data["is_sleeping"] = False
                     lv["last_seen_bed"] = lv["last_left_bed"] = None
-                    should_finish = True
-                else:
-                    should_finish = False
+                    publish_finish_sleep = True
             else:
                 lv["last_left_bed"] = None
                 if lv.get("last_seen_bed") is None:
                     lv["last_seen_bed"] = datetime.now()
-                    should_finish = False
                 elif (
                     not user_data.get("is_sleeping", False)
                     and (datetime.now() - lv["last_seen_bed"]).total_seconds() >= self.SLEEP_DETECTION_SECONDS
                 ):
                     user_data["is_sleeping"] = True
-                    should_finish = None   # signal: publish START_SLEEP
-                else:
-                    should_finish = False
+                    publish_start_sleep = True
 
-        # publish outside the lock so we don't block while waiting on I/O
-        if presence_value != 1 and 'should_finish' in dir() and should_finish:
+        if publish_finish_sleep:
             self.publish({"action": "FINISH_SLEEP", "timestamp": sensor_ts}, command_topic=finish_topic)
             self.logger.info(f"User {userid} finished sleep in {bedroomid}")
-        elif presence_value == 1 and 'should_finish' in dir() and should_finish is None:
+
+        if publish_start_sleep:
             self.publish(
                 {"action": 1, "timestamp": sensor_ts},
                 command_topic=self.topic_publish[1].format(houseID=houseid, bedroomid=bedroomid),
@@ -541,7 +517,6 @@ class SleepCycleManager:
 
     def change_target_temperature_light(self, userid, target_temperature=None,
                                          target_light=None, phase=None):
-        """Update live targets and publish light/phase/sleep events via MQTT."""
         with self._lock:
             user_data = self.active_users_cache.get(userid)
             if not user_data:
@@ -566,7 +541,6 @@ class SleepCycleManager:
             houseid   = user_data.get("house_id")
             bedroomid = user_data.get("active_room_id")
 
-            # Collect what to publish before releasing the lock
             publishes = []
 
             if target_light is not None:
@@ -609,7 +583,6 @@ class SleepCycleManager:
                         ))
                         lv["start_sleep_sent"] = False
 
-        # publish after releasing the lock
         for message, topic, log_msg in publishes:
             self.publish(message, command_topic=topic)
             self.logger.info(log_msg)
@@ -647,8 +620,8 @@ if __name__ == "__main__":
         })
 
         cherrypy.engine.subscribe('start', sleep_cycle_manager.catalog_client.start_background_loop)
-        cherrypy.engine.subscribe('stop', sleep_cycle_manager.catalog_client.stop_background_loop)
-        cherrypy.engine.subscribe('stop', sleep_cycle_manager.catalog_client.unregister)
+        cherrypy.engine.subscribe('stop',  sleep_cycle_manager.catalog_client.stop_background_loop)
+        cherrypy.engine.subscribe('stop',  sleep_cycle_manager.catalog_client.unregister)
 
         cherrypy.engine.start()
         cherrypy.engine.block()

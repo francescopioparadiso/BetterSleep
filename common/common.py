@@ -2,13 +2,12 @@ import json
 import logging
 
 import cherrypy
+from common.MQTT.MyMQTT import MyMQTT
 
 
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""
     cherrypy.response.headers["Content-Type"] = "application/json"
-
-    # Status arriva come "404 Not Found" → prendiamo solo il numero
     try:
         status_code = int(status.split(" ")[0])
     except (ValueError, IndexError):
@@ -37,21 +36,11 @@ def _load_json_body():
 def init_mqtt_helper(service_instance, mqtt_info, logger=None, clientid_fallback=None):
     """
     Initialize MQTT client for any service.
-
-    Args:
-        service_instance: The service object (must have mqtt_client, MQTT_info, topic_subscribe_raw)
-        mqtt_info: Dict with 'clientID', 'broker', 'port'
-        logger: Logger instance (optional, defaults to logging.getLogger)
-        clientid_fallback: Fallback function to generate clientID if not in mqtt_info
-
-    Returns:
-        The initialized MyMQTT client, or None if initialization failed
     """
     if logger is None:
         logger = logging.getLogger(__name__)
 
     try:
-        from .MQTT.MyMQTT import MyMQTT
 
         # Get clientID with optional fallback
         client_id = mqtt_info.get('clientID')
@@ -68,7 +57,6 @@ def init_mqtt_helper(service_instance, mqtt_info, logger=None, clientid_fallback
         mqtt_client = MyMQTT(client_id, broker, port, service_instance)
         mqtt_client.start()
 
-        # Subscribe to topics if available
         if hasattr(service_instance, 'topic_subscribe_raw'):
             for topic in service_instance.topic_subscribe_raw:
                 mqtt_client.mySubscribe(topic)

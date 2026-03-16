@@ -7,15 +7,12 @@
     {
       "userid": "1",
       "houseid": "1",
-      "bedroomid": "1",
-      "has_fan": true
+      "bedroomid": "1"
     },
     {
       "userid": "2",
       "houseid": "2",
-      "bedroomid": "2",
-      "has_fan": false
-    }
+      "bedroomid": "2"}
   ],
   "catalog": {
     "url": "http://127.0.0.1:8080"

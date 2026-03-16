@@ -16,14 +16,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-try:
-    import requests
-except ImportError:
-    requests = None
+
 
 from device_connector.Simulate_Sensor import *
 from common.MQTT.MyMQTT import MyMQTT
+import  requests
 
+CYCLE_LENGHT = 90
 class MQTTSubscriber:
 
     def __init__(self, broker, port, userid, houseid, bedroomid, initial_light=50):
@@ -237,13 +236,13 @@ def build_sleep_windows(night_str, morning_str, bases=None):
     return [build_sleep_window(night_str, morning_str, base_date, label) for label, base_date in bases]
 
 
-def get_sleep_stage(minute_of_night):
+def get_sleep_phase(minute_of_night):
     if minute_of_night < 0:
         return "AWAKE"
 
-    cycle_length = 90
-    cycle_number = minute_of_night // cycle_length
-    minute_in_cycle = minute_of_night % cycle_length
+  
+    cycle_number = minute_of_night // CYCLE_LENGHT
+    minute_in_cycle = minute_of_night % CYCLE_LENGHT
 
     deep_end = max(10, 30 - cycle_number * 7)
     light1_end = deep_end + 15
@@ -260,28 +259,28 @@ def get_sleep_stage(minute_of_night):
     return "LIGHT"
 
 
-def get_hr_for_stage(stage, step, resting_hr=58.0):
+def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
     noise = math.sin(step * 0.3) * 1.5
 
-    if stage == "AWAKE":
+    if sleep_phase == "AWAKE":
         return resting_hr + 16 + noise
-    if stage == "LIGHT":
+    if sleep_phase == "LIGHT":
         return resting_hr + 4 + noise
-    if stage == "DEEP":
+    if sleep_phase == "DEEP":
         return resting_hr + 1 + abs(noise) * 0.5
-    if stage == "REM":
+    if sleep_phase == "REM":
         return resting_hr + 13 + math.sin(step * 0.7) * 3
     return resting_hr
 
 
-def get_vibration_for_stage(stage, step):
-    if stage == "AWAKE":
+def get_vibration_for_sleep_phase(sleep_phase, step):
+    if sleep_phase == "AWAKE":
         base = 0.08 + 0.05 * abs(math.sin(step * 0.5))
-    elif stage == "LIGHT":
+    elif sleep_phase == "LIGHT":
         base = 0.004 + 0.003 * abs(math.sin(step * 0.4))
-    elif stage == "DEEP":
+    elif sleep_phase == "DEEP":
         base = 0.001 + 0.001 * abs(math.sin(step * 0.1))
-    elif stage == "REM":
+    elif sleep_phase == "REM":
         base = 0.003 + 0.003 * abs(math.sin(step * 0.9))
     else:
         base = 0.0
@@ -293,10 +292,6 @@ def get_user_sleep_times(catalog_url, userid):
     default_night = "22:00"
     default_morning = "07:00"
 
-    if not requests:
-        logger.error("requests not available; using default sleep times")
-        return default_night, default_morning
-
     try:
         cat_res = requests.get(f"{catalog_url}/getEndpointUserService", timeout=5)
         if cat_res.status_code == 200:
@@ -305,13 +300,7 @@ def get_user_sleep_times(catalog_url, userid):
                 pref_res = requests.get(f"{us_endpoint}/getUserRoomPreferences?user_id={userid}", timeout=5)
                 if pref_res.status_code == 200:
                     prefs = pref_res.json().get("preferences", {})
-                    night = prefs.get("night_time", default_night)
-                    morning = prefs.get("morning_time", default_morning)
-                    if len(night) > 5:
-                        night = night[:5]
-                    if len(morning) > 5:
-                        morning = morning[:5]
-                    return night, morning
+                    return prefs.get("night_time", default_night), prefs.get("morning_time", default_morning)
     except Exception as e:
         logger.error(f"Error fetching user preferences for user {userid}: {e}")
     return default_night, default_morning
@@ -329,7 +318,6 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
     logger.info(f"Starting simulation ({window.label}) for user {user.userid} in house {user.houseid}, bedroom {user.bedroomid}")
     with open(filepath, "w") as f:
         f.write(f"Simulation Stats for User {user.userid} | House {user.houseid} Bedroom {user.bedroomid} | Window {window.label}\n")
-
     sensor_configs = {}
     t_cfg = sensors_config["temperature"]
     sensor_configs["temp"] = create_config(
@@ -407,7 +395,6 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
 
     try:
         time.sleep(2)
-
         total_minutes = window.sim_minutes
         steps = max(total_minutes, 1)
         real_step_seconds = duration_seconds / steps
@@ -463,10 +450,10 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
             presence_sensor.publish_data(presence_value, timestamp=sim_ts)
 
             minute_of_night = int((vt - window.sleep_start).total_seconds() / 60)
-            stage = get_sleep_stage(minute_of_night) if presence_value == 1 else "AWAKE"
+            sleep_phase = get_sleep_phase(minute_of_night) if presence_value == 1 else "AWAKE"
 
-            heart_rate_value = get_hr_for_stage(stage, step)
-            vibration_value = get_vibration_for_stage(stage, step)
+            heart_rate_value = get_hr_for_sleep_phase(sleep_phase, step)
+            vibration_value = get_vibration_for_sleep_phase(sleep_phase, step)
 
             heart_rate_sensor.publish_data(round(heart_rate_value, 2), unit="bpm", timestamp=sim_ts)
             vibration_sensor.publish_data(round(vibration_value, 4), unit="g", timestamp=sim_ts)
@@ -480,7 +467,7 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
             vt_str = (window.sim_start + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
 
             line = (
-                f"[User {user.userid} | {vt_str} | {window.label}] Stage={stage:<5} "
+                f"[User {user.userid} | {vt_str} | {window.label}] Sleep Phase={sleep_phase:<5} "
                 f"Temp={current_temp:.2f}°C, Pres={presence_value}, "
                 f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.4f}g | "
                 f"Phase={phase} | MQTT[L={light_mqtt}, F={fan_mqtt}, H={heater_mqtt}]\n"
@@ -525,6 +512,7 @@ def run_simulation(duration_seconds=60, night_bases=None):
         for window in windows:
             if stop_event.is_set():
                 break
+            print("config",config)
             simulate_single_user_night(user_ctx, config, window, duration_seconds, stop_event)
 
     for user_ctx in user_contexts:

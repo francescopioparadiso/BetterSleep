@@ -130,7 +130,7 @@ class CatalogClient:
         def _loop():
             while not self._stop_event.is_set():
                 time.sleep(self.remove_interval)
-                print(f"Updating service info at {datetime.now()}...")
+                logger.info("Updating Catalog with latest timestamp...")
                 self.update()
 
         self._worker = threading.Thread(target=_loop, daemon=True)

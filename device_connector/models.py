@@ -5,7 +5,6 @@ import time
 import json
 import random
 
-# Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
@@ -13,10 +12,9 @@ from common.common import init_mqtt_helper
 
 logger = logging.getLogger(__name__)
 
-
-
 class BaseIoTComponent:
     def __init__(self, config):
+        self.mqtt_client = None
         self.config = config
         self.catalog_url = config.get("catalogURL", "http://localhost:8080")
         self.service_info = config.get("serviceInfo", {})
@@ -37,10 +35,8 @@ class BaseIoTComponent:
         self.id=None
         self.comp_id = self.service_info.get(self.id_key)
 
-        # 2. Setup Topics
         self._setup_topics()
 
-        # 3. Catalog and MQTT
         self.catalog = CatalogClient(
             catalog_url=self.catalog_url,
             service_info=self.service_info,
@@ -54,7 +50,6 @@ class BaseIoTComponent:
 
     def _setup_topics(self):
         """Resolves placeholders in topics from config or generates defaults."""
-        # Mapping for string formatting
         mapping = {
             "houseID": str(self.service_info.get("houseID", "")),
             "roomID": str(self.service_info.get("roomID", "")),
@@ -109,14 +104,7 @@ class BaseIoTComponent:
             logger.error(f"Error publishing message: {e}")
 
     def publish_data(self, value, unit=None, timestamp=None, name=None):
-        """Generic method to publish data for both sensors and actuators.
 
-        Args:
-            value: The data value to publish
-            unit: Unit of measurement (optional)
-            timestamp: Timestamp (defaults to current time)
-            name: Name of the measurement (optional, defaults to sensor_type_long for sensors)
-        """
         house_id = self.service_info.get("houseID")
         room_id = self.service_info.get("roomID")
 
@@ -126,14 +114,11 @@ class BaseIoTComponent:
             comp_id = self.service_info.get("ActuatorID")
 
         if timestamp is None:
-            # ensure integer epoch seconds
             timestamp = int(self.timestamp_provider())
         else:
-            # coerce provided timestamp to int (accept float or numeric string)
             try:
                 timestamp = int(float(timestamp))
-            except Exception:
-                # fallback: keep as-is (non-numeric) — downstream code should validate
+            except ValueError:
                 pass
 
         # Use provided name, fallback to sensor_type_long for sensors, or use component type
@@ -156,7 +141,6 @@ class Sensor(BaseIoTComponent):
     def __init__(self, config, sensor_type):
         super().__init__(config)
         self.sensor_type = sensor_type
-        # Supports fake/virtual time in simulations; defaults to wall-clock time.
         self.timestamp_provider = time.time
         sensortype = {
             0: "Temperature",
@@ -165,10 +149,9 @@ class Sensor(BaseIoTComponent):
             3: "Heart Rate",
             4: "Vibration"
         }
-
-        # then in your class
         self.sensor_type_long = sensortype.get(sensor_type, "Unknown")
         self.id = sensor_type
+
 class Actuator(BaseIoTComponent):
     def notify(self, topic, payload):
         try:

@@ -1,9 +1,3 @@
-"""
-device_connector/Simulate_Sensor.py
-Simulates sensors and actuators for BetterSleep IoT project.
-"""
-
-# -------------------- IMPORTS --------------------
 import threading
 import time
 import json
@@ -11,12 +5,9 @@ import random
 import logging
 
 from device_connector.models import Sensor, Actuator
-
-# -------------------- LOGGING SETUP --------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------- CONFIG GENERATOR --------------------
 def create_config(
     catalog_url,
     identify,
@@ -54,7 +45,6 @@ def create_config(
         }
     }
 
-# -------------------- SENSOR CLASSES --------------------
 class PresenceSensor(Sensor):
     """Simulates a presence sensor. In debug mode, only sends values when publish_data is called."""
     def __init__(self, config, debug=False):
@@ -120,7 +110,6 @@ class VibrationSensor(Sensor):
             self.publish_data(val)
             time.sleep(10)
 
-# -------------------- ACTUATOR CLASSES --------------------
 class LightActuator(Actuator):
     """Simulates a light actuator."""
     def __init__(self, config):
@@ -196,65 +185,3 @@ class FanActuator(Actuator):
         except Exception as e:
             logger.error(f"[FAN ACTUATOR] Error processing command on topic '{topic}': {e}")
 
-# -------------------- MAIN LOGIC --------------------
-if __name__ == "__main__":
-    CATALOG_URL = "http://127.0.0.1:8080"
-    BROKER_IP = "broker.hivemq.com"
-    PORT = 1883
-    HOUSE = "1"
-    ROOM = "1"
-    # Topic templates (resolved automatically by BaseIoTComponent)
-    PUB_TEMPLATE = "House/{houseID}/Bedroom/{roomID}/sensor/{type}/{sensorID}/data"
-    HR_SUB_TOPIC = "House/{houseID}/Bedroom/{roomID}/heart_rate"
-    # Configurations
-    c_pres = create_config(
-        CATALOG_URL, "1", "Presence", "presence", HOUSE, ROOM, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE
-    )
-    c_hr = create_config(
-        CATALOG_URL, "2", "HeartRate", "heart_rate", HOUSE, ROOM, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE, topic_subscribe=HR_SUB_TOPIC
-    )
-    c_temp = create_config(
-        CATALOG_URL, "3", "Temp", "body_temperature", HOUSE, ROOM, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE
-    )
-    c_vib = create_config(
-        CATALOG_URL, "4", "Vibration", "vibration", HOUSE, ROOM, BROKER_IP, PORT, topic_publish=PUB_TEMPLATE
-    )
-    c_light = create_config(
-        CATALOG_URL, "5", "Light", "light", HOUSE, ROOM, BROKER_IP, PORT,
-        topic_publish="House/{houseID}/Bedroom/{roomID}/actuator/light/data",
-        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/actuator/light/command",
-        is_sensor=False
-    )
-    c_heater = create_config(
-        CATALOG_URL, "6", "Heater", "heater", HOUSE, ROOM, BROKER_IP, PORT,
-        topic_publish="House/{houseID}/Bedroom/{roomID}/actuator/heater/data",
-        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/actuator/heater/command",
-        is_sensor=False
-    )
-    c_fan = create_config(
-        CATALOG_URL, "7", "Fan", "fan", HOUSE, ROOM, BROKER_IP, PORT,
-        topic_publish="House/{houseID}/Bedroom/{roomID}/actuator/fan/data",
-        topic_subscribe=f"House/{HOUSE}/Bedroom/{ROOM}/actuator/fan/command",
-        is_sensor=False
-    )
-    # Device instances
-    presence = PresenceSensor(c_pres)
-    heart_rate = HeartRateSensor(c_hr)
-    body_temp = TemperatureSensor(c_temp)
-    vibration = VibrationSensor(c_vib)
-    light_actuator = LightActuator(c_light)
-    heater_actuator = HeaterActuator(c_heater)
-    fan_actuator = FanActuator(c_fan)
-    # Add actuators to devices list
-    devices = [presence, heart_rate, body_temp, vibration, light_actuator, heater_actuator, fan_actuator]
-    # Start threads
-    for d in devices:
-        threading.Thread(target=d.run, daemon=True).start()
-    logger.info(f"--- House {HOUSE} Room {ROOM} Simulation Active ---")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Shutting down devices...")
-        for d in devices:
-            d.stop()
