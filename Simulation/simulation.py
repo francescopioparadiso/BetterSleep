@@ -11,7 +11,7 @@ logging.basicConfig(
     format='[%(asctime)s] %(levelname)s: %(message)s'
 )
 logger = logging.getLogger(__name__)
-
+os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 
 
 from device_connector.Simulate_Sensor import *

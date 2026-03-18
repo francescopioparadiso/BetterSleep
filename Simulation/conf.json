@@ -78,17 +78,6 @@
     "min_temp": 14.0,
     "max_temp": 30.0,
     "starting_temp": 23.0
-  },
-  "simulation_phases": {
-    "total_minutes": 660,
-    "steps": 660,
-    "start_hour": 21,
-    "end_hour": 8,
-    "wind_down_start": 21.5,
-    "wind_down_end": 22.0,
-    "sleep_start": 22.0,
-    "sleep_end": 7.0,
-    "wake_up_start": 7.5,
-    "wake_up_end": 8.0
   }
+
 }
