@@ -1,5 +1,4 @@
 import time
-from datetime import datetime
 
 import requests
 import logging
@@ -68,11 +67,10 @@ class CatalogClient:
 
     def register(self):
         service = {
-            self.id_key: str(self.service_info[ self.id_key ]),
+            self.id_key: int(self.service_info[ self.id_key ]),
             "name": self.service_info['name'],
             "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
-            "type": self.service_info.get('type', 'generic'),
-            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "type": self.service_info.get('type', 'generic')
         }
         if self.type in [1, 2]:
             service["roomID"] = self.service_info.get('roomID', '')
@@ -93,8 +91,7 @@ class CatalogClient:
         """Logic to update this service's info to the Catalog."""
 
         service = {
-            self.id_key  : self.service_info[ self.id_key ],
-            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.id_key: self.service_info[self.id_key]
         }
         endpoint = "updateServiceLastUpdate" if self.type == 0 else "updateSensorLastUpdate" if self.type == 1 else "updateActuatorLastUpdate"
         data, status, error = self.put(endpoint, json=service)

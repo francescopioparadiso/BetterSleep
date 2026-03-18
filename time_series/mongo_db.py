@@ -80,13 +80,11 @@ class MongoDB:
                 serverSelectionTimeoutMS=5000
             )
             self.db = self.client_mongo[self.mongo_database]
-            self.analytics_db = self.client_mongo[self.analytics_database]
             logger.info("Successfully connected to MongoDB")
         except Exception as e:
             logger.error(f"Error connecting to MongoDB: {e}")
             self.client_mongo = None
             self.db = None
-            self.analytics_db = None
 
     def health_check(self):
         try:

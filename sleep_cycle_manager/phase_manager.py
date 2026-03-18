@@ -31,6 +31,16 @@ def _get_progress(current_min, start_min, end_min):
     return max(0.0, min(1.0, progress))
 
 
+def _get_user_config(user_data):
+    cfg = user_data['config']
+    return {
+        "t_night": float(cfg.get("temperature_night",   18.0)),
+        "t_morn":  float(cfg.get("temperature_morning", 22.0)),
+        "l_night": float(cfg.get("light_night",          0.0)),
+        "l_morn":  float(cfg.get("light_morning",       100.0)),
+    }
+
+
 class PhaseManager:
     def __init__(self, manager_instance, transition_window_min=30,
                  transition_curve_exponent=1.0, prefer_fan=True):
@@ -84,17 +94,8 @@ class PhaseManager:
         else:
             self._apply_static_phase(userid, user_data, "DAY")
 
-    def _get_user_config(self, user_data):
-        cfg = user_data['config']
-        return {
-            "t_night": float(cfg.get("temperature_night",   18.0)),
-            "t_morn":  float(cfg.get("temperature_morning", 22.0)),
-            "l_night": float(cfg.get("light_night",          0.0)),
-            "l_morn":  float(cfg.get("light_morning",       100.0)),
-        }
-
     def _apply_static_phase(self, userid, user_data, phase):
-        c = self._get_user_config(user_data)
+        c = _get_user_config(user_data)
         if phase == "SLEEP":
             target_t, target_l = c["t_night"], c["l_night"]
         else:
@@ -109,7 +110,7 @@ class PhaseManager:
         return max(0.0, min(1.0, float(progress))) ** self.transition_curve_exponent
 
     def _apply_transition(self, userid, user_data, phase, progress):
-        c = self._get_user_config(user_data)
+        c = _get_user_config(user_data)
         curved_progress = self._curve_progress(progress)
         live_targets    = user_data.get("live_targets", {})
         live_values     = user_data.get("live_values",  {})

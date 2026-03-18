@@ -4,7 +4,7 @@ import os
 # This tells Python to add the parent directory to its searchable paths
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from common.common import _load_json_body, json_error_page, init_mqtt_helper
+from common.common import load_json_body, json_error_page, init_mqtt_helper
 
 import json
 import logging
@@ -12,13 +12,7 @@ from datetime import datetime
 import cherrypy
 from postgres_db import PostgresDB
 from common import catalog_client
-
-# Configure logging
 logger = logging.getLogger(__name__)
-
-# ============================================================
-# CATALOG REST SERVICE
-# ============================================================
 
 class UserService:
     exposed = True
@@ -87,7 +81,7 @@ class UserService:
         return handler()
 
     def _post_signup(self):
-        new_user = _load_json_body()
+        new_user = load_json_body()
         require_fields(new_user, ['email', 'password'])
         
         user_id = self.db.signup_user(new_user['email'], new_user['password'])
@@ -96,7 +90,7 @@ class UserService:
         raise cherrypy.HTTPError(409, "The User already exists")
 
     def _post_login(self):
-        credentials = _load_json_body()
+        credentials = load_json_body()
         require_fields(credentials, ['email', 'password'])
         
         clean_email = credentials['email'].strip()
@@ -112,7 +106,7 @@ class UserService:
 
     def _post_add_house(self):
         """Add a new house to the catalog."""
-        new_house = _load_json_body()
+        new_house = load_json_body()
         require_fields(new_house, ['name'])
 
         house_id = self.db.insert_house(new_house)
@@ -122,7 +116,7 @@ class UserService:
 
     def _post_add_invitation(self):
         """Add a new invitation to the catalog."""
-        new_invite = _load_json_body()
+        new_invite = load_json_body()
         require_fields(new_invite, ['house_id', 'email'])
 
         invite_id = self.db.insert_invitation(new_invite)
@@ -132,7 +126,7 @@ class UserService:
 
     def _post_add_house_member(self):
         """Add a new house member to the catalog."""
-        new_member = _load_json_body()
+        new_member = load_json_body()
         require_fields(new_member, ['house_id', 'user_id'])
 
         member_id = self.db.insert_house_member(new_member)
@@ -142,7 +136,7 @@ class UserService:
     
     def _post_add_room(self):
         """Add a new room to the catalog."""
-        new_room = _load_json_body()
+        new_room = load_json_body()
         require_fields(new_room, ['house_id', 'name'])
 
         room_id = self.db.insert_room(new_room)
@@ -182,7 +176,7 @@ class UserService:
 
     def _post_activate_sensors(self):
         """Activate (register) sensors for an existing room that has none."""
-        body = _load_json_body()
+        body = load_json_body()
         require_fields(body, ['room_id', 'house_id'])
         self._register_default_sensors(body['room_id'], body['house_id'])
         return json.dumps({"status": "success", "message": "Sensors activated"})
@@ -210,7 +204,7 @@ class UserService:
 
     def _put_update_user(self):
         """Update an existing user in the catalog."""
-        updated_user = _load_json_body()
+        updated_user = load_json_body()
         require_fields(updated_user, ['id'])
 
         success = self.db.update_user(updated_user)
@@ -219,7 +213,7 @@ class UserService:
         raise cherrypy.HTTPError(404, "User not found")
     def _put_update_user_preferences(self):
         """Update user preferences and notify sleep cycle manager."""
-        updated_preferences = _load_json_body()
+        updated_preferences = load_json_body()
         require_fields(updated_preferences, ['user_id'])
 
         user_id = updated_preferences['user_id']
@@ -246,7 +240,7 @@ class UserService:
         raise cherrypy.HTTPError(404, "User not found")
     def _put_update_room_preferences(self):
         """Update room preferences in the catalog."""
-        updated_preferences = _load_json_body()
+        updated_preferences = load_json_body()
         require_fields(updated_preferences, ['room_id'])
 
         room_id = updated_preferences['room_id']
@@ -285,7 +279,7 @@ class UserService:
 
     def _put_update_invitation(self):
         """Update an existing invitation in the catalog."""
-        updated_invite = _load_json_body()
+        updated_invite = load_json_body()
         require_fields(updated_invite, ['id'])
 
         success = self.db.update_invitation(updated_invite)
@@ -295,7 +289,7 @@ class UserService:
 
     def _put_update_room(self):
         """Update room settings (temperature/light night/morning)."""
-        updated_room = _load_json_body()
+        updated_room = load_json_body()
         require_fields(updated_room, ['id'])
 
         success = self.db.update_room(updated_room)
@@ -305,7 +299,7 @@ class UserService:
 
     def _put_assign_room(self):
         """Assign the current user to a room, unassigning them from any other room in the same house."""
-        body = _load_json_body()
+        body = load_json_body()
         require_fields(body, ['room_id', 'user_id', 'house_id'])
 
         # First unassign user from all rooms in this house
@@ -318,7 +312,7 @@ class UserService:
 
     def _put_unassign_room(self):
         """Unassign a user from a room (only the assigned user can do this)."""
-        body = _load_json_body()
+        body = load_json_body()
         require_fields(body, ['room_id', 'user_id'])
 
         success = self.db.unassign_room(body['room_id'], body['user_id'])
@@ -328,18 +322,18 @@ class UserService:
 
     def _put_set_active_room(self):
         """Set a room as active for a user, or deactivate all rooms if active=false."""
-        body = _load_json_body()
+        body = load_json_body()
         require_fields(body, ['room_id', 'user_id'])
 
         room_id = body['room_id']
         user_id = body['user_id']
         active = body.get('active', True)  # Default to True if not specified
-        
+
         if active:
             logger.info(f"Setting room {room_id} as active for user {user_id}")
             # First deactivate all other rooms for this user across all houses
             self.db.deactivate_user_rooms(user_id)
-            
+
             # Then activate the requested room
             success = self.db.set_room_active(room_id, user_id)
             if success:
@@ -347,13 +341,9 @@ class UserService:
                 return json.dumps({"status": "success", "message": "Room set as active"})
             raise cherrypy.HTTPError(404, "Room not found or not assigned to user")
         else:
-            logger.info(f"Deactivating room {room_id} for user {user_id}")
-            # Just deactivate the room
-            success = self.db._execute_query("UPDATE rooms SET active = FALSE WHERE id = %s AND user_id = %s", (room_id, user_id))
-            if success:
-                logger.info(f"Room {room_id} is now deactivated")
-                return json.dumps({"status": "success", "message": "Room deactivated"})
-            raise cherrypy.HTTPError(404, "Room not found or not assigned to user")
+            logger.info(f"Deactivating all rooms for user {user_id}")
+            self.db.deactivate_user_rooms(user_id)
+            return json.dumps({"status": "success", "message": "All rooms deactivated for user"})
 
     # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):
@@ -415,9 +405,6 @@ class UserService:
             return json.dumps({"status": "success", "message": "House Member Deleted"})
         raise cherrypy.HTTPError(404, "House Member not found")
 
-    # --------------------------------------------------------
-    # GET METHOD - Retrieve resources
-    # --------------------------------------------------------
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
         if not uri:

@@ -25,7 +25,7 @@ def mqtt_to_regex( topic):
     return "^" + topic + "$"
 
 
-def _load_json_body():
+def load_json_body():
     body = cherrypy.request.body.read()
     try:
         return json.loads(body)

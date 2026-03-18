@@ -1,6 +1,8 @@
 import logging
+import time
+
 from pymongo import MongoClient
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -38,27 +40,26 @@ class MongoDBAdapter:
             raise RuntimeError(f"MongoDB connection failed: {str(e)}")
 
 
+
+    def _delete_stale_in_collection(self, collection, cutoff_epoch, include_non_persistent_only=False):
+        query_numeric = {"last_update": {"$lt": cutoff_epoch}}
+        if include_non_persistent_only:
+            query_numeric["persistent"] = {"$ne": True}
+
+        return collection.delete_many(query_numeric).deleted_count
+
+
 # SERVICES OPERATIONS
     def insert_service(self, service):
         try:
             logger.debug(f"Attempting to insert service: {service}")
-            service["serviceID"] = str(service["serviceID"])
-            # Forza il formato della data
+            service["serviceID"] = int(service["serviceID"])
             if "last_update" in service:
-                try:
-                    service["last_update"] = datetime.strptime(service["last_update"], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    try:
-                        service["last_update"] = datetime.fromisoformat(service["last_update"]).strftime("%Y-%m-%d %H:%M:%S")
-                    except Exception:
-                        service["last_update"] = str(service["last_update"])
+                service["last_update"] = int(service["last_update"])
             # Check for duplicate serviceID
             if self.db.services.find_one({"serviceID": service["serviceID"]}):
                 logger.warning(f"Service ID {service['serviceID']} already exists (pre-check)")
                 return False
-            # Add insertion timestamp if not present
-            if 'inserted_at' not in service:
-                service['inserted_at'] = datetime.now(timezone.utc)
             result = self.db.services.insert_one(service)
             logger.info(f"Service {service['serviceID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Service data saved - last_update: {service.get('last_update')}, inserted_at: {service.get('inserted_at')}")
@@ -86,20 +87,8 @@ class MongoDBAdapter:
     def update_service_last_update(self, service_id, last_update):
 
         try:
-            service_id = str(service_id)
-            # Forza il formato della data
-            if isinstance(last_update, str):
-                try:
-                    # Prova a convertire, se già nel formato va bene
-                    datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    # Se non è nel formato, prova a convertirlo
-                    try:
-                        last_update = datetime.fromisoformat(last_update).strftime("%Y-%m-%d %H:%M:%S")
-                    except Exception:
-                        last_update = str(last_update)
-            else:
-                last_update = str(last_update)
+            service_id = int(service_id)
+            last_update = int(last_update)
             result = self.db.services.update_one(
                 {"serviceID": service_id},
                 {"$set": {"last_update": last_update}}
@@ -115,8 +104,7 @@ class MongoDBAdapter:
 
     def delete_service(self, service_id):
         try:
-            # Ensure service_id is always a string for query
-            service_id = str(service_id)
+            service_id = int(service_id)
             result = self.db.services.delete_one({"serviceID": service_id})
             if result.deleted_count > 0:
                 logger.info(f"Service {service_id} deleted successfully")
@@ -138,19 +126,27 @@ class MongoDBAdapter:
             return []
 
     def delete_stale(self, ttl_seconds):
-        cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=ttl_seconds)
-        cutoff_str = cutoff_time.strftime("%Y-%m-%d %H:%M:%S")
+        cutoff_epoch = int(datetime.now(timezone.utc).timestamp()) - int(ttl_seconds)
         total_deleted = 0
-        # Elimina servizi
-        result_services = self.db.services.delete_many({"last_update": {"$lt": cutoff_str}})
-        total_deleted += result_services.deleted_count
-        # Elimina sensori (skip persistent ones)
-        result_sensors = self.db.sensors.delete_many({"last_update": {"$lt": cutoff_str}, "persistent": {"$ne": True}})
-        total_deleted += result_sensors.deleted_count
-        # Elimina attuatori (skip persistent ones)
-        result_actuators = self.db.actuators.delete_many({"last_update": {"$lt": cutoff_str}, "persistent": {"$ne": True}})
-        total_deleted += result_actuators.deleted_count
-        logger.info(f"Deleted {total_deleted} stale services/sensors/actuators (older than {cutoff_str})")
+        total_deleted += self._delete_stale_in_collection(
+            self.db.services,
+            cutoff_epoch,
+            include_non_persistent_only=False
+        )
+        total_deleted += self._delete_stale_in_collection(
+            self.db.sensors,
+            cutoff_epoch,
+            include_non_persistent_only=True
+        )
+        total_deleted += self._delete_stale_in_collection(
+            self.db.actuators,
+            cutoff_epoch,
+            include_non_persistent_only=True
+        )
+        logger.info(
+            f"Deleted {total_deleted} stale services/sensors/actuators "
+            f"(older than epoch={cutoff_epoch})"
+        )
         return total_deleted
 
     def get_endpoint_Time_series_DB(self):
@@ -182,9 +178,9 @@ class MongoDBAdapter:
     def insert_sensor(self,new_sensor):
         try:
             logger.debug(f"Attempting to insert sensor: {new_sensor}")
-            # Normalize sensorID to string
-            sensor_id = str(new_sensor.get("sensorID")) if new_sensor.get("sensorID") is not None else None
-            room_id = new_sensor.get("roomID") or new_sensor.get("room_id")
+            sensor_id = int(new_sensor.get("sensorID")) if new_sensor.get("sensorID") is not None else None
+            room_id = int(new_sensor.get("roomID")) if new_sensor.get("roomID") is not None else None
+
 
             if not sensor_id:
                 logger.warning("Sensor insertion failed: missing sensorID")
@@ -200,8 +196,11 @@ class MongoDBAdapter:
                 logger.warning(f"Sensor ID {sensor_id} already exists in room {room_id} (pre-check)")
                 return False
 
-            # Ensure sensor dict stores string ID
             new_sensor["sensorID"] = sensor_id
+            new_sensor["roomID"] = room_id
+            new_sensor["houseID"] = int(new_sensor.get("houseID", 0)) if new_sensor.get("houseID") is not None else None
+            if "last_update" in new_sensor:
+                new_sensor["last_update"] = int(new_sensor["last_update"])
             result = self.db.sensors.insert_one(new_sensor)
             logger.info(f"Sensor {new_sensor['sensorID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Sensor data saved - last_update: {new_sensor.get('last_update')}, inserted_at: {new_sensor.get('inserted_at')}")
@@ -212,9 +211,7 @@ class MongoDBAdapter:
     def delete_sensor(self, sensor_id, room_id=None):
 
         try:
-            # Forza la conversione a stringa per evitare mismatch
-            sensor_id = str(sensor_id)
-            # Build deletion query; include room if provided to avoid accidental deletions across rooms
+            sensor_id = int(sensor_id)
             query = {"sensorID": sensor_id}
             if room_id:
                 query["roomID"] = room_id
@@ -230,6 +227,8 @@ class MongoDBAdapter:
     def update_sensor_last_update(self, sensor_id, last_update):
 
         try:
+            sensor_id = int(sensor_id)
+            last_update = int(last_update)
             logger.debug(f"Updating sensor {sensor_id} last_update to: {last_update} (type: {type(last_update).__name__})")
 
             result = self.db.sensors.update_one(
@@ -251,10 +250,10 @@ class MongoDBAdapter:
             # Determine actuator id key (support both ActuatorID and actuatorID payloads)
             actuator_id = None
             if new_actuator.get("ActuatorID") is not None:
-                actuator_id = str(new_actuator.get("ActuatorID"))
+                actuator_id = int(new_actuator.get("ActuatorID"))
                 id_key = "ActuatorID"
             elif new_actuator.get("actuatorID") is not None:
-                actuator_id = str(new_actuator.get("actuatorID"))
+                actuator_id = int(new_actuator.get("actuatorID"))
                 id_key = "actuatorID"
             else:
                 logger.warning("Actuator insertion failed: missing ActuatorID/actuatorID")
@@ -274,6 +273,11 @@ class MongoDBAdapter:
 
             # Ensure payload has consistent key format: keep original key but normalize stored value to string
             new_actuator[id_key] = actuator_id
+            new_actuator["roomID"] = int(room_id) if room_id is not None else None
+            new_actuator["houseID"] = int(new_actuator.get("houseID")) if new_actuator.get("houseID") is not None else None
+
+            if "last_update" in new_actuator:
+                new_actuator["last_update"] = int(new_actuator["last_update"])
             result = self.db.actuators.insert_one(new_actuator)
             logger.info(f"Actuator {actuator_id} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Actuator data saved - last_update: {new_actuator.get('last_update')}, inserted_at: {new_actuator.get('inserted_at')}")
@@ -284,10 +288,7 @@ class MongoDBAdapter:
     def delete_actuator(self, actuator_id, room_id=None):
 
         try:
-            # Forza la conversione a stringa per evitare mismatch
-            actuator_id = str(actuator_id)
-            # Try both possible field names when building the query
-            # Prefer the canonical field names present in the DB documents
+            actuator_id = int(actuator_id)
             query = {"ActuatorID": actuator_id}
             if room_id:
                 query["roomID"] = room_id
@@ -295,7 +296,7 @@ class MongoDBAdapter:
             if result.deleted_count > 0:
                 logger.info(f"Actuator {actuator_id} deleted successfully (room={room_id})")
                 return True
-            # Fall back to lower-case key
+            # Fall back to lower-case query
             query = {"actuatorID": actuator_id}
             if room_id:
                 query["roomID"] = room_id
@@ -311,6 +312,8 @@ class MongoDBAdapter:
     def update_actuator_last_update(self, actuator_id, last_update):
 
         try:
+            actuator_id = int(actuator_id)
+            last_update = int(last_update)
             logger.debug(f"Updating actuator {actuator_id} last_update to: {last_update} (type: {type(last_update).__name__})")
 
             # Try both possible field names when building the query
@@ -322,7 +325,7 @@ class MongoDBAdapter:
             if result.matched_count > 0:
                 logger.info(f"Actuator {actuator_id} last_update timestamp updated to {last_update}")
                 return True
-            # Fall back to lower-case key
+            # Fall back to lower-case query
             query = {"actuatorID": actuator_id}
             result = self.db.actuators.update_one(
                 query,
@@ -357,9 +360,6 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error retrieving actuators for room {room_id}: {e}")
             return []
-    # ================================================================
-    # CONNECTION MANAGEMENT
-    # ================================================================
 
     def close(self):
         """Close the database connection."""

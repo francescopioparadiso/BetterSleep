@@ -26,18 +26,18 @@ logger = logging.getLogger(__name__)
 
 def check_if_is_a_service(new_service):
     """Validate that the service contains all required fields."""
-    required_fields = ['serviceID','name','type','endpoint','last_update']
+    required_fields = ['serviceID','name','type','endpoint']
     require_fields(new_service, required_fields)
 
 
 def check_if_is_a_sensor(new_sensor):
     """Validate that the sensor contains all required fields."""
-    required_fields = ['sensorID','name','type','last_update']
+    required_fields = ['sensorID','name','type']
     require_fields(new_sensor, required_fields)
 
 def check_if_is_an_actuator(new_actuator):
     """Validate that the actuator contains all required fields."""
-    required_fields = ['ActuatorID','name','type','endpoint','last_update']
+    required_fields = ['ActuatorID','name','type','endpoint']
     require_fields(new_actuator, required_fields)
 
 def require_fields(payload, required_fields):
@@ -57,7 +57,6 @@ def _load_json_body():
     except Exception as e:
         logger.error(f"Unexpected error parsing request body: {e}")
         raise cherrypy.HTTPError(400, "Error parsing request body")
-
 
 class Catalog:
 
@@ -116,6 +115,7 @@ class Catalog:
         try:
             new_service = _load_json_body()
             check_if_is_a_service(new_service)
+            new_service['last_update'] = time.time()
             success = self.db.insert_service(new_service)
 
             if success:
@@ -131,6 +131,7 @@ class Catalog:
         """Add a new sensor to the catalog."""
         new_sensor = _load_json_body()
         check_if_is_a_sensor(new_sensor)
+        new_sensor['last_update'] = time.time()
         success = self.db.insert_sensor(new_sensor)
         if success:
             return json.dumps({"status": "success", "message": "Sensor Added"})
@@ -139,6 +140,7 @@ class Catalog:
         """Add a new actuator to the catalog."""
         new_actuator = _load_json_body()
         check_if_is_an_actuator(new_actuator)
+        new_actuator['last_update'] = time.time()
         success = self.db.insert_actuator(new_actuator)
         if success:
             return json.dumps({"status": "success", "message": "Actuator Added"})
@@ -169,6 +171,7 @@ class Catalog:
         """Update an existing service in the catalog."""
         updated_service = _load_json_body()
         check_if_is_a_service(updated_service)
+        updated_service['last_update'] = time.time()
 
         success = self.db.update(updated_service)
         if success:
@@ -180,9 +183,10 @@ class Catalog:
         """Update the last_update timestamp of a service."""
         try:
             updated_service = _load_json_body()
-            require_fields(updated_service, ['serviceID', 'last_update'])
+            require_fields(updated_service, ['serviceID'])
+            updated_service['last_update'] = time.time()
 
-            success = self.db.update_service_last_update(updated_service['serviceID'], updated_service['last_update'])
+            success = self.db.update_service_last_update(int(updated_service['serviceID']), updated_service['last_update'])
             if success:
                 return json.dumps({"status": "success", "message": "Service last_update updated"})
 
@@ -198,10 +202,9 @@ class Catalog:
         """Update the last_update timestamp of a sensor."""
         updated_sensor = _load_json_body()
         sensor_id = updated_sensor.get('sensorID') or updated_sensor.get('serviceID')
-        require_fields(updated_sensor, ['last_update'])
         if not sensor_id:
             raise cherrypy.HTTPError(400, "Missing 'sensorID' or 'serviceID'")
-        success = self.db.update_sensor_last_update(sensor_id, updated_sensor['last_update'])
+        success = self.db.update_sensor_last_update(int(sensor_id), time.time())
         if success:
             return json.dumps({"status": "success", "message": "Sensor last_update updated"})
         raise cherrypy.HTTPError(404, "The Sensor ID does not exist")
@@ -209,8 +212,8 @@ class Catalog:
     def _put_update_actuator_last_update(self):
         """Update the last_update timestamp of an actuator."""
         updated_actuator = _load_json_body()
-        require_fields(updated_actuator, ['ActuatorID', 'last_update'])
-        success = self.db.update_actuator_last_update(updated_actuator['ActuatorID'], updated_actuator['last_update'])
+        require_fields(updated_actuator, ['ActuatorID'])
+        success = self.db.update_actuator_last_update(int(updated_actuator['ActuatorID']), time.time())
         if success:
             return json.dumps({"status": "success", "message": "Actuator last_update updated"})
         raise cherrypy.HTTPError(404, "The Actuator ID does not exist")
@@ -236,8 +239,7 @@ class Catalog:
         service_id = params.get('serviceID')
         if not service_id:
             raise cherrypy.HTTPError(400, "Missing 'serviceID' parameter")
-
-        success = self.db.delete_service(service_id)
+        success = self.db.delete_service(int(service_id))
         if success:
             return json.dumps({"status": "success", "message": "Service Deleted"})
         raise cherrypy.HTTPError(404, "Service not found")
@@ -249,7 +251,7 @@ class Catalog:
         if not service_id:
             raise cherrypy.HTTPError(400, "Missing 'sensorID' parameter")
         # Pass room_id to delete_sensor to scope deletion to specific room when provided
-        success = self.db.delete_sensor(service_id, room_id)
+        success = self.db.delete_sensor(int(service_id), int(room_id) if room_id else None)
         if success:
             return json.dumps({"status": "success", "message": "Sensor Deleted"})
         raise cherrypy.HTTPError(404, "Sensor not found")
@@ -260,7 +262,7 @@ class Catalog:
         if not actuator_id:
             raise cherrypy.HTTPError(400, "Missing 'ActuatorID' parameter")
         # Pass room_id to delete_actuator to scope deletion to specific room when provided
-        success = self.db.delete_actuator(actuator_id, room_id)
+        success = self.db.delete_actuator(int(actuator_id), int(room_id) if room_id else None)
         if success:
             return json.dumps({"status": "success", "message": "Actuator Deleted"})
         raise cherrypy.HTTPError(404, "Actuator not found")

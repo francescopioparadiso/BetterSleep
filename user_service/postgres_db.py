@@ -242,9 +242,6 @@ class PostgresDB:
 
     def get_user_room_preferences(self, bedroom_id):
         """Get user and room preferences separately for two-level caching.
-
-        Returns a dictionary with 'user_preferences' and 'room_preferences' keys,
-        or None if the room or user is not found.
         """
         query = "SELECT temperature_night, temperature_morning, light_night, light_morning, user_id, house_id FROM rooms WHERE id = %s"
         result1 = self._execute_query(query, (bedroom_id,), fetch=True, single=True)

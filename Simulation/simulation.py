@@ -1,12 +1,8 @@
-import json
 import logging
 import math
 import os
 import sys
-import threading
-import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 logging.basicConfig(
@@ -22,7 +18,7 @@ from device_connector.Simulate_Sensor import *
 from common.MQTT.MyMQTT import MyMQTT
 import  requests
 
-CYCLE_LENGHT = 90
+SLEEP_CYCLE_LENGTH_MINUTES = 90
 class MQTTSubscriber:
 
     def __init__(self, broker, port, userid, houseid, bedroomid, initial_light=50):
@@ -241,8 +237,8 @@ def get_sleep_phase(minute_of_night):
         return "AWAKE"
 
   
-    cycle_number = minute_of_night // CYCLE_LENGHT
-    minute_in_cycle = minute_of_night % CYCLE_LENGHT
+    cycle_number = minute_of_night // SLEEP_CYCLE_LENGTH_MINUTES
+    minute_in_cycle = minute_of_night % SLEEP_CYCLE_LENGTH_MINUTES
 
     deep_end = max(10, 30 - cycle_number * 7)
     light1_end = deep_end + 15
@@ -313,9 +309,11 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
     sensors_config = config["sensors"]
     actuators_config = config["actuators"]
     thermal_config = config["thermal_dynamics"]
-    filepath = f"SimulationStats_User{user.userid}_{window.label}.txt"
+    filepath = f"SimulationStats/SimulationStats_User{user.userid}_{window.label}.txt"
 
     logger.info(f"Starting simulation ({window.label}) for user {user.userid} in house {user.houseid}, bedroom {user.bedroomid}")
+    if not os.path.exists("SimulationStats"):
+        os.makedirs("SimulationStats")
     with open(filepath, "w") as f:
         f.write(f"Simulation Stats for User {user.userid} | House {user.houseid} Bedroom {user.bedroomid} | Window {window.label}\n")
     sensor_configs = {}
