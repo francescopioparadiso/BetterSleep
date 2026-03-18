@@ -30,7 +30,7 @@ if __name__ == "__main__":
 
     port = 1883
     clientID = "testPublisher"
-    
+    broker= "localhost"
     userid = "1"
     
     night_hr, night_min = 22, 0

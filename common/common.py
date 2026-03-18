@@ -2,7 +2,7 @@ import json
 import logging
 
 import cherrypy
-from common.MQTT.MyMQTT import MyMQTT
+from common.MyMQTT import MyMQTT
 
 
 def json_error_page(status, message, traceback, version):

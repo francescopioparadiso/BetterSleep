@@ -15,7 +15,7 @@ os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 
 
 from device_connector.Simulate_Sensor import *
-from common.MQTT.MyMQTT import MyMQTT
+from common.MyMQTT import MyMQTT
 import  requests
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90

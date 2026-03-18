@@ -202,8 +202,10 @@ class BedAnalytics:
         self._worker = None
         self.actualTime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.catalog_client = CatalogClient(self.catalog_url, self.service_info, self.remove_interval)
-        self.catalog_client.register()
         self.timeseries_endpoint = self.get_endpoint_timeseries()
+
+        self.catalog_client.register()
+
         self.mqtt_client = None
         self.MQTT_info = conf['MQTT']
         self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']
@@ -221,8 +223,8 @@ class BedAnalytics:
                 self.logger.error("Timeseries endpoint not found in Catalog response")
                 return None
         else:
-            self.logger.error(f"Error retrieving Timeseries endpoint: {status} - {error}")
-            return None
+            self.logger.error(f"Failed to retrieve timeseries endpoint from Catalog: {status} - {error} Stopping service.")
+            sys.exit(1)
 
     def init_mqtt_client(self):
         try:
