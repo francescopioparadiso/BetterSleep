@@ -15,10 +15,15 @@
       "username": "admin",
       "password": "password_mongo",
       "database": "catalogdb"
-  },
-  "broker": {
-    "host": "localhost",
-    "port": 1883
+    },
+  "MQTT": {
+    "broker": "localhost",
+    "port": 1883,
+    "clientID": "CatalogServicePublisher",
+    "topic_publish": [
+     "Catalog/ActuatorAdded/House/{houseID}/Bedroom/{roomID}",
+     "Catalog/ActuatorRemoved/House/{houseID}/Bedroom/{roomID}"
+    ]
   },
   "service_cleanup": {
     "interval_seconds": 10,

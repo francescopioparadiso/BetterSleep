@@ -1,14 +1,10 @@
-import sys
 import os
+import sys
 
-# This tells Python to add the parent directory to its searchable paths
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from common.common import load_json_body, json_error_page, init_mqtt_helper
-
 import json
 import logging
-from datetime import datetime
 import cherrypy
 from postgres_db import PostgresDB
 from common import catalog_client

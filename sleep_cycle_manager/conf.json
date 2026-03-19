@@ -12,7 +12,9 @@
     "topic_subscribe": [
       "House/+/Bedroom/+/sensor/+/+/data",
       "House/+/Bedroom/+/actuator/+/data",
-      "UserService/ChangePreference/#"
+      "UserService/ChangePreference/#",
+      "Catalog/ActuatorAdded/House/+/Bedroom/+",
+      "Catalog/ActuatorRemoved/House/+/Bedroom/+"
     ],
     "topic_publish": [
       "House/{houseID}/Bedroom/{bedroomid}/actuator/{device}/command",

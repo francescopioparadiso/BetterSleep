@@ -7,7 +7,18 @@ Content-Type: application/json
   "name": "Time Shift 001",
   "endpoint": "http://localhost:8080/timeShift",
   "type": "Time Shift",
-  "last_update": "2024-06-01T12:00:00Z"
+  "last_update": "1773903560"
+}
+###
+POST http://localhost:8080/addActuator
+Content-Type: application/json
+
+{
+  "actuatorID": "1",
+  "name": "Actuator 001",
+  "endpoint": "http://localhost:8080/actuatorEndpoint",
+  "type": "Light Control",
+  "last_update": "1773903560"
 }
 ###
 DELETE http://localhost:8080/removeService?serviceID=Time Shift 001

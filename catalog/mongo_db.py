@@ -41,14 +41,21 @@ class MongoDBAdapter:
 
 
 
-    def _delete_stale_in_collection(self, collection, cutoff_epoch):
+    def _delete_stale_in_collection(self, collection, cutoff_epoch, return_docs=False):
         query_numeric = {"last_update": {"$lt": cutoff_epoch}}
 
+        stale_docs = None
+        if return_docs:
+            try:
+                stale_docs = list(collection.find(query_numeric, {"_id": 0}))
+            except Exception as e:
+                logger.error(f"Error reading stale documents for publishing: {e}")
+                stale_docs = []
 
-        return collection.delete_many(query_numeric).deleted_count
+        deleted_count = collection.delete_many(query_numeric).deleted_count
+        return deleted_count, stale_docs
 
-
-# SERVICES OPERATIONS
+    # SERVICES OPERATIONS
     def insert_service(self, service):
         try:
             logger.debug(f"Attempting to insert service: {service}")
@@ -127,23 +134,21 @@ class MongoDBAdapter:
     def delete_stale(self, ttl_seconds):
         cutoff_epoch = int(datetime.now(timezone.utc).timestamp()) - int(ttl_seconds)
         total_deleted = 0
-        total_deleted += self._delete_stale_in_collection(
-            self.db.services,
-            cutoff_epoch,
-        )
-        total_deleted += self._delete_stale_in_collection(
-            self.db.sensors,
-            cutoff_epoch,
-        )
-        total_deleted += self._delete_stale_in_collection(
-            self.db.actuators,
-            cutoff_epoch,
-        )
+
+        del_services, _ = self._delete_stale_in_collection(self.db.services, cutoff_epoch)
+        total_deleted += del_services
+
+        del_sensors, _ = self._delete_stale_in_collection(self.db.sensors, cutoff_epoch)
+        total_deleted += del_sensors
+
+        del_actuators, stale_actuators = self._delete_stale_in_collection(self.db.actuators, cutoff_epoch, return_docs=True)
+        total_deleted += del_actuators
+
         logger.info(
             f"Deleted {total_deleted} stale services/sensors/actuators "
             f"(older than epoch={cutoff_epoch})"
         )
-        return total_deleted
+        return total_deleted, (stale_actuators or [])
 
     def get_endpoint_Time_series_DB(self):
 

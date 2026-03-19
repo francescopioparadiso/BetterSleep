@@ -26,11 +26,20 @@ def mqtt_to_regex( topic):
 
 
 def load_json_body():
+    """Read and parse request JSON body, raising HTTP 400 on errors.
+
+    This is the single shared helper all services should import and use.
+    It logs JSON errors and returns a parsed object on success.
+    """
     body = cherrypy.request.body.read()
     try:
         return json.loads(body)
-    except Exception:
+    except json.JSONDecodeError as e:
+        logging.getLogger(__name__).error(f"Invalid JSON format in request body: {e}")
         raise cherrypy.HTTPError(400, "Invalid JSON format")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Unexpected error parsing request body: {e}")
+        raise cherrypy.HTTPError(400, "Error parsing request body")
 
 
 def init_mqtt_helper(service_instance, mqtt_info, logger=None, clientid_fallback=None):
@@ -73,6 +82,4 @@ def init_mqtt_helper(service_instance, mqtt_info, logger=None, clientid_fallback
     except Exception as e:
         logger.error(f"Error initializing MQTT client: {e}")
         return None
-
-
 

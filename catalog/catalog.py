@@ -11,7 +11,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.common import json_error_page
+# Use the single shared load_json_body helper from common.common
+from common.common import json_error_page, load_json_body, init_mqtt_helper
+# Note: local duplicates removed; all modules should use `load_json_body`.
 from mongo_db import MongoDBAdapter
 
 # Configure logging with DEBUG level
@@ -44,27 +46,48 @@ def require_fields(payload, required_fields):
     if not all(field in payload for field in required_fields):
         raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 
-def _load_json_body():
-    body = cherrypy.request.body.read()
-    try:
-        return json.loads(body)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON format in request body: {e}")
-        raise cherrypy.HTTPError(400, "Invalid JSON format")
-    except Exception as e:
-        logger.error(f"Unexpected error parsing request body: {e}")
-        raise cherrypy.HTTPError(400, "Error parsing request body")
 
 class Catalog:
 
     exposed = True
 
-    def __init__(self, db_adaptor, cleanup_interval_s=30, service_ttl_s=60):
+    def __init__(self, db_adaptor, cleanup_interval_s=30, service_ttl_s=60, mqtt_conf=None):
         self.db = db_adaptor
         self.cleanup_interval_s = cleanup_interval_s
         self.service_ttl_s = service_ttl_s
         self._stop_event = threading.Event()
         self._worker = None
+        self.mqtt_client = None
+        self.mqtt_topic_actuator_added = None
+        self.mqtt_topic_actuator_removed = None
+
+        self._init_mqtt(mqtt_conf or {})
+
+    def _init_mqtt(self, mqtt_conf):
+        try:
+            topics = mqtt_conf.get("topic_publish", {})
+
+            if len(topics) >= 1:
+                self.mqtt_topic_actuator_added = topics[0]
+            if len(topics) >= 2:
+                self.mqtt_topic_actuator_removed = topics[1]
+
+            self.mqtt_client = init_mqtt_helper(
+                self,
+                mqtt_conf,
+                logger=logger,
+                clientid_fallback=lambda: mqtt_conf.get("clientID", "CatalogServicePublisher"),
+            )
+            if self.mqtt_client and (self.mqtt_topic_actuator_added or self.mqtt_topic_actuator_removed):
+                logger.info(
+                    f"MQTT publisher initialised (broker={mqtt_conf.get('broker')}:{mqtt_conf.get('port')}, "
+                    f"topics={[t for t in [self.mqtt_topic_actuator_added, self.mqtt_topic_actuator_removed] if t]})"
+                )
+            elif not self.mqtt_client:
+                logger.warning("MQTT publishing disabled: missing/invalid MQTT config")
+        except Exception as e:
+            logger.error(f"Failed to initialise MQTT publisher: {e}")
+            self.mqtt_client = None
 
     def start_cleanup_loop(self):
         if self._worker is not None:
@@ -73,9 +96,12 @@ class Catalog:
         def _loop():
             while not self._stop_event.is_set():
                 try:
-                    deleted = self.db.delete_stale(self.service_ttl_s)
+                    deleted, stale_actuators = self.db.delete_stale(self.service_ttl_s)
                     if deleted > 0:
                         print(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
+                    if stale_actuators:
+                        for act in stale_actuators:
+                            self.publish_actuator_removed(act)
                 except Exception as e:
                     print(f"Error during cleanup loop: {e}")
                 time.sleep(self.cleanup_interval_s)
@@ -88,6 +114,14 @@ class Catalog:
         if self._worker is not None:
             self._worker.join(timeout=10)
             self._worker = None
+
+    def stop_mqtt(self):
+        if self.mqtt_client:
+            try:
+                self.mqtt_client.stop()
+            except Exception as e:
+                logger.error(f"Error stopping MQTT client: {e}")
+            self.mqtt_client = None
 
     # POST METHOD - Create new resources
     def POST(self, *uri, **params):
@@ -110,7 +144,7 @@ class Catalog:
     def _post_add_service(self):
         """Add a new service to the catalog."""
         try:
-            new_service = _load_json_body()
+            new_service = load_json_body()
             check_if_is_a_service(new_service)
             new_service['last_update'] = time.time()
             success = self.db.insert_service(new_service)
@@ -126,7 +160,7 @@ class Catalog:
 
     def _post_add_sensor(self):
         """Add a new sensor to the catalog."""
-        new_sensor = _load_json_body()
+        new_sensor = load_json_body()
         check_if_is_a_sensor(new_sensor)
         new_sensor['last_update'] = time.time()
         success = self.db.insert_sensor(new_sensor)
@@ -135,11 +169,12 @@ class Catalog:
         raise cherrypy.HTTPError(409, "The Sensor ID already exists")
     def _post_add_actuator(self):
         """Add a new actuator to the catalog."""
-        new_actuator = _load_json_body()
+        new_actuator = load_json_body()
         check_if_is_an_actuator(new_actuator)
         new_actuator['last_update'] = time.time()
         success = self.db.insert_actuator(new_actuator)
         if success:
+            self.publish_actuator_added(new_actuator)
             return json.dumps({"status": "success", "message": "Actuator Added"})
         raise cherrypy.HTTPError(409, "The Actuator ID already exists")
     # PUT METHOD - Update existing resources
@@ -166,7 +201,7 @@ class Catalog:
 
     def _put_update_service(self):
         """Update an existing service in the catalog."""
-        updated_service = _load_json_body()
+        updated_service = load_json_body()
         check_if_is_a_service(updated_service)
         updated_service['last_update'] = time.time()
 
@@ -179,7 +214,7 @@ class Catalog:
     def _put_update_service_last_update(self):
         """Update the last_update timestamp of a service."""
         try:
-            updated_service = _load_json_body()
+            updated_service = load_json_body()
             require_fields(updated_service, ['serviceID'])
             updated_service['last_update'] = time.time()
 
@@ -197,7 +232,7 @@ class Catalog:
 
     def _put_update_sensor_last_update(self):
         """Update the last_update timestamp of a sensor."""
-        updated_sensor = _load_json_body()
+        updated_sensor = load_json_body()
         sensor_id = updated_sensor.get('sensorID') or updated_sensor.get('serviceID')
         if not sensor_id:
             raise cherrypy.HTTPError(400, "Missing 'sensorID' or 'serviceID'")
@@ -208,7 +243,7 @@ class Catalog:
 
     def _put_update_actuator_last_update(self):
         """Update the last_update timestamp of an actuator."""
-        updated_actuator = _load_json_body()
+        updated_actuator = load_json_body()
         require_fields(updated_actuator, ['ActuatorID'])
         success = self.db.update_actuator_last_update(int(updated_actuator['ActuatorID']), time.time())
         if success:
@@ -258,9 +293,9 @@ class Catalog:
         room_id = params.get('roomID')
         if not actuator_id:
             raise cherrypy.HTTPError(400, "Missing 'ActuatorID' parameter")
-        # Pass room_id to delete_actuator to scope deletion to specific room when provided
         success = self.db.delete_actuator(int(actuator_id), int(room_id) if room_id else None)
         if success:
+            self.publish_actuator_removed({"ActuatorID": actuator_id, "roomID": room_id})
             return json.dumps({"status": "success", "message": "Actuator Deleted"})
         raise cherrypy.HTTPError(404, "Actuator not found")
 
@@ -377,6 +412,62 @@ class Catalog:
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
 
+    def publish_actuator_added(self, new_actuator):
+        if not self.mqtt_client or not self.mqtt_topic_actuator_added:
+            logger.warning("MQTT publish skipped: client or topic not available")
+            return
+
+        room_id = new_actuator.get("roomID") or new_actuator.get("room_id")
+        house_id = new_actuator.get("houseID") or new_actuator.get("house_id")
+        actuator_id = new_actuator.get("ActuatorID") or new_actuator.get("actuatorID")
+        actuator_type = new_actuator.get("type")
+
+        if room_id is None or house_id is None:
+            logger.warning("Actuator added without houseID/roomID; MQTT publication skipped")
+            return
+
+        topic = self.mqtt_topic_actuator_added.format(houseID=house_id, roomID=room_id)
+        payload = {
+            "house_id": house_id,
+            "room_id": room_id,
+            "actuator_id": actuator_id,
+            "type": actuator_type,
+            "name": new_actuator.get("name"),
+        }
+        try:
+            self.mqtt_client.myPublish(topic, payload)
+            logger.info(f"Published actuator-added event to {topic}: {payload}")
+        except Exception as e:
+            logger.error(f"Failed to publish actuator-added event: {e}")
+
+    def publish_actuator_removed(self, actuator_info):
+        if not self.mqtt_client or not self.mqtt_topic_actuator_removed:
+            logger.warning("MQTT publish skipped: client or removal topic not available")
+            return
+
+        room_id = actuator_info.get("roomID") or actuator_info.get("room_id")
+        house_id = actuator_info.get("houseID") or actuator_info.get("house_id")
+        actuator_id = actuator_info.get("ActuatorID") or actuator_info.get("actuatorID")
+        actuator_type = actuator_info.get("type")
+
+        if room_id is None or house_id is None:
+            logger.warning("Actuator removal without houseID/roomID; MQTT publication skipped")
+            return
+
+        topic = self.mqtt_topic_actuator_removed.format(houseID=house_id, roomID=room_id)
+        payload = {
+            "house_id": house_id,
+            "room_id": room_id,
+            "actuator_id": actuator_id,
+            "type": actuator_type,
+        }
+        try:
+            self.mqtt_client.myPublish(topic, payload)
+            logger.info(f"Published actuator-removed event to {topic}: {payload}")
+        except Exception as e:
+            logger.error(f"Failed to publish actuator-removed event: {e}")
+
+
 if __name__ == "__main__":
     # CherryPy Configuration
     conf = {
@@ -392,6 +483,7 @@ if __name__ == "__main__":
             full_conf = json.load(f)
             server_conf = full_conf['server']
             db_conf = full_conf['database']
+            mqtt_conf = full_conf.get('MQTT', {})
             cleanup_conf = full_conf.get('service_cleanup', {})
             cleanup_interval_s = cleanup_conf.get('interval_seconds', 30)
             service_ttl_s = cleanup_conf.get('ttl_seconds', 60)
@@ -407,7 +499,7 @@ if __name__ == "__main__":
         logger.error(f"Failed to initialize database connection: {e}")
         sys.exit(1)
     try:
-        catalog = Catalog(my_db_adaptor, cleanup_interval_s, service_ttl_s)
+        catalog = Catalog(my_db_adaptor, cleanup_interval_s, service_ttl_s, mqtt_conf)
         cherrypy.tree.mount(catalog, '/', conf)
 
         # Configure Server Settings
@@ -420,6 +512,7 @@ if __name__ == "__main__":
         print(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
         cherrypy.engine.subscribe('start', catalog.start_cleanup_loop)
         cherrypy.engine.subscribe('stop', catalog.stop_cleanup_loop)
+        cherrypy.engine.subscribe('stop', catalog.stop_mqtt)
         cherrypy.engine.start()
         cherrypy.engine.block()
     except KeyError as e:

@@ -59,6 +59,31 @@ def _count_wake_ups(classified):
     return wake_ups, sleep_hours
 
 
+def _compute_hrv(hr_list):
+    if len(hr_list) < 2:
+        return None
+    sorted_hr = sorted(hr_list, key=lambda m: m["t"])
+    rr_intervals = [60_000.0 / m["v"] for m in sorted_hr if m["v"] > 0]
+    if len(rr_intervals) < 2:
+        return None
+    sq_diffs = [
+        (rr_intervals[i + 1] - rr_intervals[i]) ** 2
+        for i in range(len(rr_intervals) - 1)
+    ]
+    rmssd = math.sqrt(sum(sq_diffs) / len(sq_diffs))
+    return round(rmssd, 1)
+
+
+def _compute_hr_thresholds(hr_list):
+    hr_values = [m["v"] for m in hr_list]
+
+    hr_sorted = sorted(hr_values)
+    rhr = hr_sorted[0]  # Resting Heart Rate is the minimum observed
+    p75_hr = hr_sorted[int(len(hr_sorted) * 0.75)]
+    rem_threshold = rhr + (p75_hr - rhr) * 0.75
+    return rhr, rem_threshold
+
+
 class BedAnalytics:
     exposed = True
 
@@ -206,20 +231,6 @@ class BedAnalytics:
                     f"HRV (RMSSD): {report['hrv_rmssd_ms']} ms | Stage %: {report['stage_percent']} | Avg Temp: {report['avg_temp_degC']}°C")
         return report
 
-    def _compute_hrv(self, hr_list):
-        if len(hr_list) < 2:
-            return None
-        sorted_hr = sorted(hr_list, key=lambda m: m["t"])
-        rr_intervals = [60_000.0 / m["v"] for m in sorted_hr if m["v"] > 0]
-        if len(rr_intervals) < 2:
-            return None
-        sq_diffs = [
-            (rr_intervals[i + 1] - rr_intervals[i]) ** 2
-            for i in range(len(rr_intervals) - 1)
-        ]
-        rmssd = math.sqrt(sum(sq_diffs) / len(sq_diffs))
-        return round(rmssd, 1)
-
     def _get_sleep_state(self, presence, vibration, heart_rate, rhr, rem_threshold):
         if presence != 1:
             return "AWAKE"
@@ -251,15 +262,6 @@ class BedAnalytics:
                 else:
                     sensors[sensor_name] = entry.get("e", [])
         return sensors
-
-    def _compute_hr_thresholds(self, hr_list):
-        hr_values = [m["v"] for m in hr_list]
-
-        hr_sorted = sorted(hr_values)
-        rhr = hr_sorted[0]  # Resting Heart Rate is the minimum observed
-        p75_hr = hr_sorted[int(len(hr_sorted) * 0.75)]
-        rem_threshold = rhr + (p75_hr - rhr) * 0.75
-        return rhr, rem_threshold
 
     def _classify_sleep_stages(self, presence_list, hr_list, vibration_list, rhr, rem_threshold):
         classified = []
@@ -315,7 +317,7 @@ class BedAnalytics:
             return {"error": "No Heart Rate data found"}
         if not presence_list:
             return {"error": "No Presence data found — cannot determine time in bed"}
-        rhr, rem_threshold = self._compute_hr_thresholds(hr_list)
+        rhr, rem_threshold = _compute_hr_thresholds(hr_list)
         classified = self._classify_sleep_stages(
             presence_list, hr_list, vibration_list, rhr, rem_threshold
         )
@@ -326,7 +328,7 @@ class BedAnalytics:
             round(sum(m["v"] for m in temp_list) / len(temp_list), 1)
             if temp_list else None
         )
-        hrv_rmssd = self._compute_hrv(hr_list)
+        hrv_rmssd = _compute_hrv(hr_list)
         score, quality = self._compute_sleep_score(sleep_hours, wake_ups, pct, avg_temp)
         return {
             "sleep_score":   score,

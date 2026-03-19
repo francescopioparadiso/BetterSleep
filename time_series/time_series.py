@@ -20,13 +20,6 @@ def require_fields(payload, required_fields):
     if not all(field in payload for field in required_fields):
         raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 
-def _load_json_body():
-    body = cherrypy.request.body.read()
-    try:
-        return json.loads(body)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON format in request body: {e}")
-        raise cherrypy.HTTPError(400, "Invalid JSON format")
 
 def checkSenML(newmeasurament):
     required_top = ["bn", "e"]

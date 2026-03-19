@@ -280,6 +280,10 @@ class SleepCycleManager:
                 self._handle_actuator_topic(topic, message_received)
             elif index == 2:
                 self._handle_preference_topic(topic, message_received)
+            elif index == 3:
+                self._handle_catalog_actuator_added(topic, message_received)
+            elif index == 4:
+                self._handle_catalog_actuator_removed(topic, message_received)
             return
 
         self.logger.warning(f"Message on unrecognised topic: {topic}")
@@ -376,6 +380,55 @@ class SleepCycleManager:
             self._update_user_preferences(entity_id, msg)
         else:
             self.logger.warning(f"Unhandled preference topic: {topic}")
+
+    def _handle_catalog_actuator_added(self, topic, msg):
+        parts = topic.split("/")
+        if len(parts) < 6:
+            self.logger.warning(f"Invalid actuator-added topic: {topic}")
+            return
+
+        room_id = parts[5]
+        actuator_type = msg.get("type")
+
+        with self._lock:
+            if actuator_type:
+                existing = self._actuator_cache.get(room_id, [])
+                if actuator_type not in existing:
+                    existing.append(actuator_type)
+                    self._actuator_cache[room_id] = existing
+                    self.logger.info(f"Actuator cache updated for room {room_id}: added {actuator_type}")
+                else:
+                    self.logger.info(f"Actuator cache already contained {actuator_type} for room {room_id}")
+            else:
+                evicted = self._actuator_cache.pop(room_id, None)
+                if evicted is not None:
+                    self.logger.info(f"Actuator cache invalidated for room {room_id} after catalog event")
+
+    def _handle_catalog_actuator_removed(self, topic, msg):
+        parts = topic.split("/")
+        if len(parts) < 6:
+            self.logger.warning(f"Invalid actuator-removed topic: {topic}")
+            return
+
+        room_id = parts[5]
+        actuator_type = msg.get("type")
+
+        with self._lock:
+            if actuator_type:
+                existing = self._actuator_cache.get(room_id, [])
+                if actuator_type in existing:
+                    existing = [t for t in existing if t != actuator_type]
+                    if existing:
+                        self._actuator_cache[room_id] = existing
+                    else:
+                        self._actuator_cache.pop(room_id, None)
+                    self.logger.info(f"Actuator cache updated for room {room_id}: removed {actuator_type}")
+                else:
+                    self.logger.info(f"Actuator cache did not contain {actuator_type} for room {room_id}")
+            else:
+                evicted = self._actuator_cache.pop(room_id, None)
+                if evicted is not None:
+                    self.logger.info(f"Actuator cache invalidated for room {room_id} after removal event")
 
     def _update_user_preferences(self, userid, msg):
         keys = [k for k in ("night_time", "morning_time") if k in msg]
