@@ -109,7 +109,7 @@ struct HouseView: View {
                                                 .font(.title)
                                                 .foregroundColor(.yellow)
                                                 .padding(6)
-                                                .shadow(color: .yellow, radius: 20, x: 0, y: 0)
+                                                .shadow(color: .yellow, radius: 10, x: 0, y: 0)
                                         } else {
                                             Text(flagForHouse(house.name))
                                                 .font(.title)

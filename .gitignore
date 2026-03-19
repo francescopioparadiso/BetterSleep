@@ -4,4 +4,4 @@ telegram_bot/.env
 *.pyc
 /simulation/SimulationStats
 /simulation/test_cycle.log
-
+.DS_Store

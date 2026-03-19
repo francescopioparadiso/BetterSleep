@@ -19,7 +19,7 @@ struct ProfileView: View {
                                 Image(systemName: "person.crop.circle.fill")
                                     .font(.system(size: 80))
                                     .foregroundColor(.blue)
-                                    .shadow(color: .blue, radius: 30, x: 0, y: 0)
+                                    .shadow(color: .blue, radius: 12, x: 0, y: 0)
                                     .padding(.top, 48)
                                 
                                 // Display the email, falling back to "Account Settings" if empty

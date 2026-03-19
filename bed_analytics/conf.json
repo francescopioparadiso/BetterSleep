@@ -17,9 +17,9 @@
   "catalogURL": "http://localhost:8080",
   "removeInterval": 10,
   "IDEAL_TEMP": 20.0,
-  "VIBRATION_LIMIT": 0.01,
+  "VIBRATION_LIMIT": 0.015,
   "MIN_SLEEP_HOURS": 6.5,
-  "MAX_WAKE_UPS": 2,
+  "MAX_WAKE_UPS": 3,
   "MIN_DEEP_PCT": 15.0,
   "MIN_REM_PCT": 18.0,
   "TEMP_TOLERANCE": 2.0

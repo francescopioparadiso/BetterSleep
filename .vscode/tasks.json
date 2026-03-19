@@ -31,31 +31,49 @@
         {
             "label": "TimeSeries",
             "type": "shell",
-            "command": "python3 time_series_db_adaptop.py",
+            "command": "python3 time_series.py",
             "options": { "cwd": "${workspaceFolder}/time_series" },
             "presentation": { "group": "servers", "panel": "dedicated" },
             "isBackground": true,
             "problemMatcher": []
         },
         {
+            "label": "BedAnalytics",
+            "type": "shell",
+            "command": "python3 bed_analytics.py",
+            "options": { "cwd": "${workspaceFolder}/bed_analytics" },
+            "presentation": { "group": "servers", "panel": "dedicated" },
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "SleepCycleManager",
+            "type": "shell",
+            "command": "python3 sleep_cycle_manager.py",
+            "options": { "cwd": "${workspaceFolder}/sleep_cycle_manager" },
+            "presentation": { "group": "servers", "panel": "dedicated" },
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
             "label": "🚀 Start All Servers",
-            "dependsOn": ["Database", "Catalog", "User Service", "TimeSeries"],
+            "dependsOn": ["Database", "Catalog", "User Service", "TimeSeries", "BedAnalytics", "SleepCycleManager"],
             "dependsOrder": "parallel",
             "problemMatcher": []
         },
         {
-            "label": "� Clean DB (Previous Test Cycle)",
+            "label": "🧹 Clean DB (Previous Test Cycle)",
             "type": "shell",
             "command": "python3 clean_db.py",
-            "options": { "cwd": "${workspaceFolder}/testing" },
+            "options": { "cwd": "${workspaceFolder}/Simulation" },
             "presentation": { "group": "test", "panel": "dedicated" },
             "problemMatcher": []
         },
         {
-            "label": "�🧪 Test Sleep Cycle",
+            "label": "🧪 Test Sleep Cycle",
             "type": "shell",
-            "command": "python3 test_cycle.py",
-            "options": { "cwd": "${workspaceFolder}/testing" },
+            "command": "python3 simulation.py",
+            "options": { "cwd": "${workspaceFolder}/Simulation" },
             "presentation": { "group": "test", "panel": "dedicated" },
             "problemMatcher": []
         }

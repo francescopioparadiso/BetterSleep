@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import sys
+import random
 from datetime import datetime, timedelta
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -19,6 +20,8 @@ from common.MyMQTT import MyMQTT
 import  requests
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90
+RANDOM_AWAKE_PROBABILITY = 0.01
+
 class MQTTSubscriber:
 
     def __init__(self, broker, port, userid, houseid, bedroomid, initial_light=50):
@@ -194,7 +197,13 @@ def build_user_contexts(config):
     return contexts
 
 
-def default_night_bases():
+def default_night_bases(target_date=None):
+    if target_date:
+        # Convert string to date if necessary
+        if isinstance(target_date, str):
+            target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+        return [(f"{target_date.strftime('%Y%m%d')}_to_{(target_date + timedelta(days=1)).strftime('%Y%m%d')}", target_date)]
+
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
     two_days_ago = today - timedelta(days=2)
@@ -236,36 +245,47 @@ def get_sleep_phase(minute_of_night):
     if minute_of_night < 0:
         return "AWAKE"
 
-  
+    # Keep occasional interruptions without overwhelming the score model.
+    if random.random() < RANDOM_AWAKE_PROBABILITY:
+        return "AWAKE"
+
     cycle_number = minute_of_night // SLEEP_CYCLE_LENGTH_MINUTES
     minute_in_cycle = minute_of_night % SLEEP_CYCLE_LENGTH_MINUTES
 
-    deep_end = max(10, 30 - cycle_number * 7)
-    light1_end = deep_end + 15
-    rem_end = light1_end + min(20 + cycle_number * 10, 40)
+    # Deep sleep heavily weighted early night, REM heavily weighted late night
+    deep_duration = max(0, 30 - (cycle_number * 10))
+    rem_duration = min(40, 15 + (cycle_number * 10))
 
-    if minute_in_cycle < 10:
+    # Calculate phase boundaries inside the 90-minute cycle
+    light1_end = 20
+    deep_end = light1_end + deep_duration
+    light2_end = 90 - rem_duration
+
+    if minute_in_cycle < light1_end:
         return "LIGHT"
     if minute_in_cycle < deep_end:
         return "DEEP"
-    if minute_in_cycle < light1_end:
+    if minute_in_cycle < light2_end:
         return "LIGHT"
-    if minute_in_cycle < rem_end:
-        return "REM"
-    return "LIGHT"
+    return "REM"
 
 
 def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
-    noise = math.sin(step * 0.3) * 1.5
+    # Low-frequency wave combined with high-frequency noise for realistic HRV
+    low_freq = math.sin(step * 0.3) * 1.5
+    high_freq_noise = random.uniform(-4.0, 4.0) 
+    noise = low_freq + high_freq_noise
 
     if sleep_phase == "AWAKE":
-        return resting_hr + 16 + noise
+        return resting_hr + 15 + noise + random.uniform(0, 5)
     if sleep_phase == "LIGHT":
         return resting_hr + 4 + noise
     if sleep_phase == "DEEP":
-        return resting_hr + 1 + abs(noise) * 0.5
+        return resting_hr + 1 + (noise * 0.5)
     if sleep_phase == "REM":
-        return resting_hr + 13 + math.sin(step * 0.7) * 3
+        # REM is characterized by high sympathetic nervous system activity (erratic HR)
+        return resting_hr + 10 + (noise * 1.5)
+    
     return resting_hr
 
 
@@ -490,11 +510,40 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
         except Exception:
             logger.exception("Error stopping MQTT monitor")
 
+def delete_previous_simulation_data(config, userid, date_str):
+    catalog_url = config["catalog"]["url"]
+    print(f"\n[*] Attempting to delete old data for User {userid} on {date_str}...")
+    
+    try:
+        # 1. Ask the Catalog for the service that handles time-series data storage
+        cat_res = requests.get(f"{catalog_url}/getEndpointTimeSeries", timeout=5)
+        if cat_res.status_code == 200:
+            data_endpoint = cat_res.json().get("endpoint")
+            if data_endpoint:
+                # 2. Send a DELETE request targeting this specific user and date
+                delete_url = f"{data_endpoint}/deleteSleepData?user_id={userid}&date={date_str}"
+                print(f"[*] Sending DELETE request to: {delete_url}")
+                
+                res = requests.delete(delete_url, timeout=5)
+                
+                if res.status_code in [200, 204]:
+                    print(f"[*] SUCCESS: Cleared previous database records for User {userid} on {date_str}\n")
+                else:
+                    print(f"[!] FAILED: Backend returned HTTP {res.status_code}. (Did you add the Flask route?)\n")
+            else:
+                print("[!] FAILED: Could not find Data Service 'endpoint' in Catalog JSON response.\n")
+        else:
+             print(f"[!] FAILED: Could not reach Catalog. HTTP {cat_res.status_code}\n")
+    except Exception as e:
+        print(f"[!] ERROR: Something crashed while calling the delete endpoint: {e}\n")
 
-def run_simulation(duration_seconds=60, night_bases=None):
+
+def run_simulation(duration_seconds=60, target_date=None):
     config = load_test_config()
     user_contexts = build_user_contexts(config)
-    bases = night_bases or default_night_bases()
+    
+    # Pass target_date to the bases builder
+    bases = default_night_bases(target_date)
 
     if not user_contexts:
         logger.warning("No users to simulate. Exiting.")
@@ -506,11 +555,17 @@ def run_simulation(duration_seconds=60, night_bases=None):
     threads = []
 
     def _run_user(user_ctx):
+        # If a specific target_date was passed, trigger the database wipe first
+        if target_date:
+            date_str = target_date if isinstance(target_date, str) else target_date.strftime("%Y-%m-%d")
+            delete_previous_simulation_data(config, user_ctx.userid, date_str)
+            # Add a tiny delay to ensure the database has time to process the deletion
+            time.sleep(1)
+
         windows = build_sleep_windows(user_ctx.night_time, user_ctx.morning_time, bases)
         for window in windows:
             if stop_event.is_set():
                 break
-            print("config",config)
             simulate_single_user_night(user_ctx, config, window, duration_seconds, stop_event)
 
     for user_ctx in user_contexts:
@@ -521,6 +576,7 @@ def run_simulation(duration_seconds=60, night_bases=None):
     try:
         for t in threads:
             t.join()
+        print("\nAll simulations completed.")
     except KeyboardInterrupt:
         print("\nStopping all simulations...")
         stop_event.set()
@@ -530,4 +586,4 @@ def run_simulation(duration_seconds=60, night_bases=None):
 
 
 if __name__ == "__main__":
-    run_simulation(duration_seconds=20)
+    run_simulation(duration_seconds=20, target_date="2026-03-17")

@@ -25,22 +25,38 @@ def clean_database():
             password=mongo_config['password'],
             serverSelectionTimeoutMS=5000
         )
-        
-        db = client[mongo_config['database']]
-        
-        # Delete old mqtt data (measurements)
-        res1 = db['measurements'].delete_many({})
-        logging.info(f"Deleted {res1.deleted_count} documents from 'measurements' collection (Night test data).")
-        
-        # Check if analytics database is separate
-        analytics_db_name = mongo_config.get('analyticsDatabase', mongo_config['database'])
-        analytics_db = client[analytics_db_name]
-        
-        # Delete old aggregated analytics data
-        res2 = analytics_db['sleep_analytics'].delete_many({})
-        logging.info(f"Deleted {res2.deleted_count} documents from 'sleep_analytics' collection (Aggregated analytics).")
-        
-        logging.info("Successfully cleaned up previous test cycle data.")
+
+        primary_db_name = mongo_config['database']
+        analytics_db_name = mongo_config.get('analyticsDatabase', primary_db_name)
+
+        cleanup_targets = {
+            primary_db_name: ['measurements', 'sleep_analytics'],
+            analytics_db_name: ['measurements', 'sleep_analytics'],
+        }
+
+        total_deleted = 0
+
+        for db_name, collections in cleanup_targets.items():
+            db = client[db_name]
+            existing_collections = set(db.list_collection_names())
+
+            for collection_name in collections:
+                if collection_name not in existing_collections:
+                    logging.info(
+                        f"Skipped '{db_name}.{collection_name}' because the collection does not exist."
+                    )
+                    continue
+
+                result = db[collection_name].delete_many({})
+                total_deleted += result.deleted_count
+                logging.info(
+                    f"Deleted {result.deleted_count} documents from '{db_name}.{collection_name}'."
+                )
+
+        logging.info(
+            "Successfully cleaned up MongoDB sleep analytics and sensor data "
+            f"across all configured databases. Total documents deleted: {total_deleted}."
+        )
         
     except Exception as e:
         logging.error(f"Error during database cleanup: {e}")

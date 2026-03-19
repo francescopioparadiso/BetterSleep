@@ -228,12 +228,12 @@ struct RoomsView: View {
                     .font(.title)
                     .padding(6)
                     .foregroundColor(.yellow)
-                    .shadow(color: .yellow, radius: 20, x: 0, y: 0)
+                    .shadow(color: .yellow, radius: 10, x: 0, y: 0)
             } else {
                 Image(systemName: iconForRoom(room.name))
                     .font(.title)
                     .foregroundColor(.indigo)
-                    .shadow(color: .indigo, radius: 20, x: 0, y: 0)
+                    .shadow(color: .indigo, radius: 10, x: 0, y: 0)
             }
             
             VStack(alignment: .leading, spacing: 3) {
@@ -377,18 +377,8 @@ struct MembersSheet: View {
                     }
 
                     // MARK: - Pending Members
-                    Section(header: Text("Pending Members")) {
-                        if pendingInvites.isEmpty {
-                            HStack {
-                                Spacer()
-                                Text("No pending invitations")
-                                    .font(.subheadline)
-                                    .fontDesign(.rounded)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                            }
-                            .padding(.vertical, 20)
-                        } else {
+                    if !pendingInvites.isEmpty {
+                        Section(header: Text("Pending Members")) {
                             ForEach(pendingInvites) { invite in
                                 HStack {
                                     Image(systemName: "questionmark.circle.fill")

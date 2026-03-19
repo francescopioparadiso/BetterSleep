@@ -182,7 +182,7 @@ struct ChartsView: View {
             Image(systemName: type.icon)
                 .font(.title)
                 .foregroundColor(type.iconColor)
-                .shadow(color: type.iconColor.opacity(0.7), radius: 10, x: 0, y: 0)
+                .shadow(color: type.iconColor.opacity(0.7), radius: 6, x: 0, y: 0)
                 .frame(width: 36)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -257,7 +257,7 @@ struct ChartsView: View {
                 Image(systemName: "zzz")
                     .font(.system(size: 48))
                     .foregroundColor(.indigo)
-                    .shadow(color: .indigo, radius: 30, x: 0, y: 0)
+                    .shadow(color: .indigo, radius: 12, x: 0, y: 0)
             }
         } description: {
             Text("No sleep analysis is available for this night.\nWear your sensors and get a good night's rest!")
@@ -274,7 +274,7 @@ struct ChartsView: View {
                 Image(systemName: "moon.zzz.fill")
                     .font(.system(size: 48))
                     .foregroundColor(.indigo)
-                    .shadow(color: .indigo, radius: 30, x: 0, y: 0)
+                    .shadow(color: .indigo, radius: 12, x: 0, y: 0)
             }
         } description: {
             Text("Set a room as active in My Homes\nto see your sleep analytics.")
@@ -299,7 +299,7 @@ struct SleepStageChart: View {
                     .foregroundStyle(item.stage.color)
                     .annotation(position: .trailing) {
                         if item.minutes > 0 {
-                            Text("\(Int(item.minutes))m")
+                            Text(formattedDuration(minutes: item.minutes))
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
@@ -312,6 +312,18 @@ struct SleepStageChart: View {
             }
             .frame(height: 200)
         }
+    }
+
+    private func formattedDuration(minutes: Double) -> String {
+        let totalMinutes = Int(minutes)
+        let hours = totalMinutes / 60
+        let mins = totalMinutes % 60
+
+        if hours > 0 {
+            return mins > 0 ? "\(hours)h\(mins)m" : "\(hours)h"
+        }
+
+        return "\(mins)m"
     }
 }
 
