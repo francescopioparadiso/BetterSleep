@@ -64,27 +64,24 @@ class UserCache:
         self.logger             = logger or logging.getLogger(__name__)
 
         self._lock = threading.RLock()
-        self._data: dict[str, UserEntry] = {}
+        self._user_cache: dict[str, UserEntry] = {}
 
-    # ------------------------------------------------------------------
-    # Public read / write API
-    # ------------------------------------------------------------------
 
     def get(self, userid):
-        return self._data.get(userid)
+        return self._user_cache.get(userid)
 
     def get_or_fetch(self, userid):
-        return self._data.get(userid) or self._fetch(userid)
+        return self._user_cache.get(userid) or self._fetch(userid)
 
     def touch(self, userid):
-        entry = self._data.get(userid)
+        entry = self._user_cache.get(userid)
         if entry:
             entry.touch()
 
     def patch_preferences(self, userid, updates):
         """Apply schedule key updates (night_time / morning_time) without a full re-fetch."""
         with self._lock:
-            entry = self._data.get(userid)
+            entry = self._user_cache.get(userid)
             if not entry:
                 return False
             for key, value in updates.items():
@@ -93,16 +90,12 @@ class UserCache:
                     self.logger.info(f"Preference updated: user={userid} {key}={value}")
             return True
 
-    # ------------------------------------------------------------------
-    # Actuator management
-    # ------------------------------------------------------------------
 
     def get_actuators_for_room(self, room_id):
         """Return actuator types for a room, fetching from catalog on first call."""
         entry = self._entry_for_room(room_id)
         if not entry:
             return []
-        # If no actuator types are stored, fetch and initialize them
         if not entry.actuators_state.get("_types_fetched", False):
             fetched = self._fetch_actuators(room_id)
             for actuator_type in fetched:
@@ -110,7 +103,6 @@ class UserCache:
                     entry.actuators_state[actuator_type] = 0  # Default state
             entry.actuators_state["_types_fetched"] = True
             self.logger.info(f"Actuators lazy-fetched for room {room_id}: {fetched}")
-        # Return all actuator types except special keys
         return [k for k in entry.actuators_state.keys() if k not in ("_types_fetched", "light")]
 
     def add_actuator(self, room_id, actuator_type):
@@ -130,16 +122,11 @@ class UserCache:
         """Force a re-fetch on the next get_actuators_for_room call."""
         entry = self._entry_for_room(room_id)
         if entry:
-            # Remove all actuator types except special keys
             keys_to_remove = [k for k in entry.actuators_state.keys() if k not in ("light",)]
             for k in keys_to_remove:
                 del entry.actuators_state[k]
             entry.actuators_state["_types_fetched"] = False
             self.logger.info(f"Actuator cache invalidated for room {room_id}")
-
-    # ------------------------------------------------------------------
-    # Room association seeding & eviction
-    # ------------------------------------------------------------------
 
     def seed_room_associations(self):
         """Populate the room→user map from the user-service at startup."""
@@ -168,7 +155,7 @@ class UserCache:
 
     def _entry_for_room(self, room_id):
         userid = self._room_to_user.get(room_id)
-        return self._data.get(userid) if userid else None
+        return self._user_cache.get(userid) if userid else None
 
     def _eviction_loop(self):
         while True:
@@ -180,9 +167,9 @@ class UserCache:
 
     def _evict_stale(self):
         with self._lock:
-            stale = [uid for uid, e in self._data.items() if e.is_stale(self._ttl)]
+            stale = [uid for uid, e in self._user_cache.items() if e.is_stale(self._ttl)]
             for uid in stale:
-                room_id = self._data.pop(uid).active_room_id
+                room_id = self._user_cache.pop(uid).active_room_id
                 self._room_to_user.pop(room_id, None)
         if stale:
             self.logger.info(f"[EVICTION] Evicted {len(stale)} user(s): {stale}")
@@ -193,9 +180,8 @@ class UserCache:
             return None
 
         r_id     = pref.get("room_id")
-        previous = self._data.get(userid)
+        previous = self._user_cache.get(userid)
 
-        # Drop stale room mapping when the user's active room has changed
         if previous and previous.active_room_id and previous.active_room_id != r_id:
             if self._room_to_user.get(previous.active_room_id) == userid:
                 del self._room_to_user[previous.active_room_id]
@@ -240,7 +226,7 @@ class UserCache:
         )
 
         with self._lock:
-            self._data[userid]       = entry
+            self._user_cache[userid]       = entry
             self._room_to_user[r_id] = userid
 
         return entry
