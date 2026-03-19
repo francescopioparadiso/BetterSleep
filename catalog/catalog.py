@@ -293,9 +293,9 @@ class Catalog:
         room_id = params.get('roomID')
         if not actuator_id:
             raise cherrypy.HTTPError(400, "Missing 'ActuatorID' parameter")
-        success = self.db.delete_actuator(int(actuator_id), int(room_id) if room_id else None)
+        success, doc = self.db.delete_actuator(int(actuator_id), int(room_id) if room_id else None)
         if success:
-            self.publish_actuator_removed({"ActuatorID": actuator_id, "roomID": room_id})
+            self.publish_actuator_removed(doc or {"ActuatorID": actuator_id, "roomID": room_id})
             return json.dumps({"status": "success", "message": "Actuator Deleted"})
         raise cherrypy.HTTPError(404, "Actuator not found")
 

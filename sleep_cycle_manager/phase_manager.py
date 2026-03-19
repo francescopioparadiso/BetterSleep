@@ -11,6 +11,7 @@ def _parse_to_min(val):
     except ValueError:
         return None
 
+
 def _is_in_range(p, s, e):
     if s <= e:
         return s <= p < e
@@ -18,27 +19,11 @@ def _is_in_range(p, s, e):
 
 
 def _get_progress(current_min, start_min, end_min):
-    # total duration of the transition (in minutes)
     duration = (end_min - start_min) % 1440
-
-    # minutes passed since the start of the transition
-    elapsed = (current_min - start_min) % 1440
+    elapsed  = (current_min - start_min) % 1440
     if duration == 0:
         return 1.0
-
-    progress = elapsed / duration
-
-    return max(0.0, min(1.0, progress))
-
-
-def _get_user_config(user_data):
-    cfg = user_data['config']
-    return {
-        "t_night": float(cfg.get("temperature_night",   18.0)),
-        "t_morn":  float(cfg.get("temperature_morning", 22.0)),
-        "l_night": float(cfg.get("light_night",          0.0)),
-        "l_morn":  float(cfg.get("light_morning",       100.0)),
-    }
+    return max(0.0, min(1.0, elapsed / duration))
 
 
 class PhaseManager:
@@ -63,19 +48,25 @@ class PhaseManager:
         except Exception as e:
             self.logger.error(f"PhaseManager sync error (user={userid}): {e}")
 
+    # ------------------------------------------------------------------
+    # Core phase logic
+    # ------------------------------------------------------------------
+
     def _check_user(self, userid):
         now = self._sensor_time_per_user.get(userid)
         if now is None:
             return
 
-        now_min   = now.hour * 60 + now.minute
-        user_data = self.manager.active_users_cache.get(userid)
-        if not user_data:
-            self.logger.warning(f"[PhaseManager] user={userid} not in active_users_cache — skipping")
+        now_min = now.hour * 60 + now.minute
+
+        # Use UserCache instead of active_users_cache
+        entry = self.manager.user_cache.get(userid)
+        if not entry:
+            self.logger.warning(f"[PhaseManager] user={userid} not in cache — skipping")
             return
 
-        night_min = _parse_to_min(user_data.get("night_time"))
-        morn_min  = _parse_to_min(user_data.get("morning_time"))
+        night_min = _parse_to_min(entry.night_time)
+        morn_min  = _parse_to_min(entry.morning_time)
         if night_min is None or morn_min is None:
             self.logger.warning(f"[PhaseManager] user={userid}: night_time or morning_time missing — skipping")
             return
@@ -85,46 +76,52 @@ class PhaseManager:
 
         if _is_in_range(now_min, wind_down_start, night_min):
             progress = _get_progress(now_min, wind_down_start, night_min)
-            self._apply_transition(userid, user_data, "WIND_DOWN", progress)
+            self._apply_transition(userid, entry, "WIND_DOWN", progress)
         elif _is_in_range(now_min, wake_up_start, morn_min):
             progress = _get_progress(now_min, wake_up_start, morn_min)
-            self._apply_transition(userid, user_data, "WAKE_UP", progress)
+            self._apply_transition(userid, entry, "WAKE_UP", progress)
         elif _is_in_range(now_min, night_min, morn_min):
-            self._apply_static_phase(userid, user_data, "SLEEP")
+            self._apply_static_phase(userid, entry, "SLEEP")
         else:
-            self._apply_static_phase(userid, user_data, "DAY")
+            self._apply_static_phase(userid, entry, "DAY")
 
-    def _apply_static_phase(self, userid, user_data, phase):
-        c = _get_user_config(user_data)
+    # ------------------------------------------------------------------
+    # Phase application
+    # ------------------------------------------------------------------
+
+    def _apply_static_phase(self, userid, entry, phase):
+        # Clear any leftover transition anchor
+        entry.live_targets.pop("transition_start_light", None)
+
         if phase == "SLEEP":
-            target_t, target_l = c["t_night"], c["l_night"]
+            target_t = entry.config["temperature_night"]
+            target_l = entry.config["light_night"]
         else:
-            target_t, target_l = c["t_morn"],  c["l_morn"]
+            target_t = entry.config["temperature_morning"]
+            target_l = entry.config["light_morning"]
 
-        user_data.get("live_targets", {}).pop("transition_start_light", None)
         self.manager.change_target_temperature_light(
             userid, target_temperature=target_t, target_light=target_l, phase=phase
         )
 
-    def _curve_progress(self, progress):
-        return max(0.0, min(1.0, float(progress))) ** self.transition_curve_exponent
-
-    def _apply_transition(self, userid, user_data, phase, progress):
-        c = _get_user_config(user_data)
+    def _apply_transition(self, userid, entry, phase, progress):
         curved_progress = self._curve_progress(progress)
-        live_targets    = user_data.get("live_targets", {})
-        live_values     = user_data.get("live_values",  {})
 
-        if "transition_start_light" not in live_targets:
-            current_light = live_values.get("light") or live_targets.get("light")
-            live_targets["transition_start_light"] = (
-                max(0.0, min(100.0, float(current_light))) if current_light is not None
-                else (c["l_morn"] if phase == "WIND_DOWN" else c["l_night"])
-            )
+        # Anchor the start-of-transition light level the first time we enter
+        if "transition_start_light" not in entry.live_targets:
+            current_light = entry.light or entry.live_targets.get("light")
+            if current_light is not None:
+                anchor = max(0.0, min(100.0, float(current_light)))
+            else:
+                anchor = (
+                    entry.config["light_morning"] if phase == "WIND_DOWN"
+                    else entry.config["light_night"]
+                )
+            entry.live_targets["transition_start_light"] = anchor
 
-        start_l  = live_targets["transition_start_light"]
-        target_t = c["t_night"] if phase == "WIND_DOWN" else c["t_morn"]
-        end_l    = c["l_night"] if phase == "WIND_DOWN" else c["l_morn"]
+        start_l  = entry.live_targets["transition_start_light"]
+        target_t = entry.config["temperature_night"]  if phase == "WIND_DOWN" else entry.config["temperature_morning"]
+        end_l    = entry.config["light_night"]         if phase == "WIND_DOWN" else entry.config["light_morning"]
         target_l = start_l + (end_l - start_l) * curved_progress
 
         self.logger.info(
@@ -135,3 +132,6 @@ class PhaseManager:
         self.manager.change_target_temperature_light(
             userid, target_temperature=target_t, target_light=target_l, phase=phase
         )
+
+    def _curve_progress(self, progress):
+        return max(0.0, min(1.0, float(progress))) ** self.transition_curve_exponent

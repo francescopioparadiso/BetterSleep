@@ -290,26 +290,30 @@ class MongoDBAdapter:
 
         try:
             actuator_id = int(actuator_id)
+
+            # Try ActuatorID key first
             query = {"ActuatorID": actuator_id}
             if room_id:
                 query["roomID"] = room_id
+            doc = self.db.actuators.find_one(query, {"_id": 0})
             result = self.db.actuators.delete_one(query)
+            if result.deleted_count == 0:
+                # Fall back to lowercase key
+                query = {"actuatorID": actuator_id}
+                if room_id:
+                    query["roomID"] = room_id
+                doc = self.db.actuators.find_one(query, {"_id": 0})
+                result = self.db.actuators.delete_one(query)
+
             if result.deleted_count > 0:
                 logger.info(f"Actuator {actuator_id} deleted successfully (room={room_id})")
-                return True
-            # Fall back to lower-case query
-            query = {"actuatorID": actuator_id}
-            if room_id:
-                query["roomID"] = room_id
-            result = self.db.actuators.delete_one(query)
-            if result.deleted_count > 0:
-                logger.info(f"Actuator {actuator_id} deleted successfully with lowercase key (room={room_id})")
-                return True
+                return True, (doc or {})
+
             logger.warning(f"Actuator {actuator_id} not found for deletion (room={room_id})")
-            return False
+            return False, None
         except Exception as e:
             logger.error(f"Error deleting actuator {actuator_id}: {e}", exc_info=True)
-            return False
+            return False, None
     def update_actuator_last_update(self, actuator_id, last_update):
 
         try:
@@ -352,8 +356,13 @@ class MongoDBAdapter:
 
     def get_actuator_by_room(self, room_id):
         try:
+            try:
+                room_key = int(room_id)
+            except Exception:
+                room_key = room_id
+
             actuators = list(self.db.actuators.find(
-                {"roomID": room_id},
+                {"roomID": room_key},
                 {"_id": 0}  # exclude MongoDB _id
             ))
             logger.debug(f"Retrieved {len(actuators)} actuators for room {room_id} from database")
