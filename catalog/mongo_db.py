@@ -41,10 +41,9 @@ class MongoDBAdapter:
 
 
 
-    def _delete_stale_in_collection(self, collection, cutoff_epoch, include_non_persistent_only=False):
+    def _delete_stale_in_collection(self, collection, cutoff_epoch):
         query_numeric = {"last_update": {"$lt": cutoff_epoch}}
-        if include_non_persistent_only:
-            query_numeric["persistent"] = {"$ne": True}
+
 
         return collection.delete_many(query_numeric).deleted_count
 
@@ -131,17 +130,14 @@ class MongoDBAdapter:
         total_deleted += self._delete_stale_in_collection(
             self.db.services,
             cutoff_epoch,
-            include_non_persistent_only=False
         )
         total_deleted += self._delete_stale_in_collection(
             self.db.sensors,
             cutoff_epoch,
-            include_non_persistent_only=True
         )
         total_deleted += self._delete_stale_in_collection(
             self.db.actuators,
             cutoff_epoch,
-            include_non_persistent_only=True
         )
         logger.info(
             f"Deleted {total_deleted} stale services/sensors/actuators "

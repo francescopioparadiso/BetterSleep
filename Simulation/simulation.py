@@ -530,4 +530,4 @@ def run_simulation(duration_seconds=60, night_bases=None):
 
 
 if __name__ == "__main__":
-    run_simulation(duration_seconds=60)
+    run_simulation(duration_seconds=20)

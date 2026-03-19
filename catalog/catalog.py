@@ -43,9 +43,6 @@ def check_if_is_an_actuator(new_actuator):
 def require_fields(payload, required_fields):
     if not all(field in payload for field in required_fields):
         raise cherrypy.HTTPError(400, "Missing required fields in JSON")
-# ============================================================
-# CATALOG REST SERVICE
-# ============================================================
 
 def _load_json_body():
     body = cherrypy.request.body.read()

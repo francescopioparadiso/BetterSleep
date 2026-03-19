@@ -73,7 +73,6 @@ class UserService:
             "addRoom": self._post_add_room,
             "addInvitation": self._post_add_invitation,
             "addHouseMember": self._post_add_house_member,
-            "activateSensors": self._post_activate_sensors,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -141,7 +140,6 @@ class UserService:
 
         room_id = self.db.insert_room(new_room)
         if room_id:
-            self._register_default_sensors(room_id, new_room['house_id'])
             return json.dumps({
                 "status": "success",
                 "id": room_id,
@@ -149,37 +147,6 @@ class UserService:
             })
         raise cherrypy.HTTPError(409, "The Room already exists")
 
-    def _register_default_sensors(self, room_id, house_id):
-        """Register the default set of sensors in the catalog for a new room."""
-        sensor_types = [
-            ('ambient_temp', 'Temperature'),
-            ('humidity', 'Humidity'),
-            ('light', 'Light'),
-            ('heart_rate', 'Heart Rate'),
-            ('vibration', 'Vibration'),
-            ('presence', 'Presence'),
-        ]
-        for stype, sname in sensor_types:
-            sensor = {
-                'sensorID': f'sensor_{house_id}_{room_id}_{stype}',
-                'name': sname,
-                'type': stype,
-                'endpoint': '',
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'roomID': str(room_id),
-                'houseID': str(house_id),
-                'persistent': True,
-            }
-            data, status, error = self.catalog.post('addSensor', json=sensor)
-            if error and status != 409:
-                logger.error(f'Failed to register sensor {stype} for room {room_id}: {error}')
-
-    def _post_activate_sensors(self):
-        """Activate (register) sensors for an existing room that has none."""
-        body = load_json_body()
-        require_fields(body, ['room_id', 'house_id'])
-        self._register_default_sensors(body['room_id'], body['house_id'])
-        return json.dumps({"status": "success", "message": "Sensors activated"})
 
     # PUT METHOD - Update existing resources
     def PUT(self, *uri, **params):

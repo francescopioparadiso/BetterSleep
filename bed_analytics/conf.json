@@ -12,9 +12,15 @@
       "topic_subscribe": [
         "BedAnalitics/userid/#"
       ],
-
     "clientID": "BedAnalyticsClientBetterSleep1"
     },
   "catalogURL": "http://localhost:8080",
-  "removeInterval": 10
+  "removeInterval": 10,
+  "IDEAL_TEMP": 20.0,
+  "VIBRATION_LIMIT": 0.01,
+  "MIN_SLEEP_HOURS": 6.5,
+  "MAX_WAKE_UPS": 2,
+  "MIN_DEEP_PCT": 15.0,
+  "MIN_REM_PCT": 18.0,
+  "TEMP_TOLERANCE": 2.0
 }
