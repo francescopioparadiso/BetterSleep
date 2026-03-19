@@ -1,14 +1,3 @@
-"""
-user_cache.py
-
-Manages per-user state: preferences, live sensor/phase values,
-actuator types for the active room, and TTL-based eviction.
-
-Dead fields removed vs. original:
-  - fan_state / heater_state / light_actuator  (written but never read)
-  - last_seen_bed / last_left_bed              (moved into PresenceTracker)
-"""
-
 import time
 import logging
 import threading
@@ -61,6 +50,14 @@ class UserEntry:
 
     def is_stale(self, ttl: float) -> bool:
         return (time.monotonic() - self._last_seen_monotonic) > ttl
+
+    @property
+    def last_seen_monotonic(self):
+        return self._last_seen_monotonic
+
+    @property
+    def actuators_fetched(self):
+        return self._actuators_fetched
 
 
 class UserCache:
@@ -116,7 +113,7 @@ class UserCache:
         entry = self._entry_for_room(room_id)
         if not entry:
             return []
-        if not entry._actuators_fetched:
+        if not entry.actuators_fetched:
             fetched = self._fetch_actuators(room_id)
             entry.actuators          = fetched
             entry._actuators_fetched = True
@@ -231,7 +228,7 @@ class UserCache:
             light            = previous.light            if previous else None,
             actuators            = [],
             _actuators_fetched   = False,
-            _last_seen_monotonic = previous._last_seen_monotonic if previous else time.monotonic(),
+            _last_seen_monotonic = previous.last_seen_monotonic if previous else time.monotonic(),
         )
 
         with self._lock:
