@@ -108,7 +108,7 @@ class PhaseManager:
 
         # Anchor the start-of-transition light level the first time we enter
         if "transition_start_light" not in entry.live_targets:
-            current_light = entry.light or entry.live_targets.get("light")
+            current_light = entry.actuators_state.get("light") or entry.live_targets.get("light")
             if current_light is not None:
                 anchor = max(0.0, min(100.0, float(current_light)))
             else:

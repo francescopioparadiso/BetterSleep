@@ -1,8 +1,7 @@
 import logging
-import time
+from datetime import datetime, timezone
 
 from pymongo import MongoClient
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 

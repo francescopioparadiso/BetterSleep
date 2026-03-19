@@ -105,6 +105,9 @@ class SleepCycleManager:
         endpoint = (data or {}).get("endpoint") if status == 200 else None
         if not endpoint:
             self.logger.error(f"Could not fetch user-service endpoint: {status} - {error}")
+            self.stopClient()
+            self.catalog_client.unregister()
+            sys.exit(1)
         return endpoint
 
     def startClient(self): self.mqtt_client.start()
@@ -167,7 +170,6 @@ class SleepCycleManager:
 
         if ts is not None:
             try:
-                self.logger.info(f"-> {datetime.fromtimestamp(float(ts)):%H:%M}")
                 self.phase_manager.sync_from_sensor_time(float(ts), userid)
             except Exception as e:
                 self.logger.error(f"Phase sync error: {e}")
@@ -186,7 +188,7 @@ class SleepCycleManager:
                 entry = self.user_cache.get(userid)
                 if entry:
                     try:
-                        entry.light = float(msg['e'][0]['v'])
+                        entry.actuators_state["light"] = float(msg['e'][0]['v'])
                     except Exception:
                         self.logger.warning(f"Bad light payload for {userid}: {msg}")
 
@@ -228,26 +230,41 @@ class SleepCycleManager:
         tol      = max(0.0, self.temperature_tolerance)
         base     = self.topic_publish[0]
 
-        def send(device, action):
-            self.publish(
-                {"action": action, "timestamp": ts},
-                command_topic=base.format(houseID=house_id, bedroomid=room_id, device=device),
+        # Track last known actuator states per room
+        with self._lock:
+            userid = self.room_to_user_map.get(room_id)
+            entry = self.user_cache.get(userid) if userid else None
+            if entry is None:
+                self.logger.warning(f"No UserEntry found for room {room_id}")
+                return
+            last_states = entry.actuators_state
+
+            def send_if_changed(device, action):
+                prev = last_states.get(device)
+                if prev != action:
+                    self.publish(
+                        {"action": action, "timestamp": ts},
+                        command_topic=base.format(houseID=house_id, bedroomid=room_id, device=device),
+                    )
+                    last_states[device] = action
+                    self.logger.info(f"Sent to {device} in {room_id}: {action}")
+                else:
+                    self.logger.debug(f"No change for {device} in {room_id}: remains {action}")
+
+            if abs(temp - float(desired)) <= tol:
+                for dev in ("fan", "heater"):
+                    if dev in actuators:
+                        send_if_changed(dev, 0)
+                return
+
+            action, device = _resolve_temperature_action(
+                temp, desired, actuators, self.phase_manager.prefer_fan, tol
             )
-
-        if abs(temp - float(desired)) <= tol:
-            for dev in ("fan", "heater"):
-                if dev in actuators:
-                    send(dev, 0)
-            return
-
-        action, device = _resolve_temperature_action(
-            temp, desired, actuators, self.phase_manager.prefer_fan, tol
-        )
-        if device:
-            send(device, action)
-            opposite = "heater" if device == "fan" else "fan"
-            if opposite in actuators:
-                send(opposite, 0)
+            if device:
+                send_if_changed(device, action)
+                opposite = "heater" if device == "fan" else "fan"
+                if opposite in actuators:
+                    send_if_changed(opposite, 0)
 
     def _handle_presence(self, msg, userid, house_id, room_id):
         e = msg['e'][0]
@@ -300,22 +317,28 @@ class SleepCycleManager:
                 self.logger.warning(f"User {userid} not in cache")
                 return
 
-            prev_light, prev_phase = entry.live_targets.get("light"), entry.phase
+            prev_phase = entry.phase
 
-            if target_temperature is not None: entry.live_targets["temperature"] = target_temperature
-            if target_light       is not None: entry.live_targets["light"]       = target_light
-            if phase              is not None: entry.phase                        = phase
+            if target_temperature is not None:
+                entry.live_targets["temperature"] = target_temperature
+            if target_light is not None:
+                entry.live_targets["light"] = target_light
+            if phase is not None:
+                entry.phase = phase
 
             house_id, room_id, ts = entry.house_id, entry.active_room_id, entry.sensor_ts
             publishes = []
 
+            # Use actuators_state to track last sent value for light
             if target_light is not None:
                 new_val = int(round(max(0.0, min(100.0, float(target_light)))))
-                if int(round(prev_light)) if prev_light is not None else None != new_val:
+                prev_sent_light = entry.actuators_state.get("light")
+                if prev_sent_light != new_val:
                     publishes.append((
                         {"action": "SET", "value": new_val},
                         f"House/{house_id}/Bedroom/{room_id}/actuator/light/command",
                     ))
+                    entry.actuators_state["light"] = new_val
 
             is_transition = phase in ("WIND_DOWN", "WAKE_UP")
             if phase and (not entry.phase_published or phase != prev_phase or is_transition):
