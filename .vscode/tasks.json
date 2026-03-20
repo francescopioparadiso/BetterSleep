@@ -1,81 +1,173 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Database",
-            "type": "shell",
-            "command": "docker compose up --build",
-            "options": { "cwd": "${workspaceFolder}/Database" },
-            "presentation": { "group": "servers", "panel": "dedicated" },
-            "isBackground": true,
-            "problemMatcher": []
-        },
-        {
-            "label": "Catalog",
-            "type": "shell",
-            "command": "python3 catalog.py",
-            "options": { "cwd": "${workspaceFolder}/catalog" },
-            "presentation": { "group": "servers", "panel": "dedicated" },
-            "isBackground": true,
-            "problemMatcher": []
-        },
-        {
-            "label": "User Service",
-            "type": "shell",
-            "command": "python3 user_service.py",
-            "options": { "cwd": "${workspaceFolder}/user_service" },
-            "presentation": { "group": "servers", "panel": "dedicated" },
-            "isBackground": true,
-            "problemMatcher": []
-        },
-        {
-            "label": "TimeSeries",
-            "type": "shell",
-            "command": "python3 time_series.py",
-            "options": { "cwd": "${workspaceFolder}/time_series" },
-            "presentation": { "group": "servers", "panel": "dedicated" },
-            "isBackground": true,
-            "problemMatcher": []
-        },
-        {
-            "label": "BedAnalytics",
-            "type": "shell",
-            "command": "python3 bed_analytics.py",
-            "options": { "cwd": "${workspaceFolder}/bed_analytics" },
-            "presentation": { "group": "servers", "panel": "dedicated" },
-            "isBackground": true,
-            "problemMatcher": []
-        },
-        {
-            "label": "SleepCycleManager",
-            "type": "shell",
-            "command": "python3 sleep_cycle_manager.py",
-            "options": { "cwd": "${workspaceFolder}/sleep_cycle_manager" },
-            "presentation": { "group": "servers", "panel": "dedicated" },
-            "isBackground": true,
-            "problemMatcher": []
-        },
-        {
-            "label": "🚀 Start All Servers",
-            "dependsOn": ["Database", "Catalog", "User Service", "TimeSeries", "BedAnalytics", "SleepCycleManager"],
-            "dependsOrder": "parallel",
-            "problemMatcher": []
-        },
-        {
-            "label": "🧹 Clean DB (Previous Test Cycle)",
-            "type": "shell",
-            "command": "python3 clean_db.py",
-            "options": { "cwd": "${workspaceFolder}/Simulation" },
-            "presentation": { "group": "test", "panel": "dedicated" },
-            "problemMatcher": []
-        },
-        {
-            "label": "🧪 Test Sleep Cycle",
-            "type": "shell",
-            "command": "python3 simulation.py",
-            "options": { "cwd": "${workspaceFolder}/Simulation" },
-            "presentation": { "group": "test", "panel": "dedicated" },
-            "problemMatcher": []
-        }
-    ]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Database",
+      "type": "shell",
+      "command": "docker compose up --build",
+      "options": {
+        "cwd": "${workspaceFolder}/Database"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Catalog",
+      "type": "shell",
+      "command": "python3 catalog.py",
+      "options": {
+        "cwd": "${workspaceFolder}/catalog"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "User Service",
+      "type": "shell",
+      "command": "python3 user_service.py",
+      "options": {
+        "cwd": "${workspaceFolder}/user_service"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "TimeSeries",
+      "type": "shell",
+      "command": "python3 time_series.py",
+      "options": {
+        "cwd": "${workspaceFolder}/time_series"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "BedAnalytics",
+      "type": "shell",
+      "command": "python3 bed_analytics.py",
+      "options": {
+        "cwd": "${workspaceFolder}/bed_analytics"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "SleepCycleManager",
+      "type": "shell",
+      "command": "python3 sleep_cycle_manager.py",
+      "options": {
+        "cwd": "${workspaceFolder}/sleep_cycle_manager"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "🚀 Start All Servers",
+      "dependsOn": [
+        "Database",
+        "Catalog",
+        "User Service",
+        "TimeSeries",
+        "BedAnalytics",
+        "SleepCycleManager"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "🧹 Clean DB (Previous Test Cycle)",
+      "type": "shell",
+      "command": "python3 clean_db.py",
+      "options": {
+        "cwd": "${workspaceFolder}/Simulation"
+      },
+      "presentation": {
+        "group": "test",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "🧪 Test Sleep Cycle",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "night_simulation.py",
+        "--target-date",
+        "${input:nightSimulationDate}",
+        "--duration-seconds",
+        "20"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/Simulation"
+      },
+      "presentation": {
+        "group": "test",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "🧪 Backfill Sensor Data",
+      "type": "shell",
+      "command": "python3 sensor_simulation.py",
+      "options": {
+        "cwd": "${workspaceFolder}/Simulation"
+      },
+      "presentation": {
+        "group": "test",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Simulate Sensors Backfill",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "Simulation/sensor_simulation.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "nightSimulationDate",
+      "type": "promptString",
+      "description": "Enter the night base date in YYYY-MM-DD format",
+      "default": "2026-03-20"
+    }
+  ]
 }

@@ -49,13 +49,22 @@ struct ChartsView: View {
 
     var body: some View {
         NavigationStack {
-            VStack {
-                if !vm.hasActiveRoom {
-                    noActiveRoomView
-                } else if vm.isLoading {
+            Group {
+                if vm.shouldShowBlockingLoader {
                     ProgressView("Loading sleep data...")
-                } else if !vm.hasData {
-                    noDataView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if !vm.hasActiveRoom || !vm.hasData {
+                    GeometryReader { proxy in
+                        ScrollView {
+                            unavailableContent
+                                .frame(maxWidth: .infinity)
+                                .frame(minHeight: proxy.size.height)
+                        }
+                        .scrollIndicators(.hidden)
+                        .refreshable {
+                            await vm.refresh()
+                        }
+                    }
                 } else {
                     List {
                         sleepScoreGauge
@@ -86,6 +95,9 @@ struct ChartsView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollIndicators(.hidden)
+                    .refreshable {
+                        await vm.refresh()
+                    }
                 }
             }
             .navigationTitle(vm.navigationTitle)
@@ -129,6 +141,19 @@ struct ChartsView: View {
         case .deepSleep:     return vm.deepSleep
         case .hrv:           return vm.hrv
         case .rhr:           return vm.rhr
+        }
+    }
+
+    private func refreshData() async {
+        await vm.refresh()
+    }
+
+    @ViewBuilder
+    private var unavailableContent: some View {
+        if !vm.hasActiveRoom {
+            noActiveRoomView
+        } else {
+            noDataView
         }
     }
 
@@ -307,6 +332,12 @@ struct SleepStageChart: View {
                 }
             }
             .chartYScale(domain: ["Deep", "Light", "REM", "Awake"])
+            .chartXAxis {
+                AxisMarks {
+                    AxisGridLine()
+                    AxisTick()
+                }
+            }
             .chartYAxis {
                 AxisMarks(position: .leading)
             }

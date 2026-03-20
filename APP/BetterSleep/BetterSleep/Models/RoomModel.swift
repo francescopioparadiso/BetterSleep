@@ -40,8 +40,44 @@ class RoomModel: ObservableObject {
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try JSONSerialization.data(withJSONObject: ["house_id": houseId, "name": name])
-            _ = try await URLSession.shared.data(for: req)
+            let (data, response) = try await URLSession.shared.data(for: req)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let body = String(data: data, encoding: .utf8) ?? "<empty>"
+                print("Error adding room: HTTP \(httpResponse.statusCode) - \(body)")
+                return
+            }
+
+            let responseRoomId = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["id"] as? Int
+
             await fetchRooms(for: houseId)
+
+            let resolvedRoomId =
+                responseRoomId.flatMap { responseId in
+                    rooms.contains(where: { $0.id == responseId }) ? responseId : nil
+                }
+                ?? rooms
+                    .filter { $0.house_id == houseId && $0.name == name }
+                    .compactMap(\.id)
+                    .max()
+                ?? rooms
+                    .filter { $0.house_id == houseId }
+                    .compactMap(\.id)
+                    .max()
+
+            if let roomId = resolvedRoomId {
+                do {
+                    try await CatalogClient.shared.activateSensors(roomId: roomId, houseId: houseId)
+                } catch {
+                    print("Warning: room created but sensor activation failed for room \(roomId): \(error)")
+                }
+            } else {
+                print("Warning: room created but could not resolve the new room id for sensor activation")
+            }
         } catch { print("Error adding room: \(error)") }
     }
     
@@ -150,17 +186,16 @@ class RoomModel: ObservableObject {
             let url = URL(string: "\(base)/getActiveRoom?user_id=\(userId)")!
             let (data, _) = try await URLSession.shared.data(from: url)
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            
+
+            for i in self.rooms.indices {
+                self.rooms[i].active = false
+            }
+
             if let activeRoomData = json?["active_room"] as? [String: Any],
                let activeRoomId = activeRoomData["id"] as? Int {
                 // Mark the active room
                 if let index = self.rooms.firstIndex(where: { $0.id == activeRoomId }) {
                     self.rooms[index].active = true
-                }
-            } else {
-                // No active room - deactivate all
-                for i in self.rooms.indices {
-                    self.rooms[i].active = false
                 }
             }
         } catch { print("Error fetching active room: \(error)") }

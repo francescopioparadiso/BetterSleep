@@ -48,15 +48,22 @@ struct HouseView: View {
     
     var body: some View {
         NavigationView {
-            VStack {
+            Group {
                 if viewModel.isLoading {
                     ProgressView("Loading your homes...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if viewModel.houses.isEmpty && viewModel.pendingInvites.isEmpty {
-                    ContentUnavailableView(
-                        "No Homes Found",
-                        systemImage: "house.circle",
-                        description: Text("Tap the + button in the top right to create your first smart home.")
-                    )
+                    GeometryReader { proxy in
+                        ScrollView {
+                            unavailableContent
+                                .frame(maxWidth: .infinity)
+                                .frame(minHeight: proxy.size.height)
+                        }
+                        .scrollIndicators(.hidden)
+                        .refreshable {
+                            await refreshData()
+                        }
+                    }
                 } else {
                     List {
                         // MARK: - Pending Invites
@@ -129,6 +136,9 @@ struct HouseView: View {
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .refreshable {
+                        await refreshData()
+                    }
                 }
             }
             .navigationTitle("Houses")
@@ -163,11 +173,7 @@ struct HouseView: View {
                 ProfileView()
             }
             .task {
-                await viewModel.fetchHouses()
-                await viewModel.fetchPendingInvites()
-                if let userId = currentUserId {
-                    await fetchActiveRooms(for: userId)
-                }
+                await refreshData()
             }
             .onAppear {
                 Task {
@@ -176,6 +182,22 @@ struct HouseView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var unavailableContent: some View {
+        ContentUnavailableView(
+            "No Homes Found",
+            systemImage: "house.circle",
+            description: Text("Tap the + button in the top right to create your first smart home.")
+        )
+    }
+
+    private func refreshData() async {
+        await viewModel.fetchHouses()
+        await viewModel.fetchPendingInvites()
+        if let userId = currentUserId {
+            await fetchActiveRooms(for: userId)
         }
     }
     

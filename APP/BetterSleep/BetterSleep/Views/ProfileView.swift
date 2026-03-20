@@ -74,6 +74,9 @@ struct ProfileView: View {
                     // Trigger the auto-save whenever the user changes a time
                     .onChange(of: viewModel.bedtime) { _,_ in viewModel.triggerAutoSave() }
                     .onChange(of: viewModel.wakeTime) { _,_ in viewModel.triggerAutoSave() }
+                    .refreshable {
+                        await viewModel.fetchPreferences()
+                    }
                 }
             }
             .navigationTitle("Profile")

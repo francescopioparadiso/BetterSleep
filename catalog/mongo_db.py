@@ -174,12 +174,73 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error retrieving UserService endpoint: {e}")
             raise
+
+    def _sensor_variants(self, value):
+        variants = []
+        if value is None:
+            return variants
+
+        variants.append(value)
+        string_value = str(value)
+        if string_value not in variants:
+            variants.append(string_value)
+
+        try:
+            int_value = int(value)
+            if int_value not in variants:
+                variants.append(int_value)
+        except (TypeError, ValueError):
+            pass
+
+        return variants
+
+    def _build_sensor_query(self, sensor_id=None, room_id=None):
+        clauses = []
+
+        if sensor_id is not None:
+            clauses.append({"$or": [{"sensorID": candidate} for candidate in self._sensor_variants(sensor_id)]})
+
+        if room_id is not None:
+            clauses.append({"$or": [{"roomID": candidate} for candidate in self._sensor_variants(room_id)]})
+
+        if not clauses:
+            return {}
+        if len(clauses) == 1:
+            return clauses[0]
+        return {"$and": clauses}
+
+    def _format_last_update_string(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        try:
+            timestamp = float(value)
+            return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, OSError):
+            return str(value)
+
+    def _normalize_sensor_document(self, sensor):
+        normalized = dict(sensor)
+
+        if "sensorID" in normalized and normalized["sensorID"] is not None:
+            normalized["sensorID"] = str(normalized["sensorID"])
+        if "roomID" in normalized and normalized["roomID"] is not None:
+            normalized["roomID"] = str(normalized["roomID"])
+        if "houseID" in normalized and normalized["houseID"] is not None:
+            normalized["houseID"] = str(normalized["houseID"])
+        if "last_update" in normalized and normalized["last_update"] is not None:
+            normalized["last_update"] = self._format_last_update_string(normalized["last_update"])
+        if "endpoint" not in normalized:
+            normalized["endpoint"] = ""
+
+        return normalized
     ### Actuators OPERATIONS
     def insert_sensor(self,new_sensor):
         try:
             logger.debug(f"Attempting to insert sensor: {new_sensor}")
-            sensor_id = int(new_sensor.get("sensorID")) if new_sensor.get("sensorID") is not None else None
-            room_id = int(new_sensor.get("roomID")) if new_sensor.get("roomID") is not None else None
+            sensor_id = new_sensor.get("sensorID")
+            room_id = new_sensor.get("roomID")
 
 
             if not sensor_id:
@@ -187,20 +248,24 @@ class MongoDBAdapter:
                 return False
 
             # Build query that includes room scope when available so same sensorID can exist in different rooms
-            query = {"sensorID": sensor_id}
-            if room_id:
-                query["roomID"] = room_id
+            query = self._build_sensor_query(sensor_id=sensor_id, room_id=room_id)
 
             # Check for duplicate sensorID in the same room
             if self.db.sensors.find_one(query):
                 logger.warning(f"Sensor ID {sensor_id} already exists in room {room_id} (pre-check)")
                 return False
 
-            new_sensor["sensorID"] = sensor_id
-            new_sensor["roomID"] = room_id
-            new_sensor["houseID"] = int(new_sensor.get("houseID", 0)) if new_sensor.get("houseID") is not None else None
-            if "last_update" in new_sensor:
-                new_sensor["last_update"] = int(new_sensor["last_update"])
+            new_sensor["sensorID"] = str(sensor_id)
+            new_sensor["roomID"] = str(room_id) if room_id is not None else None
+            new_sensor["houseID"] = str(new_sensor.get("houseID")) if new_sensor.get("houseID") is not None else None
+            new_sensor.setdefault("endpoint", "")
+
+            if new_sensor.get("persistent"):
+                new_sensor["persistent"] = True
+                new_sensor["last_update"] = self._format_last_update_string(new_sensor.get("last_update") or datetime.now().timestamp())
+            elif "last_update" in new_sensor:
+                new_sensor["last_update"] = int(float(new_sensor["last_update"]))
+
             result = self.db.sensors.insert_one(new_sensor)
             logger.info(f"Sensor {new_sensor['sensorID']} inserted successfully with ID: {result.inserted_id}")
             logger.debug(f"Sensor data saved - last_update: {new_sensor.get('last_update')}, inserted_at: {new_sensor.get('inserted_at')}")
@@ -211,10 +276,7 @@ class MongoDBAdapter:
     def delete_sensor(self, sensor_id, room_id=None):
 
         try:
-            sensor_id = int(sensor_id)
-            query = {"sensorID": sensor_id}
-            if room_id:
-                query["roomID"] = room_id
+            query = self._build_sensor_query(sensor_id=sensor_id, room_id=room_id)
             result = self.db.sensors.delete_one(query)
             if result.deleted_count > 0:
                 logger.info(f"Sensor {sensor_id} deleted successfully (room={room_id})")
@@ -224,19 +286,41 @@ class MongoDBAdapter:
         except Exception as e:
             logger.error(f"Error deleting sensor {sensor_id}: {e}", exc_info=True)
             return False
+
+    def delete_sensors_by_room(self, room_id):
+        try:
+            query = {"$or": [{"roomID": candidate} for candidate in self._sensor_variants(room_id)]}
+            result = self.db.sensors.delete_many(query)
+            logger.info(f"Deleted {result.deleted_count} sensors for room {room_id}")
+            return result.deleted_count
+        except Exception as e:
+            logger.error(f"Error deleting sensors for room {room_id}: {e}", exc_info=True)
+            return 0
     def update_sensor_last_update(self, sensor_id, last_update):
 
         try:
-            sensor_id = int(sensor_id)
-            last_update = int(last_update)
-            logger.debug(f"Updating sensor {sensor_id} last_update to: {last_update} (type: {type(last_update).__name__})")
+            query = {"$or": [{"sensorID": candidate} for candidate in self._sensor_variants(sensor_id)]}
+            existing = self.db.sensors.find_one(query)
+            if not existing:
+                logger.warning(f"Sensor {sensor_id} not found")
+                return False
+
+            stored_last_update = (
+                self._format_last_update_string(last_update)
+                if existing.get("persistent")
+                else int(float(last_update))
+            )
+            logger.debug(
+                f"Updating sensor {sensor_id} last_update to: {stored_last_update} "
+                f"(type: {type(stored_last_update).__name__})"
+            )
 
             result = self.db.sensors.update_one(
-                {"sensorID": sensor_id},
-                {"$set": {"last_update": last_update}}
+                {"_id": existing["_id"]},
+                {"$set": {"last_update": stored_last_update}}
             )
             if result.matched_count > 0:
-                logger.info(f"Sensor {sensor_id} last_update timestamp updated to {last_update}")
+                logger.info(f"Sensor {sensor_id} last_update timestamp updated to {stored_last_update}")
                 return True
             logger.warning(f"Sensor {sensor_id} not found")
             return False
@@ -346,7 +430,12 @@ class MongoDBAdapter:
 
     def get_sensor_by_room (self, room_id):
         try:
-            sensors = list(self.db.sensors.find({"roomID": room_id}))
+            sensors = [
+                self._normalize_sensor_document(sensor)
+                for sensor in self.db.sensors.find(
+                    {"$or": [{"roomID": candidate} for candidate in self._sensor_variants(room_id)]}
+                )
+            ]
             logger.debug(f"Retrieved {len(sensors)} sensors for room {room_id} from database")
             return sensors
         except Exception as e:

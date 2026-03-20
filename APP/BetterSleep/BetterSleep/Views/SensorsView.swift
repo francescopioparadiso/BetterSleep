@@ -25,12 +25,19 @@ struct SensorsView: View {
         Group {
             if sensorModel.isLoading {
                 ProgressView("Loading sensors...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if sensorModel.sensors.isEmpty {
-                ContentUnavailableView(
-                    "No Sensors",
-                    systemImage: "sensor",
-                    description: Text("Sensors are created automatically when a room is added.")
-                )
+                GeometryReader { proxy in
+                    ScrollView {
+                        unavailableContent
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: proxy.size.height)
+                    }
+                    .scrollIndicators(.hidden)
+                    .refreshable {
+                        await refreshData()
+                    }
+                }
             } else {
                 List {
                     ForEach(sortedSensors) { sensor in
@@ -148,13 +155,28 @@ struct SensorsView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+                .refreshable {
+                    await refreshData()
+                }
             }
         }
         .navigationTitle(room.name)
         .task {
-            guard let roomId = room.id else { return }
-            await sensorModel.fetchSensors(for: roomId, houseId: house.id)
+            await refreshData()
         }
+    }
+
+    private var unavailableContent: some View {
+        ContentUnavailableView(
+            "No Sensors",
+            systemImage: "sensor",
+            description: Text("Sensors are created automatically when a room is added.")
+        )
+    }
+
+    private func refreshData() async {
+        guard let roomId = room.id else { return }
+        await sensorModel.fetchSensors(for: roomId, houseId: house.id)
     }
 }
 
@@ -207,7 +229,7 @@ struct SensorDetailView: View {
                         .frame(height: 300)
                     } else if chartPoints.isEmpty {
                         ContentUnavailableView("No Data", systemImage: "chart.xyaxis.line")
-                            .frame(height: 300)
+                            .frame(maxWidth: .infinity, minHeight: 300)
                     } else {
                         Chart {
                             ForEach(chartPoints) { point in
@@ -283,6 +305,7 @@ struct SensorDetailView: View {
                         systemImage: "list.bullet",
                         description: Text("No logs recorded yet.")
                     )
+                    .frame(maxWidth: .infinity, minHeight: 180)
                 } else {
                     ForEach(chartPoints.reversed()) { point in
                         HStack {
@@ -309,6 +332,9 @@ struct SensorDetailView: View {
         }
         // navigation title includes icon + sensor name
         .navigationTitle("\(sType.label)")
+        .refreshable {
+            await sensorModel.loadChartData(for: sensor)
+        }
         .task {
             await sensorModel.loadChartData(for: sensor)
         }

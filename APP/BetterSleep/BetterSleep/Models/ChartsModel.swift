@@ -60,6 +60,7 @@ enum SleepMetricType: Hashable {
 @MainActor
 class ChartsModel: ObservableObject {
     @Published var isLoading      = false
+    @Published var isRefreshing   = false
     @Published var sleepScore:    Double = 0
     @Published var sleepDuration: Double = 0   // hours
     @Published var interruptions: Double = 0   // count
@@ -77,6 +78,9 @@ class ChartsModel: ObservableObject {
     @Published var hasActiveRoom  = true
     @Published var hasData        = false
     @Published var selectedDate   = Date()
+
+    private var latestLoadID = UUID()
+    private var hasCompletedFirstLoad = false
 
     // MARK: - Navigation title
 
@@ -103,16 +107,37 @@ class ChartsModel: ObservableObject {
 
     // MARK: - Load by date
 
+    var shouldShowBlockingLoader: Bool {
+        isLoading && !hasCompletedFirstLoad
+    }
+
     func load() async {
         await load(for: selectedDate)
     }
 
-    func load(for date: Date) async {
+    func refresh() async {
+        await load(for: selectedDate, preserveVisibleState: true)
+    }
+
+    func load(for date: Date, preserveVisibleState: Bool = false) async {
         guard let userIdStr = UserDefaults.standard.string(forKey: "currentUserId"),
               let userId = Int(userIdStr) else { return }
 
-        isLoading = true
-        defer { isLoading = false }
+        let loadID = UUID()
+        latestLoadID = loadID
+
+        if preserveVisibleState || hasCompletedFirstLoad {
+            isRefreshing = true
+        } else {
+            isLoading = true
+        }
+        defer {
+            if latestLoadID == loadID {
+                isLoading = false
+                isRefreshing = false
+                hasCompletedFirstLoad = true
+            }
+        }
 
         do {
             let base = try await CatalogClient.shared.getUserServiceURL()
@@ -120,10 +145,15 @@ class ChartsModel: ObservableObject {
             let (data, _) = try await URLSession.shared.data(from: url)
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
+            guard latestLoadID == loadID else { return }
+
             guard let activeRoomData = json?["active_room"] as? [String: Any],
                   let _ = activeRoomData["id"] as? Int else {
                 hasActiveRoom = false
                 hasData = false
+                if !preserveVisibleState {
+                    resetToDefaults()
+                }
                 return
             }
             hasActiveRoom = true
@@ -138,6 +168,8 @@ class ChartsModel: ObservableObject {
             let analyticsURL = URL(string: "\(tsURL)/getSleepAnalyticsByDate?user_id=\(userId)&date=\(dateStr)")!
             let (analyticsData, _) = try await URLSession.shared.data(from: analyticsURL)
             let analytics = try JSONSerialization.jsonObject(with: analyticsData) as? [String: Any]
+
+            guard latestLoadID == loadID else { return }
 
             // Check if we got an error or null response
             if let error = analytics?["error"] as? String {
@@ -185,10 +217,18 @@ class ChartsModel: ObservableObject {
                 resetToDefaults()
                 hasData = false
             }
+        } catch is CancellationError {
+            return
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            print("SleepDashboard request cancelled for date: \(date)")
+            return
         } catch {
             print("SleepDashboard error: \(error)")
-            resetToDefaults()
-            hasData = false
+            guard latestLoadID == loadID else { return }
+            if !preserveVisibleState {
+                resetToDefaults()
+                hasData = false
+            }
         }
     }
 

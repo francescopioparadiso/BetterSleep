@@ -10,6 +10,15 @@ from postgres_db import PostgresDB
 from common import catalog_client
 logger = logging.getLogger(__name__)
 
+DEFAULT_ROOM_SENSORS = (
+    {"name": "Temperatura", "type": "ambient_temp"},
+    {"name": "Light", "type": "light"},
+    {"name": "Humidity", "type": "humidity"},
+    {"name": "HR", "type": "heart_rate"},
+    {"name": "Presence", "type": "presence"},
+    {"name": "Vibration", "type": "vibration"},
+)
+
 class UserService:
     exposed = True
     def __init__(self, conf_user_service):
@@ -67,6 +76,7 @@ class UserService:
             "login": self._post_login,     # Moved login to POST to match Swift
             "addHouse": self._post_add_house,
             "addRoom": self._post_add_room,
+            "activateSensors": self._post_activate_sensors,
             "addInvitation": self._post_add_invitation,
             "addHouseMember": self._post_add_house_member,
         }
@@ -136,12 +146,81 @@ class UserService:
 
         room_id = self.db.insert_room(new_room)
         if room_id:
+            if not self._register_default_sensors(room_id):
+                logger.error(
+                    f"Rolling back room {room_id}: failed to register default sensors "
+                    f"for house {new_room['house_id']}"
+                )
+                self.db.delete_room(room_id)
+                raise cherrypy.HTTPError(500, "Room created but default sensor registration failed")
             return json.dumps({
                 "status": "success",
                 "id": room_id,
                 "message": "Room Added"
             })
         raise cherrypy.HTTPError(409, "The Room already exists")
+
+    def _post_activate_sensors(self):
+        """Register the default bedroom sensors in the catalog."""
+        payload = load_json_body()
+        require_fields(payload, ['room_id', 'house_id'])
+
+        room_id = payload['room_id']
+        if self._register_default_sensors(room_id):
+            return json.dumps({
+                "status": "success",
+                "message": "Default sensors registered",
+            })
+        raise cherrypy.HTTPError(500, "Failed to register default sensors")
+
+    def _register_default_sensors(self, room_id):
+        room_id = int(room_id)
+        room_info = self.db.get_room_info(room_id)
+        if not room_info:
+            logger.error(f"Cannot register default sensors: room {room_id} does not exist")
+            raise cherrypy.HTTPError(404, "Room not found")
+
+        house_id = int(room_info["house_id"])
+
+        for sensor_template in DEFAULT_ROOM_SENSORS:
+            sensor_payload = {
+                **sensor_template,
+                "sensorID": f"sensor_{house_id}_{room_id}_{sensor_template['type']}",
+                "endpoint": "",
+                "roomID": str(room_id),
+                "houseID": str(house_id),
+                "persistent": True,
+            }
+            _, status, error = self.catalog.post("addSensor", json=sensor_payload)
+            if error and status != 409:
+                logger.error(
+                    f"Failed to register sensor {sensor_payload['sensorID']} "
+                    f"for room {room_id}: {error}"
+                )
+                return False
+
+        return True
+
+    def _delete_catalog_sensors_for_room(self, room_id):
+        data, status, error = self.catalog.get(f"getSensorByRoom?roomID={room_id}")
+        if error and status != 404:
+            logger.error(f"Failed to fetch sensors for room {room_id}: {error}")
+            return False
+
+        sensors = (data or {}).get("sensors", [])
+        for sensor in sensors:
+            sensor_id = sensor.get("sensorID")
+            if not sensor_id:
+                continue
+
+            _, delete_status, delete_error = self.catalog.delete(
+                f"removeSensor?sensorID={sensor_id}&roomID={room_id}"
+            )
+            if delete_error and delete_status != 404:
+                logger.error(f"Failed to delete sensor {sensor_id} for room {room_id}: {delete_error}")
+                return False
+
+        return True
 
 
     # PUT METHOD - Update existing resources
@@ -340,6 +419,13 @@ class UserService:
         room_id = params.get('id')
         if not room_id:
             raise cherrypy.HTTPError(400, "Missing 'id' parameter")
+
+        room_info = self.db.get_room_info(room_id)
+        if not room_info:
+            raise cherrypy.HTTPError(404, "Room not found")
+
+        if not self._delete_catalog_sensors_for_room(room_id):
+            raise cherrypy.HTTPError(500, "Failed to delete room sensors from catalog")
 
         success = self.db.delete_room(room_id)
         if success:

@@ -73,6 +73,19 @@ actor CatalogClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["room_id": roomId, "house_id": houseId])
-        _ = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.shared.data(for: req)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let payload = String(data: data, encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "CatalogClient",
+                code: httpResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: payload.isEmpty ? "Sensor activation failed" : payload]
+            )
+        }
     }
 }

@@ -1,3 +1,4 @@
+import argparse
 import logging
 import math
 import os
@@ -585,5 +586,33 @@ def run_simulation(duration_seconds=60, target_date=None):
         print("All simulations stopped.")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run the BetterSleep night simulation.")
+    parser.add_argument(
+        "--duration-seconds",
+        type=int,
+        default=20,
+        help="Real-world duration used to compress a simulated night.",
+    )
+    parser.add_argument(
+        "--target-date",
+        default=None,
+        help="Night base date in YYYY-MM-DD format, for example 2026-10-23.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    if args.target_date:
+        try:
+            datetime.strptime(args.target_date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise SystemExit("Invalid --target-date. Use the format YYYY-MM-DD, for example 2026-10-23.") from exc
+
+    run_simulation(duration_seconds=args.duration_seconds, target_date=args.target_date)
+
+
 if __name__ == "__main__":
-    run_simulation(duration_seconds=20, target_date="2026-03-17")
+    main()

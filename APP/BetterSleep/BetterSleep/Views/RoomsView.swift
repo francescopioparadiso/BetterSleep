@@ -171,6 +171,9 @@ struct RoomsView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .refreshable {
+            await refreshData()
+        }
         .navigationTitle(house.name)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -201,12 +204,7 @@ struct RoomsView: View {
             }
         }
         .task {
-            guard let houseId = house.id else { return }
-            await roomModel.fetchRooms(for: houseId)
-            await invitationModel.fetchHouseDetails(for: houseId)
-            if let currentUserId = currentUserId {
-                await roomModel.fetchActiveRoom(for: currentUserId)
-            }
+            await refreshData()
         }
         .sheet(isPresented: $showingMembers) {
             MembersSheet(
@@ -217,6 +215,15 @@ struct RoomsView: View {
                 isCurrentUserOwner: isCurrentUserOwner,
                 currentUserId: currentUserId
             )
+        }
+    }
+
+    private func refreshData() async {
+        guard let houseId = house.id else { return }
+        await roomModel.fetchRooms(for: houseId)
+        await invitationModel.fetchHouseDetails(for: houseId)
+        if let currentUserId = currentUserId {
+            await roomModel.fetchActiveRoom(for: currentUserId)
         }
     }
     
@@ -443,6 +450,10 @@ struct MembersSheet: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+                .refreshable {
+                    guard let houseId = house.id else { return }
+                    await invitationModel.fetchHouseDetails(for: houseId)
+                }
 
                 // MARK: - Error Toast
                 if let errorMessage = invitationModel.errorMessage {
