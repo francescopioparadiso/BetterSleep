@@ -1,5 +1,4 @@
 import argparse
-import json
 import math
 import os
 import random
@@ -8,16 +7,26 @@ import sys
 from datetime import datetime, timedelta
 
 import requests
-from pymongo import MongoClient
+
+from common_simulation import build_url, get_user_service_endpoint, load_json_file
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
+from time_series.mongo_db import MongoDB
+
 
 BACKFILL_SOURCE = "sensor_simulation"
 BATCH_SIZE = 5000
+SIMULATION_SENSOR_KEYS = ("temperature", "heart_rate", "presence", "vibration")
+DEFAULT_SIMULATED_SENSORS = (
+    ("temperature", {"sensorID": "1", "name": "Temperature", "type": "ambient_temp"}),
+    ("heart_rate", {"sensorID": "2", "name": "HeartRate", "type": "heart_rate"}),
+    ("presence", {"sensorID": "3", "name": "Presence", "type": "presence"}),
+    ("vibration", {"sensorID": "4", "name": "Vibration", "type": "vibration"}),
+)
 SENSOR_TYPE_CODES = {
     "ambient_temp": 0,
     "humidity": 1,
@@ -65,15 +74,6 @@ def normalize_sensor_id(raw_sensor_id, room_id, sensor_type):
     return (int(room_id) * 1000) + (type_code * 100) + checksum
 
 
-def load_json_file(path):
-    with open(path, "r") as handle:
-        return json.load(handle)
-
-
-def build_url(base, path):
-    return f"{base.rstrip('/')}/{path.lstrip('/')}"
-
-
 def deterministic_noise(sensor_id, when, salt, low, high):
     seed = f"{sensor_id}:{int(when.timestamp())}:{salt}"
     return random.Random(seed).uniform(low, high)
@@ -81,6 +81,32 @@ def deterministic_noise(sensor_id, when, salt, low, high):
 
 def clamp(value, lower, upper):
     return max(lower, min(upper, value))
+
+
+def build_simulated_room_sensors(room, simulation_conf):
+    room_id = room.get("id") or room.get("roomID")
+    house_id = room.get("house_id") or room.get("houseID")
+    sensors_conf = simulation_conf.get("sensors", {})
+    simulated_sensors = []
+
+    # Always synthesize the four bedroom sensors used by the live simulation.
+    # This keeps backfill independent from catalog registration state.
+    for key, default_sensor_conf in DEFAULT_SIMULATED_SENSORS:
+        sensor_conf = sensors_conf.get(key, default_sensor_conf)
+        simulated_sensor = {
+            "sensorID": sensor_conf.get("sensorID", default_sensor_conf["sensorID"]),
+            "name": sensor_conf.get("name", default_sensor_conf["name"]),
+            "type": sensor_conf.get("type", default_sensor_conf["type"]),
+            "roomID": room_id,
+            "houseID": house_id,
+        }
+        if "topic_publish" in sensor_conf:
+            simulated_sensor["topic_publish"] = sensor_conf["topic_publish"]
+        if "topic_subscribe" in sensor_conf:
+            simulated_sensor["topic_subscribe"] = sensor_conf["topic_subscribe"]
+        simulated_sensors.append(simulated_sensor)
+
+    return simulated_sensors
 
 
 def generate_value(sensor_type, sensor_id, when):
@@ -127,33 +153,14 @@ def generate_value(sensor_type, sensor_id, when):
     return round(value, 2)
 
 
-def resolve_user_service_endpoint(catalog_url):
-    response = requests.get(build_url(catalog_url, "getEndpointUserService"), timeout=5)
-    response.raise_for_status()
-    return response.json()["endpoint"]
-
-
 def fetch_all_rooms(user_service_url):
     response = requests.get(build_url(user_service_url, "getAllRooms"), timeout=10)
     response.raise_for_status()
     return response.json().get("rooms", [])
 
 
-def fetch_room_sensors(catalog_url, room_id):
-    response = requests.get(build_url(catalog_url, f"getSensorByRoom?roomID={room_id}"), timeout=10)
-    response.raise_for_status()
-    return response.json().get("sensors", [])
-
-
-def create_mongo_client(time_series_conf):
-    mongo_conf = time_series_conf["timeSeriesDB"]
-    return MongoClient(
-        host=mongo_conf["host"],
-        port=mongo_conf["port"],
-        username=mongo_conf["username"],
-        password=mongo_conf["password"],
-        serverSelectionTimeoutMS=5000,
-    )
+def create_time_series_db(time_series_conf):
+    return MongoDB(time_series_conf)
 
 
 def iter_measurement_docs(sensor, room, start_dt, end_dt, step_seconds):
@@ -284,16 +291,17 @@ def main():
         f"every {args.step_seconds} seconds ({points_per_sensor} points per sensor)."
     )
 
-    user_service_url = resolve_user_service_endpoint(catalog_url)
+    user_service_url = get_user_service_endpoint(catalog_url)
     rooms = fetch_all_rooms(user_service_url)
     if not rooms:
         print("No rooms found. Nothing to backfill.")
         return
 
-    mongo_client = create_mongo_client(time_series_conf)
-    mongo_client.admin.command("ping")
-    db_name = time_series_conf["timeSeriesDB"]["database"]
-    measurements = mongo_client[db_name]["measurements"]
+    mongo_db = create_time_series_db(time_series_conf)
+    if not mongo_db.health_check():
+        raise RuntimeError("Unable to connect to TimeSeries MongoDB")
+
+    measurements = mongo_db.db["measurements"]
 
     total_rooms = 0
     total_sensors = 0
@@ -305,10 +313,7 @@ def main():
             if room_id is None:
                 continue
 
-            sensors = fetch_room_sensors(catalog_url, room_id)
-            if not sensors:
-                print(f"[INFO] Room {room_id} has no registered sensors")
-                continue
+            sensors = build_simulated_room_sensors(room, simulation_conf)
 
             total_rooms += 1
             for sensor in sensors:
@@ -322,7 +327,8 @@ def main():
                     step_seconds=args.step_seconds,
                 )
     finally:
-        mongo_client.close()
+        if getattr(mongo_db, "client_mongo", None) is not None:
+            mongo_db.client_mongo.close()
 
     print(
         f"Completed backfill for {total_sensors} sensors across {total_rooms} rooms "

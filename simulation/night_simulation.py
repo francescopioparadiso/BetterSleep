@@ -19,6 +19,7 @@ os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 from device_connector.Simulate_Sensor import *
 from common.MyMQTT import MyMQTT
 import  requests
+from common_simulation import build_url, get_user_service_endpoint, load_json_file
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90
 RANDOM_AWAKE_PROBABILITY = 0.01
@@ -105,18 +106,12 @@ class UserContext:
 
 
 def load_test_config(config_path="conf.json"):
-    with open(config_path, "r") as f:
-        return json.load(f)
+    return load_json_file(config_path)
 
 
 def _get_user_service_endpoint(catalog_url):
-    if not requests:
-        logger.error("requests not available; cannot reach Catalog")
-        return None
     try:
-        res = requests.get(f"{catalog_url}/getEndpointUserService", timeout=5)
-        if res.status_code == 200:
-            return res.json().get("endpoint")
+        return get_user_service_endpoint(catalog_url)
     except Exception as exc:
         logger.error(f"Error getting UserService endpoint from Catalog: {exc}")
     return None
@@ -310,7 +305,7 @@ def get_user_sleep_times(catalog_url, userid):
     default_morning = "07:00"
 
     try:
-        cat_res = requests.get(f"{catalog_url}/getEndpointUserService", timeout=5)
+        cat_res = requests.get(build_url(catalog_url, "getEndpointUserService"), timeout=5)
         if cat_res.status_code == 200:
             us_endpoint = cat_res.json().get("endpoint")
             if us_endpoint:
