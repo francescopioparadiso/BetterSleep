@@ -4,7 +4,6 @@ struct ProfileView: View {
     @StateObject private var viewModel = ProfileModel()
     // We pass AuthViewModel to handle signing out of the entire app
     @EnvironmentObject var authVM: AuthModel
-    @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationView {
@@ -59,7 +58,6 @@ struct ProfileView: View {
                             Button(role: .destructive, action: {
                                 Task {
                                     await authVM.signOut()
-                                    dismiss()
                                 }
                             }) {
                                 HStack {
@@ -82,11 +80,6 @@ struct ProfileView: View {
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
                 ToolbarItem(placement: .navigationBarLeading) {
                     if viewModel.isSaving {
                         ProgressView()

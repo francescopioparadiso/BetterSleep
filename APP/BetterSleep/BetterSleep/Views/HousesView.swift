@@ -36,7 +36,6 @@ struct HouseView: View {
     
     @State private var showingAddHouse = false
     @State private var newHouseName = ""
-    @State private var showingProfile = false
     @State private var activeRoomsByHouse: [Int: Bool] = [:]
     
     private var currentUserId: Int? {
@@ -143,14 +142,6 @@ struct HouseView: View {
             }
             .navigationTitle("Houses")
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: { showingProfile = true }) {
-                        Image(systemName: "person.fill")
-                            .font(.title3)
-                            .foregroundColor(.primary)
-                    }
-                }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showingAddHouse = true }) {
                         Image(systemName: "plus")
@@ -168,9 +159,6 @@ struct HouseView: View {
                     }
                 }
                 .buttonStyle(.glassProminent)
-            }
-            .sheet(isPresented: $showingProfile) {
-                ProfileView()
             }
             .task {
                 await refreshData()

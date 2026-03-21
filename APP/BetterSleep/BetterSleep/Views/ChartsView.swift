@@ -1,5 +1,5 @@
 import SwiftUI
-import Charts
+import UIKit
 
 // MARK: - Sleep Stage Types
 
@@ -22,9 +22,17 @@ enum SleepStage: String, CaseIterable, Identifiable {
 }
 
 struct SleepStageData: Identifiable {
-    let id = UUID()
     let stage: SleepStage
     let minutes: Double
+
+    var id: String { stage.rawValue }
+}
+
+private struct GaugePlaceholderState {
+    let title: String
+    let systemImage: String
+    let description: String
+    let color: Color
 }
 
 // MARK: - Main View
@@ -33,8 +41,13 @@ struct ChartsView: View {
     @StateObject private var vm: ChartsModel
     private let shouldAutoLoad: Bool
 
-    @State private var showingProfile = false
-    @State private var showingDatePicker = false
+    @State private var currentWeekIndex = 0
+
+    private let calendar: Calendar = {
+        var cal = Calendar.current
+        cal.firstWeekday = 2
+        return cal
+    }()
 
     @MainActor
     init(shouldAutoLoad: Bool = true) {
@@ -49,87 +62,88 @@ struct ChartsView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if vm.shouldShowBlockingLoader {
-                    ProgressView("Loading sleep data...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if !vm.hasActiveRoom || !vm.hasData {
-                    GeometryReader { proxy in
+            VStack(spacing: 0) {
+                dateHeader
+                    .padding(.horizontal).padding(.vertical, 8)
+                    .background(Color(uiColor: .systemGroupedBackground))
+
+                Group {
+                    if vm.shouldShowBlockingLoader {
+                        ProgressView("Loading sleep data...")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if !vm.hasActiveRoom {
                         ScrollView {
-                            unavailableContent
-                                .frame(maxWidth: .infinity)
-                                .frame(minHeight: proxy.size.height)
+                            VStack {
+                                sleepScoreGauge
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal)
                         }
                         .scrollIndicators(.hidden)
                         .refreshable {
                             await vm.refresh()
                         }
-                    }
-                } else {
-                    List {
-                        sleepScoreGauge
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+                    } else {
+                        List {
+                            sleepScoreGauge
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
 
-                        Section(header: Text("Sleep Stages")) {
-                            SleepStageChart(data: [
-                                SleepStageData(stage: .deep, minutes: vm.deepMinutes),
-                                SleepStageData(stage: .light, minutes: vm.lightMinutes),
-                                SleepStageData(stage: .rem, minutes: vm.remMinutes),
-                                SleepStageData(stage: .awake, minutes: vm.awakeMinutes)
-                            ])
-                            .padding(.vertical, 8)
-                        }
+                            Section(header: Text("Sleep Stages")) {
+                                SleepStageChart(data: [
+                                    SleepStageData(stage: .deep, minutes: vm.deepMinutes),
+                                    SleepStageData(stage: .light, minutes: vm.lightMinutes),
+                                    SleepStageData(stage: .rem, minutes: vm.remMinutes),
+                                    SleepStageData(stage: .awake, minutes: vm.awakeMinutes)
+                                ])
+                                .padding(.vertical, 8)
+                            }
 
-                        Section(header: Text("Sleep Metrics")) {
-                            ForEach([SleepMetricType.duration, .interruptions, .remSleep, .deepSleep], id: \.self) { type in
-                                metricRow(type: type, value: metricValue(for: type))
+                            Section(header: Text("Sleep Metrics")) {
+                                ForEach([SleepMetricType.duration, .interruptions, .remSleep, .deepSleep], id: \.self) { type in
+                                    metricRow(type: type, value: metricValue(for: type))
+                                }
+                            }
+
+                            Section(header: Text("Heart Metrics")) {
+                                ForEach([SleepMetricType.hrv, .rhr], id: \.self) { type in
+                                    metricRow(type: type, value: metricValue(for: type))
+                                }
                             }
                         }
-
-                        Section(header: Text("Heart Metrics")) {
-                            ForEach([SleepMetricType.hrv, .rhr], id: \.self) { type in
-                                metricRow(type: type, value: metricValue(for: type))
-                            }
+                        .listStyle(.insetGrouped)
+                        .scrollIndicators(.hidden)
+                        .refreshable {
+                            await vm.refresh()
                         }
                     }
-                    .listStyle(.insetGrouped)
-                    .scrollIndicators(.hidden)
-                    .refreshable {
-                        await vm.refresh()
-                    }
                 }
             }
-            .navigationTitle(vm.navigationTitle)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: { showingProfile = true }) {
-                        Image(systemName: "person.fill")
-                            .font(.title3)
-                            .foregroundColor(.primary)
-                    }
-                }
-
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingDatePicker = true }) {
-                        Image(systemName: "calendar")
-                            .font(.title3)
-                            .foregroundColor(.primary)
-                    }
-                }
-            }
-            .sheet(isPresented: $showingProfile) {
-                ProfileView()
-            }
-            .sheet(isPresented: $showingDatePicker) {
-                datePickerSheet
-            }
+            .background(Color(uiColor: .systemGroupedBackground))
         }
         .task {
+            currentWeekIndex = weekOffset(for: vm.selectedDate)
             if shouldAutoLoad { await vm.load() }
         }
-        .onChange(of: vm.selectedDate) {
+        .onChange(of: vm.selectedDate) { _, newDate in
+            let nextWeekIndex = weekOffset(for: newDate)
+            if nextWeekIndex != currentWeekIndex {
+                currentWeekIndex = nextWeekIndex
+            }
             Task { await vm.load(for: vm.selectedDate) }
+        }
+        .onChange(of: currentWeekIndex) { _, newWeekIndex in
+            let currentWeekMonday = startOfWeek(for: weekOffset(for: vm.selectedDate))
+            let dayOffset = calendar.dateComponents([.day], from: currentWeekMonday, to: vm.selectedDate).day ?? 0
+            let newWeekMonday = startOfWeek(for: newWeekIndex)
+            let nextDate = calendar.date(byAdding: .day, value: dayOffset, to: newWeekMonday) ?? vm.selectedDate
+
+            if !calendar.isDate(nextDate, inSameDayAs: vm.selectedDate) {
+                withAnimation(.snappy) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    vm.selectedDate = nextDate
+                }
+            }
         }
     }
 
@@ -144,23 +158,93 @@ struct ChartsView: View {
         }
     }
 
-    private func refreshData() async {
-        await vm.refresh()
-    }
-
     @ViewBuilder
-    private var unavailableContent: some View {
-        if !vm.hasActiveRoom {
-            noActiveRoomView
-        } else {
-            noDataView
+    private var dateHeader: some View {
+        VStack(spacing: 8) {
+            HStack {
+                if !calendar.isDateInToday(vm.selectedDate) {
+                    Image(systemName: "circle.fill")
+                        .foregroundStyle(Color.red)
+                }
+
+                Text(vm.selectedDate, format: .dateTime.weekday().month().day())
+                    .font(.title)
+                    .fontDesign(.rounded)
+                    .fontWeight(.bold)
+                    .contentTransition(.numericText(value: Double(vm.selectedDate.timeIntervalSince1970)))
+                    .animation(.snappy, value: vm.selectedDate)
+
+                Spacer()
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.snappy) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    vm.selectedDate = Date()
+                    currentWeekIndex = 0
+                }
+            }
+
+            TabView(selection: $currentWeekIndex) {
+                ForEach(-20...20, id: \.self) { weekOffset in
+                    HStack(spacing: 8) {
+                        ForEach(0..<7, id: \.self) { index in
+                            let weekStart = startOfWeek(for: weekOffset)
+                            let date = calendar.date(byAdding: .day, value: index, to: weekStart) ?? vm.selectedDate
+                            let isDateSelected = calendar.isDate(date, inSameDayAs: vm.selectedDate)
+                            let isToday = calendar.isDateInToday(date)
+
+                            Button {
+                                withAnimation(.snappy) {
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                    vm.selectedDate = date
+                                }
+                            } label: {
+                                VStack(spacing: 6) {
+                                    Text(date, format: .dateTime.day())
+                                        .font(.title3)
+                                        .fontDesign(.rounded)
+                                        .fontWeight(isDateSelected ? .bold : .medium)
+                                        .foregroundStyle(isDateSelected ? .primary : .secondary)
+
+                                    Text(date, format: .dateTime.weekday())
+                                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                                        .textCase(.uppercase)
+                                        .foregroundStyle(isDateSelected ? .red : .secondary.opacity(0.5))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background {
+                                    if isToday && !isDateSelected {
+                                        RoundedRectangle(cornerRadius: 14)
+                                            .fill(Color.secondary.opacity(0.1))
+                                    }
+                                }
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .stroke(Color.secondary.opacity(0.3), lineWidth: isDateSelected ? 1.5 : 0)
+                                )
+                                .scaleEffect(isDateSelected ? 1.1 : 1.0)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                    .tag(weekOffset)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 80)
         }
+        .padding(.top, 4)
     }
 
     // MARK: - Gauge
 
     private var sleepScoreGauge: some View {
-        ZStack {
+        let placeholder = gaugePlaceholderState
+
+        return ZStack {
             Circle()
                 .trim(from: 0.0, to: 0.75)
                 .stroke(Color.secondary.opacity(0.2),
@@ -169,7 +253,7 @@ struct ChartsView: View {
                 .frame(width: 230, height: 230)
 
             Circle()
-                .trim(from: 0.0, to: 0.75 * (vm.sleepScore / 100))
+                .trim(from: 0.0, to: 0.75 * (placeholder == nil ? (vm.sleepScore / 100) : 0))
                 .stroke(
                     LinearGradient(
                         colors: [vm.sleepQualityColor, vm.sleepQualityColor.opacity(0.7)],
@@ -177,25 +261,52 @@ struct ChartsView: View {
                     ),
                     style: StrokeStyle(lineWidth: 20, lineCap: .round)
                 )
-                .shadow(color: vm.sleepQualityColor.opacity(0.8), radius: 30, x: 0, y: 0)
+                .shadow(color: vm.sleepQualityColor.opacity(0.8), radius: 10, x: 0, y: 0)
                 .rotationEffect(.degrees(135))
                 .frame(width: 230, height: 230)
-                .animation(.easeOut(duration: 1.2), value: vm.sleepScore)
+                .animation(.easeOut(duration: 0.7), value: vm.sleepScore)
 
-            VStack(spacing: 2) {
-                Text("\(Int(vm.sleepScore))")
-                    .font(.system(size: 60, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.primary)
-                Text(vm.sleepQualityLabel)
-                    .font(.subheadline).fontWeight(.semibold).fontDesign(.rounded)
-                    .foregroundStyle(vm.sleepQualityColor)
-                Text("Sleep Score")
-                    .font(.caption).fontWeight(.semibold).fontDesign(.rounded)
-                    .foregroundStyle(Color.secondary)
+            if let placeholder {
+                VStack(spacing: 10) {
+                    Image(systemName: placeholder.systemImage)
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(placeholder.color)
+                        .shadow(color: placeholder.color.opacity(0.35), radius: 10, x: 0, y: 0)
+
+                    Text(placeholder.title)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .fontDesign(.rounded)
+                        .multilineTextAlignment(.center)
+
+                    Text(placeholder.description)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 170)
+                }
+                .padding(.horizontal, 12)
+            } else {
+                VStack(spacing: 2) {
+                    Text("\(Int(vm.sleepScore))")
+                        .font(.system(size: 60, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.primary)
+                        .contentTransition(.numericText(value: vm.sleepScore))
+                        .animation(.easeOut(duration: 0.7), value: vm.sleepScore)
+                    Text(vm.sleepQualityLabel)
+                        .font(.subheadline).fontWeight(.semibold).fontDesign(.rounded)
+                        .foregroundStyle(vm.sleepQualityColor)
+                    Text("Sleep Score")
+                        .font(.caption).fontWeight(.semibold).fontDesign(.rounded)
+                        .foregroundStyle(Color.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 32)
+        .padding(.top, 16)
+        .padding(.bottom, placeholder == nil ? 0 : 12)
     }
 
     // MARK: - Metric Row
@@ -207,7 +318,7 @@ struct ChartsView: View {
             Image(systemName: type.icon)
                 .font(.title)
                 .foregroundColor(type.iconColor)
-                .shadow(color: type.iconColor.opacity(0.7), radius: 6, x: 0, y: 0)
+                .shadow(color: type.iconColor.opacity(0.7), radius: 5, x: 0, y: 0)
                 .frame(width: 36)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -223,6 +334,8 @@ struct ChartsView: View {
                 Text(displayValue)
                     .font(.title3).fontWeight(.bold).fontDesign(.rounded)
                     .foregroundStyle(.primary)
+                    .contentTransition(.numericText(value: value))
+                    .animation(.easeOut(duration: 0.7), value: value)
                 if !unit.isEmpty {
                     Text(unit)
                         .font(.title3).fontDesign(.rounded).foregroundStyle(.secondary)
@@ -247,63 +360,29 @@ struct ChartsView: View {
         }
     }
 
-    // MARK: - Date Picker Sheet
-
-    private var datePickerSheet: some View {
-        NavigationStack {
-            DatePicker(
-                "Select Date",
-                selection: $vm.selectedDate,
-                in: ...Date(),
-                displayedComponents: .date
+    private var gaugePlaceholderState: GaugePlaceholderState? {
+        if !vm.hasActiveRoom {
+            return GaugePlaceholderState(
+                title: "No Active Room",
+                systemImage: "moon.zzz.fill",
+                description: "Set a room as active in My Homes to see your sleep analytics.",
+                color: .indigo
             )
-            .datePickerStyle(.graphical)
-            .padding()
-            .navigationTitle("Select Night")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        showingDatePicker = false
-                    }
-                }
-            }
         }
-        .presentationDetents([.medium])
+
+        return nil
     }
 
-    // MARK: - No Data View
-
-    private var noDataView: some View {
-        ContentUnavailableView {
-            Label {
-                Text("No Sleep Data")
-            } icon: {
-                Image(systemName: "zzz")
-                    .font(.system(size: 48))
-                    .foregroundColor(.indigo)
-                    .shadow(color: .indigo, radius: 12, x: 0, y: 0)
-            }
-        } description: {
-            Text("No sleep analysis is available for this night.\nWear your sensors and get a good night's rest!")
-        }
+    private func startOfWeek(for offset: Int) -> Date {
+        let mondayComponents = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())
+        let currentWeekMonday = calendar.date(from: mondayComponents) ?? Date()
+        return calendar.date(byAdding: .weekOfYear, value: offset, to: currentWeekMonday) ?? currentWeekMonday
     }
 
-    // MARK: - No Active Room
-
-    private var noActiveRoomView: some View {
-        ContentUnavailableView {
-            Label {
-                Text("No Active Room")
-            } icon: {
-                Image(systemName: "moon.zzz.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(.indigo)
-                    .shadow(color: .indigo, radius: 12, x: 0, y: 0)
-            }
-        } description: {
-            Text("Set a room as active in My Homes\nto see your sleep analytics.")
-        }
+    private func weekOffset(for date: Date) -> Int {
+        let todayWeekStart = startOfWeek(for: 0)
+        let selectedWeekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)) ?? todayWeekStart
+        return calendar.dateComponents([.weekOfYear], from: todayWeekStart, to: selectedWeekStart).weekOfYear ?? 0
     }
 }
 
@@ -311,41 +390,27 @@ struct ChartsView: View {
 
 struct SleepStageChart: View {
     let data: [SleepStageData]
+
+    private let durationColumnWidth: CGFloat = 60
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Chart {
-                ForEach(data) { item in
-                    BarMark(
-                        x: .value("Minutes", item.minutes),
-                        y: .value("Stage", item.stage.rawValue)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .foregroundStyle(item.stage.color)
-                    .annotation(position: .trailing) {
-                        if item.minutes > 0 {
-                            Text(formattedDuration(minutes: item.minutes))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
+        VStack(spacing: 0) {
+            ForEach(data) { item in
+                SleepStageRow(
+                    item: item,
+                    maxMinutes: max(data.map(\.minutes).max() ?? 1, 1),
+                    durationColumnWidth: durationColumnWidth
+                )
+                .padding(.vertical, 4)
+                .padding(.horizontal, 4)
             }
-            .chartYScale(domain: ["Deep", "Light", "REM", "Awake"])
-            .chartXAxis {
-                AxisMarks {
-                    AxisGridLine()
-                    AxisTick()
-                }
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading)
-            }
-            .frame(height: 200)
         }
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .animation(.easeOut(duration: 0.7), value: data.map(\.minutes))
     }
 
-    private func formattedDuration(minutes: Double) -> String {
+    private static func formattedDuration(minutes: Double) -> String {
         let totalMinutes = Int(minutes)
         let hours = totalMinutes / 60
         let mins = totalMinutes % 60
@@ -355,6 +420,46 @@ struct SleepStageChart: View {
         }
 
         return "\(mins)m"
+    }
+
+    private struct SleepStageRow: View {
+        let item: SleepStageData
+        let maxMinutes: Double
+        let durationColumnWidth: CGFloat
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(item.stage.rawValue)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Text(SleepStageChart.formattedDuration(minutes: item.minutes))
+                        .font(.subheadline)
+                        .fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+                        .frame(width: durationColumnWidth, alignment: .trailing)
+                        .contentTransition(.numericText(value: item.minutes))
+                        .animation(.easeOut(duration: 0.7), value: item.minutes)
+                }
+
+                GeometryReader { proxy in
+                    let fullWidth = max(proxy.size.width, 1)
+                    let ratio = min(max(item.minutes / maxMinutes, 0), 1)
+                    let barWidth = max(12, fullWidth * ratio)
+                    let rowHeight: CGFloat = 24
+
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(item.stage.color)
+                        .frame(width: item.minutes > 0 ? barWidth : 0, height: rowHeight)
+                }
+                .frame(height: 32)
+            }
+        }
     }
 }
 

@@ -9,17 +9,17 @@ struct ContentView: View {
             if authVM.isAuthenticated {
                 // MARK: - Standard Tab Navigation
                 TabView {
-                    // 1. The Dashboard Tab
-                    ChartsView()
-                        .tabItem {
-                            Label("Dashboard", systemImage: "chart.bar.fill")
-                        }
-                    
-                    // 2. The HouseView Tab
-                    HouseView()
-                        .tabItem {
-                            Label("My Homes", systemImage: "house.fill")
-                        }
+                    Tab("Dashboard", systemImage: "chart.bar.fill") {
+                        ChartsView()
+                    }
+
+                    Tab("My Homes", systemImage: "house.fill") {
+                        HouseView()
+                    }
+
+                    Tab("Profile", systemImage: "person.fill", role: .search) {
+                        ProfileView()
+                    }
                 }
                 .environmentObject(authVM)
                 

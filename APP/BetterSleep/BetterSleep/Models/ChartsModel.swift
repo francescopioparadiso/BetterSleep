@@ -249,6 +249,10 @@ class ChartsModel: ObservableObject {
     // MARK: - Computed labels
 
     var sleepQualityLabel: String {
+        if !hasData {
+            return "No Data Available"
+        }
+
         switch sleepScore {
         case 80...:    return "Excellent"
         case 60..<80:  return "Good"
