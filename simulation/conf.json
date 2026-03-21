@@ -8,11 +8,7 @@
       "userid": "1",
       "houseid": "1",
       "bedroomid": "1"
-    },
-    {
-      "userid": "2",
-      "houseid": "2",
-      "bedroomid": "2"}
+    }
   ],
   "catalog": {
     "url": "http://0.0.0.0:8080"

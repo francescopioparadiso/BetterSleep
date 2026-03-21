@@ -1,9 +1,7 @@
-import argparse
 import logging
 import math
 import os
 import sys
-import random
 from datetime import datetime, timedelta
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -23,6 +21,13 @@ from common_simulation import build_url, get_user_service_endpoint, load_json_fi
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90
 RANDOM_AWAKE_PROBABILITY = 0.01
+# Module-level defaults to replace argparse-based CLI parsing
+DEFAULT_DURATION_SECONDS = 120
+DEFAULT_TARGET_DATE = None
+# Thresholds used to decide whether to print a new line (reduce noise)
+TEMP_CHANGE_THRESHOLD = 0.3      # degrees Celsius
+HR_CHANGE_THRESHOLD = 2.0        # bpm
+VIB_CHANGE_THRESHOLD = 0.002    # g
 
 class MQTTSubscriber:
 
@@ -179,14 +184,23 @@ def fetch_users_from_user_service(config):
 
 
 def build_user_contexts(config):
-    users = fetch_users_from_user_service(config)
+    # Read users to simulate from the local conf.json (config['users']).
+    # Fallback to config['simulation'] if no explicit users list is present.
+    users = config.get("users") or [config.get("simulation")]
     contexts = []
     for user_info in users:
-        night, morning = get_user_sleep_times(config["catalog"]["url"], user_info["userid"])
+        # Support a few common key names to be robust against minor schema differences
+        userid = str(user_info.get("userid") or user_info.get("id") or "").strip()
+        houseid = str(user_info.get("houseid") or user_info.get("house_id") or "").strip()
+        bedroomid = str(user_info.get("bedroomid") or user_info.get("bedroom_id") or user_info.get("roomid") or "").strip()
+
+        # Get user-specific sleep time preferences (best-effort; falls back to defaults)
+        night, morning = get_user_sleep_times(config["catalog"]["url"], userid) if userid else ("22:00", "07:00")
+
         contexts.append(UserContext(
-            userid=str(user_info["userid"]),
-            houseid=str(user_info["houseid"]),
-            bedroomid=str(user_info["bedroomid"]),
+            userid=userid or "unknown",
+            houseid=houseid or "1",
+            bedroomid=bedroomid or "1",
             night_time=night,
             morning_time=morning
         ))
@@ -435,6 +449,9 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
         max_temp = thermal_config["max_temp"]
         current_temp = thermal_config["starting_temp"]
 
+        # Track the last emitted state so we only print when something meaningful changes
+        last_emitted = None
+
         for step in range(steps):
             if stop_event.is_set():
                 break
@@ -479,17 +496,64 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
             phase = mqtt_states.get("phase", "DAY")
 
             vt_str = (window.sim_start + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
+            # Build a compact representation of the current observable state
+            current_state = {
+                "sleep_phase": sleep_phase,
+                "temp": round(current_temp, 2),
+                "presence": int(presence_value),
+                "hr": round(heart_rate_value, 2),
+                "vib": round(vibration_value, 4),
+                "phase": phase,
+                "light": light_mqtt,
+                "heater": heater_mqtt,
+                "fan": fan_mqtt,
+                "vt_str": vt_str,
+            }
 
-            line = (
-                f"[User {user.userid} | {vt_str} | {window.label}] Sleep Phase={sleep_phase:<5} "
-                f"Temp={current_temp:.2f}°C, Pres={presence_value}, "
-                f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.4f}g | "
-                f"Phase={phase} | MQTT[L={light_mqtt}, F={fan_mqtt}, H={heater_mqtt}]\n"
-            )
+            # Decide whether to emit a new line by comparing to last_emitted
+            should_emit = False
+            if last_emitted is None:
+                should_emit = True
+            else:
+                # Sleep phase or presence changes are always significant
+                if current_state["sleep_phase"] != last_emitted["sleep_phase"]:
+                    should_emit = True
+                if current_state["presence"] != last_emitted["presence"]:
+                    should_emit = True
+                # Only perform numeric comparisons when we have previous numeric values
+                prev_temp = last_emitted.get("temp") if last_emitted else None
+                prev_hr = last_emitted.get("hr") if last_emitted else None
+                prev_vib = last_emitted.get("vib") if last_emitted else None
+                if prev_temp is not None:
+                    if abs(current_state["temp"] - prev_temp) >= TEMP_CHANGE_THRESHOLD:
+                        should_emit = True
+                if prev_hr is not None:
+                    if abs(current_state["hr"] - prev_hr) >= HR_CHANGE_THRESHOLD:
+                        should_emit = True
+                if prev_vib is not None:
+                    if abs(current_state["vib"] - prev_vib) >= VIB_CHANGE_THRESHOLD:
+                        should_emit = True
+                    # Actuator or phase changes
+                    if current_state["phase"] != last_emitted["phase"]:
+                        should_emit = True
+                    if current_state["light"] != last_emitted["light"]:
+                        should_emit = True
+                    if current_state["heater"] != last_emitted["heater"]:
+                        should_emit = True
+                    if current_state["fan"] != last_emitted["fan"]:
+                        should_emit = True
 
-            print(line, end="")
-            with open(filepath, "a") as f:
-                f.write(line)
+            if should_emit:
+                line = (
+                    f"[User {user.userid} | {vt_str}] Sleep Phase={sleep_phase:<5} "
+                    f"Temp={current_state['temp']:.2f}°C, Pres={current_state['presence']}, "
+                    f"HR={current_state['hr']:.2f}bpm, Vib={current_state['vib']:.4f}g | "
+                    f"Phase={current_state['phase']} | MQTT[L={current_state['light']}, F={current_state['fan']}, H={current_state['heater']}]\n"
+                )
+                print(line, end="")
+                with open(filepath, "a") as f:
+                    f.write(line)
+                last_emitted = current_state
 
             time.sleep(real_step_seconds)
 
@@ -581,32 +645,25 @@ def run_simulation(duration_seconds=60, target_date=None):
         print("All simulations stopped.")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Run the BetterSleep night simulation.")
-    parser.add_argument(
-        "--duration-seconds",
-        type=int,
-        default=20,
-        help="Real-world duration used to compress a simulated night.",
-    )
-    parser.add_argument(
-        "--target-date",
-        default=None,
-        help="Night base date in YYYY-MM-DD format, for example 2026-10-23.",
-    )
-    return parser.parse_args()
+# parse_args removed — using module-level DEFAULT_DURATION_SECONDS and DEFAULT_TARGET_DATE instead
 
 
 def main():
-    args = parse_args()
+    # Use module-level defaults instead of argparse
+    duration_seconds = DEFAULT_DURATION_SECONDS
+    target_date = DEFAULT_TARGET_DATE
 
-    if args.target_date:
-        try:
-            datetime.strptime(args.target_date, "%Y-%m-%d")
-        except ValueError as exc:
-            raise SystemExit("Invalid --target-date. Use the format YYYY-MM-DD, for example 2026-10-23.") from exc
+    if target_date:
+        if isinstance(target_date, str):
+            try:
+                datetime.strptime(target_date, "%Y-%m-%d")
+            except ValueError as exc:
+                raise SystemExit("Invalid target_date. Use the format YYYY-MM-DD, for example 2026-10-23.") from exc
+        else:
+            # If it's not a string, let run_simulation handle date objects
+            pass
 
-    run_simulation(duration_seconds=args.duration_seconds, target_date=args.target_date)
+    run_simulation(duration_seconds=duration_seconds, target_date=target_date)
 
 
 if __name__ == "__main__":
