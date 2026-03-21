@@ -162,8 +162,8 @@ class Catalog:
         """Add a new sensor to the catalog."""
         new_sensor = load_json_body()
         check_if_is_a_sensor(new_sensor)
-        if 'last_update' not in new_sensor:
-            new_sensor['last_update'] = time.time()
+        new_sensor['last_update'] = time.time()
+
         success = self.db.insert_sensor(new_sensor)
         if success:
             return json.dumps({"status": "success", "message": "Sensor Added"})
@@ -237,7 +237,7 @@ class Catalog:
         sensor_id = updated_sensor.get('sensorID') or updated_sensor.get('serviceID')
         if not sensor_id:
             raise cherrypy.HTTPError(400, "Missing 'sensorID' or 'serviceID'")
-        success = self.db.update_sensor_last_update(sensor_id, time.time())
+        success = self.db.update_sensor_last_update(int(sensor_id), time.time())
         if success:
             return json.dumps({"status": "success", "message": "Sensor last_update updated"})
         raise cherrypy.HTTPError(404, "The Sensor ID does not exist")
@@ -284,7 +284,7 @@ class Catalog:
         if not service_id:
             raise cherrypy.HTTPError(400, "Missing 'sensorID' parameter")
         # Pass room_id to delete_sensor to scope deletion to specific room when provided
-        success = self.db.delete_sensor(service_id, room_id)
+        success = self.db.delete_sensor(int(service_id), int(room_id) if room_id else None)
         if success:
             return json.dumps({"status": "success", "message": "Sensor Deleted"})
         raise cherrypy.HTTPError(404, "Sensor not found")
