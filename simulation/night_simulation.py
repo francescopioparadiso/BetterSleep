@@ -16,18 +16,17 @@ os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 
 from device_connector.Simulate_Sensor import *
 from common.MyMQTT import MyMQTT
-import  requests
+import requests
 from common_simulation import build_url, get_user_service_endpoint, load_json_file
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90
 RANDOM_AWAKE_PROBABILITY = 0.01
-# Module-level defaults to replace argparse-based CLI parsing
 DEFAULT_DURATION_SECONDS = 120
 DEFAULT_TARGET_DATE = None
-# Thresholds used to decide whether to print a new line (reduce noise)
-TEMP_CHANGE_THRESHOLD = 0.3      # degrees Celsius
-HR_CHANGE_THRESHOLD = 2.0        # bpm
-VIB_CHANGE_THRESHOLD = 0.002    # g
+TEMP_CHANGE_THRESHOLD = 0.3
+HR_CHANGE_THRESHOLD = 2.0
+VIB_CHANGE_THRESHOLD = 0.002
+
 
 class MQTTSubscriber:
 
@@ -88,7 +87,6 @@ class MQTTSubscriber:
             "fan": self.actuator_states.get("fan", "?"),
             "phase": self.current_phase if self.current_phase else "DAY"
         }
-
 
 
 class SleepWindow:
@@ -184,19 +182,13 @@ def fetch_users_from_user_service(config):
 
 
 def build_user_contexts(config):
-    # Read users to simulate from the local conf.json (config['users']).
-    # Fallback to config['simulation'] if no explicit users list is present.
     users = config.get("users") or [config.get("simulation")]
     contexts = []
     for user_info in users:
-        # Support a few common key names to be robust against minor schema differences
         userid = str(user_info.get("userid") or user_info.get("id") or "").strip()
         houseid = str(user_info.get("houseid") or user_info.get("house_id") or "").strip()
         bedroomid = str(user_info.get("bedroomid") or user_info.get("bedroom_id") or user_info.get("roomid") or "").strip()
-
-        # Get user-specific sleep time preferences (best-effort; falls back to defaults)
         night, morning = get_user_sleep_times(config["catalog"]["url"], userid) if userid else ("22:00", "07:00")
-
         contexts.append(UserContext(
             userid=userid or "unknown",
             houseid=houseid or "1",
@@ -209,7 +201,6 @@ def build_user_contexts(config):
 
 def default_night_bases(target_date=None):
     if target_date:
-        # Convert string to date if necessary
         if isinstance(target_date, str):
             target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
         return [(f"{target_date.strftime('%Y%m%d')}_to_{(target_date + timedelta(days=1)).strftime('%Y%m%d')}", target_date)]
@@ -254,19 +245,15 @@ def build_sleep_windows(night_str, morning_str, bases=None):
 def get_sleep_phase(minute_of_night):
     if minute_of_night < 0:
         return "AWAKE"
-
-    # Keep occasional interruptions without overwhelming the score model.
     if random.random() < RANDOM_AWAKE_PROBABILITY:
         return "AWAKE"
 
     cycle_number = minute_of_night // SLEEP_CYCLE_LENGTH_MINUTES
     minute_in_cycle = minute_of_night % SLEEP_CYCLE_LENGTH_MINUTES
 
-    # Deep sleep heavily weighted early night, REM heavily weighted late night
     deep_duration = max(0, 30 - (cycle_number * 10))
     rem_duration = min(40, 15 + (cycle_number * 10))
 
-    # Calculate phase boundaries inside the 90-minute cycle
     light1_end = 20
     deep_end = light1_end + deep_duration
     light2_end = 90 - rem_duration
@@ -281,9 +268,8 @@ def get_sleep_phase(minute_of_night):
 
 
 def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
-    # Low-frequency wave combined with high-frequency noise for realistic HRV
     low_freq = math.sin(step * 0.3) * 1.5
-    high_freq_noise = random.uniform(-4.0, 4.0) 
+    high_freq_noise = random.uniform(-4.0, 4.0)
     noise = low_freq + high_freq_noise
 
     if sleep_phase == "AWAKE":
@@ -293,9 +279,7 @@ def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
     if sleep_phase == "DEEP":
         return resting_hr + 1 + (noise * 0.5)
     if sleep_phase == "REM":
-        # REM is characterized by high sympathetic nervous system activity (erratic HR)
         return resting_hr + 10 + (noise * 1.5)
-    
     return resting_hr
 
 
@@ -313,11 +297,9 @@ def get_vibration_for_sleep_phase(sleep_phase, step):
     return round(base, 4)
 
 
-
 def get_user_sleep_times(catalog_url, userid):
     default_night = "22:00"
     default_morning = "07:00"
-
     try:
         cat_res = requests.get(build_url(catalog_url, "getEndpointUserService"), timeout=5)
         if cat_res.status_code == 200:
@@ -332,85 +314,67 @@ def get_user_sleep_times(catalog_url, userid):
     return default_night, default_morning
 
 
-def simulate_single_user_night(user, config, window, duration_seconds, stop_event):
-    catalog_url = config["catalog"]["url"]
-    broker_ip = config["mqtt"]["broker"]
-    port = config["mqtt"]["port"]
-    sensors_config = config["sensors"]
-    actuators_config = config["actuators"]
-    thermal_config = config["thermal_dynamics"]
-    filepath = f"SimulationStats/SimulationStats_User{user.userid}_{window.label}.txt"
-
-    logger.info(f"Starting simulation ({window.label}) for user {user.userid} in house {user.houseid}, bedroom {user.bedroomid}")
+def _init_output_file(filepath, user, window):
+    """Create the SimulationStats directory and write the header line."""
     if not os.path.exists("SimulationStats"):
         os.makedirs("SimulationStats")
     with open(filepath, "w") as f:
-        f.write(f"Simulation Stats for User {user.userid} | House {user.houseid} Bedroom {user.bedroomid} | Window {window.label}\n")
-    sensor_configs = {}
-    t_cfg = sensors_config["temperature"]
-    sensor_configs["temp"] = create_config(
-        catalog_url, t_cfg['sensorID'], t_cfg["name"], t_cfg["type"],
-        user.houseid, user.bedroomid, broker_ip, port, topic_publish=t_cfg["topic_publish"]
-    )
+        f.write(
+            f"Simulation Stats for User {user.userid} | "
+            f"House {user.houseid} Bedroom {user.bedroomid} | "
+            f"Window {window.label}\n"
+        )
 
-    hr_cfg = sensors_config["heart_rate"]
-    sensor_configs["hr"] = create_config(
-        catalog_url, hr_cfg["sensorID"], hr_cfg["name"], hr_cfg["type"],
-        user.houseid, user.bedroomid, broker_ip, port,
-        topic_publish=hr_cfg["topic_publish"],
-        topic_subscribe=hr_cfg["topic_subscribe"]
-    )
 
-    p_cfg = sensors_config["presence"]
-    sensor_configs["presence"] = create_config(
-        catalog_url, p_cfg["sensorID"], p_cfg["name"], p_cfg["type"],
-        user.houseid, user.bedroomid, broker_ip, port, topic_publish=p_cfg["topic_publish"]
-    )
+def _build_sensors(config, user, window, simulated_timestamp):
+    """Instantiate all sensor objects and attach the shared timestamp provider."""
+    catalog_url = config["catalog"]["url"]
+    broker_ip   = config["mqtt"]["broker"]
+    port        = config["mqtt"]["port"]
+    sensors_cfg = config["sensors"]
 
-    v_cfg = sensors_config["vibration"]
-    sensor_configs["vibration"] = create_config(
-        catalog_url, v_cfg["sensorID"], v_cfg["name"], v_cfg["type"],
-        user.houseid, user.bedroomid, broker_ip, port, topic_publish=v_cfg["topic_publish"]
-    )
+    def make_cfg(cfg, **extra):
+        return create_config(
+            catalog_url, cfg["sensorID"], cfg["name"], cfg["type"],
+            user.houseid, user.bedroomid, broker_ip, port, **extra
+        )
 
-    temp_sensor = TemperatureSensor(sensor_configs["temp"])
-    heart_rate_sensor = HeartRateSensor(sensor_configs["hr"])
-    presence_sensor = PresenceSensor(sensor_configs["presence"])
-    vibration_sensor = VibrationSensor(sensor_configs["vibration"])
+    t_cfg  = sensors_cfg["temperature"]
+    hr_cfg = sensors_cfg["heart_rate"]
+    p_cfg  = sensors_cfg["presence"]
+    v_cfg  = sensors_cfg["vibration"]
 
-    _sim_step = [0]
-
-    def simulated_timestamp():
-        vt = window.sim_start + timedelta(minutes=_sim_step[0])
-        return vt.timestamp()
+    temp_sensor      = TemperatureSensor(make_cfg(t_cfg,  topic_publish=t_cfg["topic_publish"]))
+    heart_rate_sensor = HeartRateSensor(make_cfg(hr_cfg, topic_publish=hr_cfg["topic_publish"],
+                                                          topic_subscribe=hr_cfg["topic_subscribe"]))
+    presence_sensor  = PresenceSensor(make_cfg(p_cfg,  topic_publish=p_cfg["topic_publish"]))
+    vibration_sensor = VibrationSensor(make_cfg(v_cfg,  topic_publish=v_cfg["topic_publish"]))
 
     for sensor in (temp_sensor, heart_rate_sensor, vibration_sensor, presence_sensor):
         sensor.timestamp_provider = simulated_timestamp
 
-    l_cfg = actuators_config["light"]
-    c_light = create_config(
-        catalog_url, l_cfg["actuatorID"], l_cfg["name"], l_cfg["type"],
-        user.houseid, user.bedroomid, broker_ip, port,
-        topic_publish=l_cfg["topic_publish"], topic_subscribe=l_cfg["topic_subscribe"], is_sensor=False
-    )
+    return temp_sensor, heart_rate_sensor, presence_sensor, vibration_sensor
 
-    h_cfg = actuators_config["heater"]
-    c_heater = create_config(
-        catalog_url, h_cfg["actuatorID"], h_cfg["name"], h_cfg["type"],
-        user.houseid, user.bedroomid, broker_ip, port,
-        topic_publish=h_cfg["topic_publish"], topic_subscribe=h_cfg["topic_subscribe"], is_sensor=False
-    )
 
-    f_cfg = actuators_config["fan"]
-    c_fan = create_config(
-        catalog_url, f_cfg["actuatorID"], f_cfg["name"], f_cfg["type"],
-        user.houseid, user.bedroomid, broker_ip, port,
-        topic_publish=f_cfg["topic_publish"], topic_subscribe=f_cfg["topic_subscribe"], is_sensor=False
-    )
+def _build_actuators(config, user, simulated_timestamp):
+    """Instantiate all actuator objects and attach the shared timestamp provider."""
+    catalog_url   = config["catalog"]["url"]
+    broker_ip     = config["mqtt"]["broker"]
+    port          = config["mqtt"]["port"]
+    actuators_cfg = config["actuators"]
 
-    fan_actuator = FanActuator(c_fan)
-    heater_actuator = HeaterActuator(c_heater)
-    light_actuator = LightActuator(c_light)
+    def make_cfg(cfg):
+        return create_config(
+            catalog_url, cfg["actuatorID"], cfg["name"], cfg["type"],
+            user.houseid, user.bedroomid, broker_ip, port,
+            topic_publish=cfg["topic_publish"],
+            topic_subscribe=cfg["topic_subscribe"],
+            is_sensor=False
+        )
+
+    fan_actuator    = FanActuator(make_cfg(actuators_cfg["fan"]))
+    heater_actuator = HeaterActuator(make_cfg(actuators_cfg["heater"]))
+    light_actuator  = LightActuator(make_cfg(actuators_cfg["light"]))
 
     for actuator in (fan_actuator, heater_actuator, light_actuator):
         actuator.timestamp_provider = simulated_timestamp
@@ -418,174 +382,166 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
     light_actuator.value = 50
     light_actuator.publish_data(light_actuator.value, unit="%", name="LightLevel")
 
-    mqtt_monitor = MQTTSubscriber(broker_ip, port, user.userid, user.houseid, user.bedroomid, initial_light=50)
+    return fan_actuator, heater_actuator, light_actuator
+
+
+def _make_baseline_temp_fn(window):
+    """Return a callable(minute) -> baseline_temperature for thermal dynamics."""
+    sleep_end_min   = max(1, 60 + window.sleep_minutes)
+    total_minutes   = window.sim_minutes
+    morning_duration = max(1, total_minutes - sleep_end_min)
+
+    def get_baseline_temp(minute):
+        if minute <= sleep_end_min:
+            return 23 - (5.0 / sleep_end_min) * minute
+        return 18 + (4.0 / morning_duration) * (minute - sleep_end_min)
+
+    return get_baseline_temp
+
+
+def _update_temperature(current_temp, baseline_temp, fan_on, heater_on, thermal_config):
+    """Apply one step of the thermal model and return the clamped new temperature."""
+    current_temp += (baseline_temp - current_temp) * thermal_config["ambient_pull_factor"]
+    if fan_on:
+        current_temp -= thermal_config["fan_cooling_per_min"]
+    if heater_on:
+        current_temp += thermal_config["heater_warming_per_min"]
+    return max(thermal_config["min_temp"], min(thermal_config["max_temp"], current_temp))
+
+
+def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts):
+    """
+    Publish one tick of sensor data and return the computed
+    (presence_value, sleep_phase, heart_rate_value, vibration_value).
+    """
+    temp_sensor, heart_rate_sensor, presence_sensor, vibration_sensor = sensors
+
+    temp_sensor.value = current_temp
+    temp_sensor.publish_data(round(current_temp, 2), unit="degC", timestamp=sim_ts)
+
+    vt = window.sim_start + timedelta(minutes=step)
+    presence_value = 1 if (window.sleep_start <= vt < window.sleep_end) else 0
+    presence_sensor.publish_data(presence_value, timestamp=sim_ts)
+
+    minute_of_night = int((vt - window.sleep_start).total_seconds() / 60)
+    sleep_phase = get_sleep_phase(minute_of_night) if presence_value == 1 else "AWAKE"
+
+    heart_rate_value = get_hr_for_sleep_phase(sleep_phase, step)
+    vibration_value  = get_vibration_for_sleep_phase(sleep_phase, step)
+
+    heart_rate_sensor.publish_data(round(heart_rate_value, 2), unit="bpm", timestamp=sim_ts)
+    vibration_sensor.publish_data(round(vibration_value, 4),  unit="g",   timestamp=sim_ts)
+
+    return presence_value, sleep_phase, heart_rate_value, vibration_value
+
+
+def _log_step(filepath, user, window, step, current_temp, presence_value,
+              heart_rate_value, vibration_value, sleep_phase, mqtt_states):
+    """Format, print and append one simulation-step line to the stats file."""
+    vt_str      = (window.sim_start + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
+    heater_str  = "ON" if mqtt_states.get("heater") == 1 else "OFF"
+    fan_str     = "ON" if mqtt_states.get("fan")    == 1 else "OFF"
+    light_val   = mqtt_states.get("light", "?")
+    phase       = mqtt_states.get("phase", "DAY")
+
+    line = (
+        f"[User {user.userid} | {vt_str}] Sleep Phase={sleep_phase:<5} "
+        f"Temp={current_temp:.2f}°C, Pres={int(presence_value)}, "
+        f"HR={heart_rate_value:.2f}bpm, Vib={vibration_value:.4f}g | "
+        f"Phase={phase} | MQTT[L={light_val}, F={fan_str}, H={heater_str}]\n"
+    )
+    print(line, end="")
+    with open(filepath, "a") as f:
+        f.write(line)
+
+
+def _teardown_components(components, mqtt_monitor, userid):
+    """Gracefully stop all sensors, actuators and the MQTT monitor."""
+    for comp in components:
+        try:
+            if hasattr(comp, 'stop') and callable(comp.stop):
+                comp.stop()
+        except Exception as e:
+            logger.exception(f"Error stopping component for user {userid}: {e}")
+    try:
+        mqtt_monitor.stop()
+    except Exception:
+        logger.exception("Error stopping MQTT monitor")
+
+
+def simulate_single_user_night(user, config, window, duration_seconds, stop_event):
+    filepath = f"SimulationStats/SimulationStats_User{user.userid}_{window.label}.txt"
+    logger.info(
+        f"Starting simulation ({window.label}) for user {user.userid} "
+        f"in house {user.houseid}, bedroom {user.bedroomid}"
+    )
+
+    _init_output_file(filepath, user, window)
+
+    _sim_step = [0]
+
+    def simulated_timestamp():
+        return (window.sim_start + timedelta(minutes=_sim_step[0])).timestamp()
+
+    sensors  = _build_sensors(config, user, window, simulated_timestamp)
+    fan_actuator, heater_actuator, light_actuator = _build_actuators(config, user, simulated_timestamp)
+
+    mqtt_monitor = MQTTSubscriber(
+        config["mqtt"]["broker"], config["mqtt"]["port"],
+        user.userid, user.houseid, user.bedroomid, initial_light=50
+    )
     mqtt_monitor.start()
+    time.sleep(2)   # allow MQTT subscriptions to settle
+
+    # --- simulation loop -----------------------------------------------------
+    thermal_config    = config["thermal_dynamics"]
+    get_baseline_temp = _make_baseline_temp_fn(window)
+    steps             = max(window.sim_minutes, 1)
+    real_step_seconds = duration_seconds / steps
+    current_temp      = thermal_config["starting_temp"]
 
     try:
-        time.sleep(2)
-        total_minutes = window.sim_minutes
-        steps = max(total_minutes, 1)
-        real_step_seconds = duration_seconds / steps
-
-        def get_virtual_time(step):
-            vt = window.sim_start + timedelta(minutes=step)
-            return vt.hour, vt.minute, step
-
-        def get_baseline_temp(minute):
-            sleep_end_min = 60 + window.sleep_minutes
-            if sleep_end_min <= 0:
-                sleep_end_min = 1
-            if minute <= sleep_end_min:
-                return 23 - (5.0 / sleep_end_min) * minute
-            morning_duration = total_minutes - sleep_end_min
-            if morning_duration <= 0:
-                morning_duration = 1
-            return 18 + (4.0 / morning_duration) * (minute - sleep_end_min)
-
-        fan_cooling_per_min = thermal_config["fan_cooling_per_min"]
-        heater_warming_per_min = thermal_config["heater_warming_per_min"]
-        ambient_pull_factor = thermal_config["ambient_pull_factor"]
-        min_temp = thermal_config["min_temp"]
-        max_temp = thermal_config["max_temp"]
-        current_temp = thermal_config["starting_temp"]
-
-        # Track the last emitted state so we only print when something meaningful changes
-        last_emitted = None
-
         for step in range(steps):
             if stop_event.is_set():
                 break
 
             _sim_step[0] = step
-            hour, minute, virtual_minute = get_virtual_time(step)
-            baseline_temp = get_baseline_temp(virtual_minute)
+            baseline_temp = get_baseline_temp(step)
+            fan_on        = getattr(fan_actuator,    'state', 'OFF') == "ON"
+            heater_on     = getattr(heater_actuator, 'state', 'OFF') == "ON"
 
-            fan_on = getattr(fan_actuator, 'state', 'OFF') == "ON"
-            heater_on = getattr(heater_actuator, 'state', 'OFF') == "ON"
+            current_temp = _update_temperature(current_temp, baseline_temp, fan_on, heater_on, thermal_config)
+            sim_ts       = simulated_timestamp()
 
-            current_temp += (baseline_temp - current_temp) * ambient_pull_factor
-            if fan_on:
-                current_temp -= fan_cooling_per_min
-            if heater_on:
-                current_temp += heater_warming_per_min
-            current_temp = max(min_temp, min(max_temp, current_temp))
+            presence_value, sleep_phase, heart_rate_value, vibration_value = _publish_sensor_readings(
+                sensors, step, window, current_temp, sim_ts
+            )
 
-            sim_ts = simulated_timestamp()
-
-            temp_sensor.value = current_temp
-            temp_sensor.publish_data(round(current_temp, 2), unit="degC", timestamp=sim_ts)
-
-            vt = window.sim_start + timedelta(minutes=step)
-
-            presence_value = 1 if (window.sleep_start <= vt < window.sleep_end) else 0
-            presence_sensor.publish_data(presence_value, timestamp=sim_ts)
-
-            minute_of_night = int((vt - window.sleep_start).total_seconds() / 60)
-            sleep_phase = get_sleep_phase(minute_of_night) if presence_value == 1 else "AWAKE"
-
-            heart_rate_value = get_hr_for_sleep_phase(sleep_phase, step)
-            vibration_value = get_vibration_for_sleep_phase(sleep_phase, step)
-
-            heart_rate_sensor.publish_data(round(heart_rate_value, 2), unit="bpm", timestamp=sim_ts)
-            vibration_sensor.publish_data(round(vibration_value, 4), unit="g", timestamp=sim_ts)
-
-            mqtt_states = mqtt_monitor.get_states()
-            light_mqtt = mqtt_states.get("light", "?")
-            heater_mqtt = "ON" if mqtt_states.get("heater") == 1 else "OFF"
-            fan_mqtt = "ON" if mqtt_states.get("fan") == 1 else "OFF"
-            phase = mqtt_states.get("phase", "DAY")
-
-            vt_str = (window.sim_start + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
-            # Build a compact representation of the current observable state
-            current_state = {
-                "sleep_phase": sleep_phase,
-                "temp": round(current_temp, 2),
-                "presence": int(presence_value),
-                "hr": round(heart_rate_value, 2),
-                "vib": round(vibration_value, 4),
-                "phase": phase,
-                "light": light_mqtt,
-                "heater": heater_mqtt,
-                "fan": fan_mqtt,
-                "vt_str": vt_str,
-            }
-
-            # Decide whether to emit a new line by comparing to last_emitted
-            should_emit = False
-            if last_emitted is None:
-                should_emit = True
-            else:
-                # Sleep phase or presence changes are always significant
-                if current_state["sleep_phase"] != last_emitted["sleep_phase"]:
-                    should_emit = True
-                if current_state["presence"] != last_emitted["presence"]:
-                    should_emit = True
-                # Only perform numeric comparisons when we have previous numeric values
-                prev_temp = last_emitted.get("temp") if last_emitted else None
-                prev_hr = last_emitted.get("hr") if last_emitted else None
-                prev_vib = last_emitted.get("vib") if last_emitted else None
-                if prev_temp is not None:
-                    if abs(current_state["temp"] - prev_temp) >= TEMP_CHANGE_THRESHOLD:
-                        should_emit = True
-                if prev_hr is not None:
-                    if abs(current_state["hr"] - prev_hr) >= HR_CHANGE_THRESHOLD:
-                        should_emit = True
-                if prev_vib is not None:
-                    if abs(current_state["vib"] - prev_vib) >= VIB_CHANGE_THRESHOLD:
-                        should_emit = True
-                    # Actuator or phase changes
-                    if current_state["phase"] != last_emitted["phase"]:
-                        should_emit = True
-                    if current_state["light"] != last_emitted["light"]:
-                        should_emit = True
-                    if current_state["heater"] != last_emitted["heater"]:
-                        should_emit = True
-                    if current_state["fan"] != last_emitted["fan"]:
-                        should_emit = True
-
-            if should_emit:
-                line = (
-                    f"[User {user.userid} | {vt_str}] Sleep Phase={sleep_phase:<5} "
-                    f"Temp={current_state['temp']:.2f}°C, Pres={current_state['presence']}, "
-                    f"HR={current_state['hr']:.2f}bpm, Vib={current_state['vib']:.4f}g | "
-                    f"Phase={current_state['phase']} | MQTT[L={current_state['light']}, F={current_state['fan']}, H={current_state['heater']}]\n"
-                )
-                print(line, end="")
-                with open(filepath, "a") as f:
-                    f.write(line)
-                last_emitted = current_state
+            _log_step(
+                filepath, user, window, step,
+                current_temp, presence_value, heart_rate_value, vibration_value,
+                sleep_phase, mqtt_monitor.get_states()
+            )
 
             time.sleep(real_step_seconds)
 
     finally:
-        for comp in (temp_sensor, heart_rate_sensor, presence_sensor, vibration_sensor,
-                     fan_actuator, heater_actuator, light_actuator):
-            try:
-                if hasattr(comp, 'stop') and callable(getattr(comp, 'stop')):
-                    comp.stop()
-            except Exception as e:
-                logger.exception(f"Error stopping component for user {user.userid}: {e}")
-        try:
-            mqtt_monitor.stop()
-        except Exception:
-            logger.exception("Error stopping MQTT monitor")
+        all_components = (*sensors, fan_actuator, heater_actuator, light_actuator)
+        _teardown_components(all_components, mqtt_monitor, user.userid)
+
 
 def delete_previous_simulation_data(config, userid, date_str):
     catalog_url = config["catalog"]["url"]
     print(f"\n[*] Attempting to delete old data for User {userid} on {date_str}...")
-    
+
     try:
-        # 1. Ask the Catalog for the service that handles time-series data storage
         cat_res = requests.get(f"{catalog_url}/getEndpointTimeSeries", timeout=5)
         if cat_res.status_code == 200:
             data_endpoint = cat_res.json().get("endpoint")
             if data_endpoint:
-                # 2. Send a DELETE request targeting this specific user and date
                 delete_url = f"{data_endpoint}/deleteSleepData?user_id={userid}&date={date_str}"
                 print(f"[*] Sending DELETE request to: {delete_url}")
-                
                 res = requests.delete(delete_url, timeout=5)
-                
                 if res.status_code in [200, 204]:
                     print(f"[*] SUCCESS: Cleared previous database records for User {userid} on {date_str}\n")
                 else:
@@ -593,17 +549,15 @@ def delete_previous_simulation_data(config, userid, date_str):
             else:
                 print("[!] FAILED: Could not find Data Service 'endpoint' in Catalog JSON response.\n")
         else:
-             print(f"[!] FAILED: Could not reach Catalog. HTTP {cat_res.status_code}\n")
+            print(f"[!] FAILED: Could not reach Catalog. HTTP {cat_res.status_code}\n")
     except Exception as e:
         print(f"[!] ERROR: Something crashed while calling the delete endpoint: {e}\n")
 
 
 def run_simulation(duration_seconds=60, target_date=None):
-    config = load_test_config()
+    config        = load_test_config()
     user_contexts = build_user_contexts(config)
-    
-    # Pass target_date to the bases builder
-    bases = default_night_bases(target_date)
+    bases         = default_night_bases(target_date)
 
     if not user_contexts:
         logger.warning("No users to simulate. Exiting.")
@@ -612,14 +566,12 @@ def run_simulation(duration_seconds=60, target_date=None):
     print(f"--- Starting Simulation for {len(user_contexts)} users across {len(bases)} nights ---")
 
     stop_event = threading.Event()
-    threads = []
+    threads    = []
 
     def _run_user(user_ctx):
-        # If a specific target_date was passed, trigger the database wipe first
         if target_date:
             date_str = target_date if isinstance(target_date, str) else target_date.strftime("%Y-%m-%d")
             delete_previous_simulation_data(config, user_ctx.userid, date_str)
-            # Add a tiny delay to ensure the database has time to process the deletion
             time.sleep(1)
 
         windows = build_sleep_windows(user_ctx.night_time, user_ctx.morning_time, bases)
@@ -645,25 +597,8 @@ def run_simulation(duration_seconds=60, target_date=None):
         print("All simulations stopped.")
 
 
-# parse_args removed — using module-level DEFAULT_DURATION_SECONDS and DEFAULT_TARGET_DATE instead
-
-
 def main():
-    # Use module-level defaults instead of argparse
-    duration_seconds = DEFAULT_DURATION_SECONDS
-    target_date = DEFAULT_TARGET_DATE
-
-    if target_date:
-        if isinstance(target_date, str):
-            try:
-                datetime.strptime(target_date, "%Y-%m-%d")
-            except ValueError as exc:
-                raise SystemExit("Invalid target_date. Use the format YYYY-MM-DD, for example 2026-10-23.") from exc
-        else:
-            # If it's not a string, let run_simulation handle date objects
-            pass
-
-    run_simulation(duration_seconds=duration_seconds, target_date=target_date)
+    run_simulation(duration_seconds=DEFAULT_DURATION_SECONDS, target_date=DEFAULT_TARGET_DATE)
 
 
 if __name__ == "__main__":
