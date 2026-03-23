@@ -4,7 +4,6 @@ import logging
 import cherrypy
 from common.MyMQTT import MyMQTT
 
-
 def json_error_page(status, message, traceback, version):
     """Override CherryPy HTTPError to return JSON instead of HTML."""
     cherrypy.response.headers["Content-Type"] = "application/json"
@@ -27,9 +26,6 @@ def mqtt_to_regex( topic):
 
 def load_json_body():
     """Read and parse request JSON body, raising HTTP 400 on errors.
-
-    This is the single shared helper all services should import and use.
-    It logs JSON errors and returns a parsed object on success.
     """
     body = cherrypy.request.body.read()
     try:

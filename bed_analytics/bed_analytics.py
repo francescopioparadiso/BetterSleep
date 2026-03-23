@@ -40,11 +40,11 @@ def _compute_stage_stats(classified):
     counts = {"AWAKE": 0, "LIGHT": 0, "DEEP": 0, "REM": 0}
     for r in classified:
         counts[r["stage"]] += 1
-    pct = {stage: round(counts[stage] / total * 100, 1) for stage in counts}
-    return counts, pct
+    stage_percent = {stage: round(counts[stage] / total * 100, 1) for stage in counts}
+    return counts, stage_percent
 
 
-def _count_wake_ups(classified):
+def _count_wakeups(classified):
     first_sleep_idx = next(
         (i for i, r in enumerate(classified) if r["stage"] != "AWAKE"), None
     )
@@ -78,8 +78,8 @@ def _compute_hr_thresholds(hr_list):
     hr_values = [m["v"] for m in hr_list]
 
     hr_sorted = sorted(hr_values)
-    rhr = hr_sorted[0]  # Resting Heart Rate is the minimum observed
-    p75_hr = hr_sorted[int(len(hr_sorted) * 0.75)]
+    rhr = sum(hr_sorted[:5]) / 5  #calculate resting heart rate as average of 5 lowest readings
+    p75_hr = hr_sorted[int(len(hr_sorted) * 0.75)] # 75th percentile of heart rate readings
     rem_threshold = rhr + (p75_hr - rhr) * 0.75
     return rhr, rem_threshold
 
@@ -102,8 +102,8 @@ class BedAnalytics:
         self.VIBRATION_LIMIT = conf.get('VIBRATION_LIMIT', 0.01)
         self.MIN_SLEEP_HOURS = conf.get('MIN_SLEEP_HOURS', 6.5)
         self.MAX_WAKE_UPS = conf.get('MAX_WAKE_UPS', 2)
-        self.MIN_DEEP_PCT = conf.get('MIN_DEEP_PCT', 15.0)
-        self.MIN_REM_PCT = conf.get('MIN_REM_PCT', 18.0)
+        self.MIN_DEEP_stage_percent = conf.get('MIN_DEEP_stage_percent', 15.0)
+        self.MIN_REM_stage_percent = conf.get('MIN_REM_stage_percent', 18.0)
         self.TEMP_TOLERANCE = conf.get('TEMP_TOLERANCE', 2.0)
 
         self.catalog_client.register()
@@ -179,6 +179,7 @@ class BedAnalytics:
                 elif action == "FINISH_SLEEP":
                     if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
                         self.cache_sleep_time[userid]["end"] = timestamp
+                        # we start a new thread to process the analytics so we don't block if we receive multiple FINISH_SLEEP messages in a short time
                         threading.Thread(target=self._process_finish_sleep, args=(userid, bedroomid, timestamp)).start()
                     else:
                         logger.warning(
@@ -209,7 +210,7 @@ class BedAnalytics:
         end_time   = sleep_time.get("end")
 
         if not (start_time and end_time):
-            logger.warning("Cannot start analytics: missing start or end time for sleep period")
+            logger.error("Can not start analytics - missing start or end time")
             return None
 
         logger.info(f"Starting analytics for sleep period: {start_time} to {end_time}")
@@ -228,7 +229,7 @@ class BedAnalytics:
         logger.info(f"Analytics result for user {userid} → Sleep Score: {report['sleep_score']} | "
                     f"Quality: {report['quality']} | Sleep Hours: {report['sleep_hours']} | "
                     f"Wake-ups: {report['wake_ups']} | Resting HR: {report['resting_hr']} bpm | "
-                    f"HRV (RMSSD): {report['hrv_rmssd_ms']} ms | Stage %: {report['stage_percent']} | Avg Temp: {report['avg_temp_degC']}°C")
+                    f"HRV (RMSSD): {report['hrv_rmssd_ms']} ms | Stage %: {report['stage_percent']} ")
         return report
 
     def _get_sleep_state(self, presence, vibration, heart_rate, rhr, rem_threshold):
@@ -253,10 +254,7 @@ class BedAnalytics:
                 self.logger.error(f"Invalid sensor type in bn: {bn}")
                 continue
             if sensor_name:
-                if sensor_name == "temperature":
-                    valid_readings = [m for m in entry.get("e", []) if -10 <= m["v"] <= 40]
-                    sensors[sensor_name] = valid_readings
-                elif sensor_name == "heart_rate":
+                if sensor_name == "heart_rate":
                     valid_readings = [m for m in entry.get("e", []) if 30 <= m["v"] <= 220]
                     sensors[sensor_name] = valid_readings
                 else:
@@ -280,21 +278,22 @@ class BedAnalytics:
             })
         return classified
 
-    def _compute_sleep_score(self, sleep_hours, wake_ups, pct, avg_temp):
+    def _get_sleep_score(self, sleep_hours, wake_ups, perceSleepPhase, avg_temp):
         score = 100.0
         if sleep_hours < self.MIN_SLEEP_HOURS:
-            score -= (self.MIN_SLEEP_HOURS - sleep_hours) * 10
+            score = score - (self.MIN_SLEEP_HOURS - sleep_hours) * 10 # like we sleep 10 hours but we need at least 6.5, we lose 35 points
         if wake_ups > self.MAX_WAKE_UPS:
             score -= (wake_ups - self.MAX_WAKE_UPS) * 5
-        if pct["DEEP"] < self.MIN_DEEP_PCT:
-            score -= (self.MIN_DEEP_PCT - pct["DEEP"]) * 0.5
-        if pct["REM"] < self.MIN_REM_PCT:
-            score -= (self.MIN_REM_PCT - pct["REM"]) * 0.3
+        if perceSleepPhase["DEEP"] < self.MIN_DEEP_stage_percent:
+            score -= (self.MIN_DEEP_stage_percent - perceSleepPhase["DEEP"]) * 0.5
+        if perceSleepPhase["REM"] < self.MIN_REM_stage_percent:
+            score -= (self.MIN_REM_stage_percent - perceSleepPhase["REM"]) * 0.3
         if avg_temp is not None:
             temp_diff = abs(avg_temp - self.IDEAL_TEMP)
             if temp_diff > self.TEMP_TOLERANCE:
                 score -= (temp_diff - self.TEMP_TOLERANCE) * 3
         score = round(max(0.0, min(100.0, score)), 1)
+
         if score >= 85:
             quality = "Excellent"
         elif score >= 70:
@@ -312,7 +311,6 @@ class BedAnalytics:
         vibration_list = sensors.get("vibration",    [])
         presence_list  = sensors.get("presence",     [])
         hr_list        = sensors.get("heart_rate",   [])
-        temp_list      = sensors.get("temperature",  [])
         if not hr_list:
             return {"error": "No Heart Rate data found"}
         if not presence_list:
@@ -322,14 +320,10 @@ class BedAnalytics:
             presence_list, hr_list, vibration_list, rhr, rem_threshold
         )
         print(classified)
-        counts, pct = _compute_stage_stats(classified)
-        wake_ups, sleep_hours = _count_wake_ups(classified)
-        avg_temp = (
-            round(sum(m["v"] for m in temp_list) / len(temp_list), 1)
-            if temp_list else None
-        )
+        counts, stage_percent = _compute_stage_stats(classified)
+        wake_ups, sleep_hours = _count_wakeups(classified)
         hrv_rmssd = _compute_hrv(hr_list)
-        score, quality = self._compute_sleep_score(sleep_hours, wake_ups, pct, avg_temp)
+        score, quality = self._get_sleep_score(sleep_hours, wake_ups, stage_percent, avg_temp)
         return {
             "sleep_score":   score,
             "quality":       quality,
@@ -337,9 +331,8 @@ class BedAnalytics:
             "wake_ups":      wake_ups,
             "resting_hr":    round(rhr, 1),
             "hrv_rmssd_ms":  hrv_rmssd,
-            "stage_percent": pct,
+            "stage_percent": stage_percent,
             "stage_minutes": {s: round(counts[s], 1) for s in counts},
-            "avg_temp_degC": avg_temp,
         }
 
 if __name__ == "__main__":

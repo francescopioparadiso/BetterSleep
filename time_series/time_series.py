@@ -67,7 +67,7 @@ class TimeSeries:
             logger.error(f"Error initializing TimeSeriesDBAdapter: {e}")
             raise
 
-
+#MQTT
     def init_mqtt_client(self):
         try:
             self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, self.logger)
@@ -78,13 +78,35 @@ class TimeSeries:
             self.logger.error(f"Error initializing MQTT client: {e}")
             self.catalog.unregister()
             sys.exit(1)
-    # --------------------------------------------------------
-    # POST METHOD - Add new resources
-    # --------------------------------------------------------
-    def POST(self, *uri, **params):
-        pass
+
+    def notify(self, topic, payload):
+        try:
+            message_received = json.loads(payload)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON payload received on topic {topic}: {e}")
+            return
+        if "sensor" in topic:
+            if checkSenML(message_received):
+                logger.debug(f"Received valid SenML message: {message_received}")
+                self.db.insert_measurements_data("measurements", message_received)
+            else:
+                logger.warning(f"Received invalid SenML message: {message_received}")
+        elif "BedAnalitics" in topic:
+            logger.debug(f"Received sleep analytics message: {message_received}")
+            if "user_id" in message_received  :
+                self.db.insert_sleep_score(message_received)
+                logger.info(f"Sleep analytics saved for user {message_received.get('user_id')}")
+            else:
+                logger.warning(f"Sleep analytics message missing user_id : {message_received}")
+
+    def startClient(self):
+        self.mqtt_client.start()
+
+    def stopClient(self):
+        self.mqtt_client.stop()
 
 
+# REST
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
         if not uri:
@@ -174,36 +196,7 @@ class TimeSeries:
 
     def _get_all_sensors(self, params):
         return _json_response(self.db.get_all_sensors())
-    def PUT(self, *uri, **params):
-        pass
-    def DELETE(self, *uri, **params):
-        pass
 
-    def notify(self, topic, payload):
-        try:
-            message_received = json.loads(payload)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON payload received on topic {topic}: {e}")
-            return
-        if "sensor" in topic:
-            if checkSenML(message_received):
-                logger.debug(f"Received valid SenML message: {message_received}")
-                self.db.insert_measurements_data("measurements", message_received)
-            else:
-                logger.warning(f"Received invalid SenML message: {message_received}")
-        elif "BedAnalitics" in topic:
-            logger.debug(f"Received sleep analytics message: {message_received}")
-            if "user_id" in message_received  :
-                self.db.insert_sleep_score(message_received)
-                logger.info(f"Sleep analytics saved for user {message_received.get('user_id')}")
-            else:
-                logger.warning(f"Sleep analytics message missing user_id : {message_received}")
-
-    def startClient(self):
-        self.mqtt_client.start()
-
-    def stopClient(self):
-        self.mqtt_client.stop()
 
 
 if __name__ == "__main__":

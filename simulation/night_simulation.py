@@ -39,20 +39,26 @@ class MQTTSubscriber:
         self.actuator_states = {"light": initial_light, "heater": "OFF", "fan": "OFF"}
         self.current_phase = "DAY"
         self.mqtt_client = None
+        self.topics = [
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/light/data",
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/heater/data",
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/fan/data",
+                f"House/{self.houseid}/Bedroom/{self.bedroomid}/phase"
+            ]
 
     def on_message(self, topic, payload):
         try:
-            data = json.loads(payload)
+            message_received = json.loads(payload)
             if "actuator" in topic and "data" in topic:
                 parts = topic.split("/")
                 if len(parts) >= 7:
                     device_type = parts[5]
-                    if 'e' in data and len(data['e']) > 0:
-                        value = data['e'][0].get('v')
+                    if 'e' in message_received and len(message_received['e']) > 0:
+                        value = message_received['e'][0].get('v')
                         self.actuator_states[device_type] = value
             elif "phase" in topic and "actuator" not in topic:
-                if 'e' in data and len(data['e']) > 0:
-                    self.current_phase = data['e'][0].get('v')
+                if 'e' in message_received and len(message_received['e']) > 0:
+                    self.current_phase = message_received['e'][0].get('v')
         except Exception as e:
             logger.error(f"Error parsing MQTT message on topic {topic}: {e}")
 
@@ -61,13 +67,7 @@ class MQTTSubscriber:
             client_id = f"TestCycleMonitor_{self.userid}_{int(time.time())}"
             self.mqtt_client = MyMQTT(client_id, self.broker, self.port, self)
             self.mqtt_client.start()
-            topics = [
-                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/light/data",
-                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/heater/data",
-                f"House/{self.houseid}/Bedroom/{self.bedroomid}/actuator/fan/data",
-                f"House/{self.houseid}/Bedroom/{self.bedroomid}/phase"
-            ]
-            for topic in topics:
+            for topic in self.topics:
                 self.mqtt_client.mySubscribe(topic)
                 logger.info(f"[User {self.userid}] Subscribed to: {topic}")
         except Exception as e:
@@ -491,9 +491,8 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
         user.userid, user.houseid, user.bedroomid, initial_light=50
     )
     mqtt_monitor.start()
-    time.sleep(2)   # allow MQTT subscriptions to settle
+    time.sleep(2)
 
-    # --- simulation loop -----------------------------------------------------
     thermal_config    = config["thermal_dynamics"]
     get_baseline_temp = _make_baseline_temp_fn(window)
     steps             = max(window.sim_minutes, 1)
