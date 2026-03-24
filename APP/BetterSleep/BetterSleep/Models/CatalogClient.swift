@@ -3,7 +3,8 @@ import Foundation
 actor CatalogClient {
     static let shared = CatalogClient()
 
-    private let catalogURL = "http://127.0.0.1:8080"
+    private let defaultPublicHost = "127.0.0.1"
+    private let loopbackHosts = ["0.0.0.0", "127.0.0.1", "localhost"]
 
     private var cachedUserServiceURL: String?
     private var cachedTimeSeriesURL: String?
@@ -11,8 +12,62 @@ actor CatalogClient {
     private var cacheTimestampTS: Date?
     private let cacheTTL: TimeInterval = 60
 
+    private func sanitizeHost(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("$(") else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private var publicHost: String {
+        #if targetEnvironment(simulator)
+        return defaultPublicHost
+        #else
+        let envHost = ProcessInfo.processInfo.environment["PUBLIC_HOST"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let envHost = sanitizeHost(envHost) {
+            return envHost
+        }
+
+        let deviceHost = Bundle.main.object(forInfoDictionaryKey: "DEVICE_PUBLIC_HOST") as? String
+        if let deviceHost = sanitizeHost(deviceHost) {
+            return deviceHost
+        }
+
+        let plistHost = Bundle.main.object(forInfoDictionaryKey: "PUBLIC_HOST") as? String
+        if let plistHost = sanitizeHost(plistHost) {
+            return plistHost
+        }
+
+        return defaultPublicHost
+        #endif
+    }
+
+    private var catalogURL: String {
+        "http://\(publicHost):8080"
+    }
+
     private func fixEndpoint(_ endpoint: String) -> String {
-        endpoint.replacingOccurrences(of: "0.0.0.0", with: "127.0.0.1")
+        guard var components = URLComponents(string: endpoint) else {
+            return endpoint
+        }
+
+        if let host = components.host,
+           loopbackHosts.contains(host.lowercased()) {
+            components.host = publicHost
+        }
+
+        return components.string ?? endpoint
+    }
+
+    private func logPotentialDeviceMisconfiguration() {
+        #if !targetEnvironment(simulator)
+        if loopbackHosts.contains(publicHost.lowercased()) {
+            print("CatalogClient warning: physical device is using loopback host '\(publicHost)'. Set DEVICE_PUBLIC_HOST in AppInfo.plist to your Mac LAN IP.")
+        }
+        #endif
     }
 
     func getUserServiceURL() async throws -> String {
@@ -23,6 +78,8 @@ actor CatalogClient {
         }
 
         let url = URL(string: "\(catalogURL)/getEndpointUserService")!
+        logPotentialDeviceMisconfiguration()
+        print("CatalogClient getUserServiceURL -> \(url.absoluteString)")
         let (data, _) = try await URLSession.shared.data(from: url)
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -44,6 +101,8 @@ actor CatalogClient {
         }
 
         let url = URL(string: "\(catalogURL)/getEndpointTimeSeries")!
+        logPotentialDeviceMisconfiguration()
+        print("CatalogClient getTimeSeriesURL -> \(url.absoluteString)")
         let (data, _) = try await URLSession.shared.data(from: url)
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],

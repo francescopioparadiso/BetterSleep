@@ -1,10 +1,63 @@
 import time
+import os
+import subprocess
+import re
 
 import requests
 import logging
 import threading
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_ifconfig_ipv4():
+    try:
+        res = subprocess.run(
+            ["ifconfig"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+    except Exception as exc:
+        logger.debug(f"Could not run ifconfig for LAN IP detection: {exc}")
+        return None
+
+    current_iface = None
+    for line in res.stdout.splitlines():
+        iface_match = re.match(r"^([a-zA-Z0-9]+):", line)
+        if iface_match:
+            current_iface = iface_match.group(1)
+            continue
+
+        inet_match = re.match(r"^\s+inet\s+(\d+\.\d+\.\d+\.\d+)\s+", line)
+        if not inet_match:
+            continue
+
+        ip = inet_match.group(1)
+        if ip.startswith("127.") or ip.startswith("169.254."):
+            continue
+        if current_iface and current_iface.startswith(("utun", "awdl", "llw", "bridge", "lo", "gif", "stf", "anpi", "ap")):
+            continue
+        return ip
+
+    return None
+
+
+def resolve_public_host(default="127.0.0.1"):
+    env_host = (os.environ.get("PUBLIC_HOST") or "").strip()
+    if env_host:
+        return env_host, "PUBLIC_HOST env var"
+
+    detected_host = _parse_ifconfig_ipv4()
+    if detected_host:
+        return detected_host, "auto-detected LAN IPv4"
+
+    return default, "config fallback"
+
+
+def build_public_endpoint(host, port):
+    public_host, source = resolve_public_host(host)
+    return f"http://{public_host}:{port}", public_host, source
 
 
 class CatalogClient:
@@ -66,12 +119,22 @@ class CatalogClient:
         return self.request('delete', endpoint, **kwargs)
 
     def register(self):
+        endpoint, public_host, source = build_public_endpoint(
+            self.service_info['host'],
+            self.service_info['port']
+        )
         service = {
             self.id_key: int(self.service_info[ self.id_key ]),
             "name": self.service_info['name'],
-            "endpoint": f"http://{self.service_info['host']}:{self.service_info['port']}",
+            "endpoint": endpoint,
             "type": self.service_info.get('type', 'generic')
         }
+        logger.info(
+            "Advertising service endpoint %s using host %s (%s)",
+            endpoint,
+            public_host,
+            source
+        )
         if self.type in [1, 2]:
             service["roomID"] = self.service_info.get('roomID', '')
             service["houseID"] = self.service_info.get('houseID', '')
@@ -139,4 +202,3 @@ class CatalogClient:
         if self._worker is not None:
             self._worker.join(timeout=2)
             self._worker = None
-
