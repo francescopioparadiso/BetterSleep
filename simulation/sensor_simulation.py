@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import requests
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.dirname(__file__))
 
 from common_simulation import build_url, get_user_service_endpoint, load_json_file
 from time_series.mongo_db import MongoDB

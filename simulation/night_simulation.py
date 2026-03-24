@@ -3,7 +3,7 @@ import math
 import os
 import sys
 from datetime import datetime, timedelta
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.dirname(__file__))
 
 logging.basicConfig(
     filename='test_cycle.log',

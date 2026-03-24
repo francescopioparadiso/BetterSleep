@@ -4,7 +4,7 @@ import os
 import sys
 
 # Path setups
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.dirname(__file__))
 from pymongo import MongoClient
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')

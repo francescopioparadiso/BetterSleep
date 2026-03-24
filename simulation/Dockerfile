@@ -1,21 +1,21 @@
 FROM python:3.13-slim
 
-WORKDIR /app
+WORKDIR /service
 
 # Install required packages
 RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the entire project structure
-COPY . /app
+# Copy requirements first and install dependencies
+COPY simulation/requirements.txt /service/requirements.txt
+RUN pip install --no-cache-dir -r /service/requirements.txt
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy the project structure
+COPY simulation /service
+COPY common /service/common
+COPY device_connector /service/device_connector
+COPY time_series /service/time_series
 
-# Set working directory to simulation
-WORKDIR /app/testing
-
-# Run the test cycle
-CMD ["python", "test_cycle.py"]
-
+# Run the simulation
+CMD ["python", "night_simulation.py"]

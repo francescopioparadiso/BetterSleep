@@ -1,2 +1,4 @@
 cherrypy
 psycopg2-binary
+requests
+paho-mqtt==1.6.1

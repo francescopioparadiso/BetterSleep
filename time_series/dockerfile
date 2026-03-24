@@ -1,11 +1,12 @@
 FROM python:3.12-slim
 
-WORKDIR /app
+WORKDIR /service
 
-COPY requirements.txt .
+COPY time_series/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY time_series ./
+COPY common ./common
 
-CMD ["python3", "time_series_db.py"]
+CMD ["python3", "time_series.py"]

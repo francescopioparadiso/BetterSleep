@@ -1,11 +1,12 @@
 FROM python:3.12-slim
 
-WORKDIR /app
+WORKDIR /service
 
-COPY requirements.txt .
+COPY catalog/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY catalog ./
+COPY common ./common
 
 CMD ["python3", "catalog.py"]
