@@ -1,0 +1,162 @@
+services:
+  # --- Database Services ---
+  postgresUser:
+    image: postgres:latest
+    container_name: bs_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: bettersleep
+      PGDATA: /var/lib/postgresql/data
+      TZ: "Europe/Rome"
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./Database/init_catalog.sql:/docker-entrypoint-initdb.d/init_catalog.sql
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+  timeseries-mongo:
+    image: mongo:latest
+    container_name: bs_mongo
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password_mongo
+      TZ: "Europe/Rome"
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+  mqtt-broker:
+    image: eclipse-mosquitto:latest
+    container_name: bs_mqtt
+    restart: always
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+      - mosquitto_config:/mosquitto/config
+    environment:
+      TZ: "Europe/Rome"
+
+  # --- Application Services ---
+  catalog:
+    build:
+      context: .
+      dockerfile: catalog/dockerfile
+    container_name: bs_catalog
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - timeseries-mongo
+      - mqtt-broker
+    environment:
+      TZ: "Europe/Rome"
+    volumes:
+      - ./catalog:/service
+      - ./common:/service/common
+
+  user-service:
+    build:
+      context: .
+      dockerfile: user_service/dockerfile
+    container_name: bs_user_service
+    restart: always
+    ports:
+      - "9095:9095"
+    depends_on:
+      - postgresUser
+      - mqtt-broker
+    environment:
+      TZ: "Europe/Rome"
+    volumes:
+      - ./user_service:/service
+      - ./common:/service/common
+
+  sleep-cycle-manager:
+    build:
+      context: .
+      dockerfile: sleep_cycle_manager/dockerfile
+    container_name: bs_sleep_cycle_manager
+    restart: always
+    ports:
+      - "9092:9092"
+    depends_on:
+      - mqtt-broker
+      - catalog
+    environment:
+      TZ: "Europe/Rome"
+    volumes:
+      - ./sleep_cycle_manager:/service
+      - ./common:/service/common
+
+  time-series:
+    build:
+      context: .
+      dockerfile: time_series/dockerfile
+    container_name: bs_time_series
+    restart: always
+    ports:
+      - "9093:9093"
+    depends_on:
+      - timeseries-mongo
+      - mqtt-broker
+      - catalog
+    environment:
+      TZ: "Europe/Rome"
+    volumes:
+      - ./time_series:/service
+      - ./common:/service/common
+
+  bed-analytics:
+    build:
+      context: .
+      dockerfile: bed_analytics/dockerfile
+    container_name: bs_bed_analytics
+    restart: always
+    ports:
+      - "9097:9097"
+    depends_on:
+      - mqtt-broker
+      - catalog
+    environment:
+      TZ: "Europe/Rome"
+    volumes:
+      - ./bed_analytics:/service
+      - ./common:/service/common
+
+  simulation:
+    build:
+      context: .
+      dockerfile: simulation/dockerfile
+    container_name: bs_simulation
+    restart: always
+    depends_on:
+      - mqtt-broker
+      - catalog
+      - time-series
+      - sleep-cycle-manager
+      - bed-analytics
+      - user-service
+      - postgresUser
+      - timeseries-mongo
+    environment:
+      TZ: "Europe/Rome"
+
+volumes:
+  postgres_data:
+  mongo_data:
+  mosquitto_data:
+  mosquitto_log:
+  mosquitto_config:
+

@@ -10,14 +10,14 @@
     "port": 8080
   },
   "database": {
-     "host": "127.0.0.1",
+     "host": "timeseries-mongo",
       "port": 27017,
       "username": "admin",
       "password": "password_mongo",
       "database": "catalogdb"
     },
   "MQTT": {
-    "broker": "127.0.0.1",
+    "broker": "mqtt-broker",
     "port": 1883,
     "clientID": "CatalogServicePublisher",
     "topic_publish": [

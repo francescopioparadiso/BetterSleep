@@ -7,14 +7,14 @@
     "type": "Analytics"
   },
  "MQTT": {
-      "broker": "127.0.0.1",
+   "broker": "mqtt-broker",
       "port": 1883,
       "topic_subscribe": [
         "BedAnalitics/userid/#"
       ],
     "clientID": "BedAnalyticsClientBetterSleep1"
     },
-  "catalogURL": "http://127.0.0.1:8080",
+  "catalogURL": "http://catalog:8080",
   "removeInterval": 10,
   "IDEAL_TEMP": 20.0,
   "VIBRATION_LIMIT": 0.015,

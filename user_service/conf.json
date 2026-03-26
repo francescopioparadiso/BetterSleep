@@ -6,10 +6,10 @@
     "port": 9095,
     "type": "UserService"
   },
-  "catalogURL": "http://127.0.0.1:8080",
+  "catalogURL": "http://catalog:8080",
  "MQTT": {
       "clientID": "UserService_Publisher",
-      "broker": "127.0.0.1",
+      "broker": "mqtt-broker",
     "port": 1883,
        "topic_publish": [
       "UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/",
@@ -17,7 +17,7 @@
       ]
  },
   "Database": {
-        "host": "127.0.0.1",
+      "host": "postgresUser",
         "port": 5432,
         "user": "admin",
         "password": "password",

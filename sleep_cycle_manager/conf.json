@@ -7,7 +7,7 @@
     "type": "Manager"
   },
   "MQTT": {
-    "broker": "127.0.0.1",
+    "broker": "mqtt-broker",
     "port": 1883,
     "topic_subscribe": [
       "House/+/Bedroom/+/sensor/+/+/data",
@@ -25,7 +25,7 @@
     ],
     "clientID": "SleepCycleManagerClientBetterSleep"
   },
-  "catalogURL": "http://127.0.0.1:8080",
+  "catalogURL": "http://catalog:8080",
   "removeInterval": 10,
   "transitionWindowMin": 30,
   "transitionCurveExponent": 1.0,

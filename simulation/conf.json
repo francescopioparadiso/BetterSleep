@@ -11,10 +11,10 @@
     }
   ],
   "catalog": {
-    "url": "http://127.0.0.1:8080"
+    "url": "http://catalog:8080"
   },
   "mqtt": {
-    "broker": "127.0.0.1",
+    "broker": "mqtt-broker",
     "port": 1883
   },
   "sensors": {

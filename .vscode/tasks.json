@@ -4,9 +4,9 @@
     {
       "label": "Database",
       "type": "shell",
-      "command": "docker compose up --build",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build catalog-postgres timeseries-mongo mqtt-broker",
       "options": {
-        "cwd": "${workspaceFolder}/Database"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "group": "servers",
@@ -18,9 +18,9 @@
     {
       "label": "Catalog",
       "type": "shell",
-      "command": "python3 catalog.py",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build catalog",
       "options": {
-        "cwd": "${workspaceFolder}/catalog"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "group": "servers",
@@ -32,9 +32,9 @@
     {
       "label": "User Service",
       "type": "shell",
-      "command": "python3 user_service.py",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build user-service",
       "options": {
-        "cwd": "${workspaceFolder}/user_service"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "group": "servers",
@@ -46,9 +46,9 @@
     {
       "label": "TimeSeries",
       "type": "shell",
-      "command": "python3 time_series.py",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build time-series",
       "options": {
-        "cwd": "${workspaceFolder}/time_series"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "group": "servers",
@@ -60,9 +60,9 @@
     {
       "label": "BedAnalytics",
       "type": "shell",
-      "command": "python3 bed_analytics.py",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build bed-analytics",
       "options": {
-        "cwd": "${workspaceFolder}/bed_analytics"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "group": "servers",
@@ -74,9 +74,9 @@
     {
       "label": "SleepCycleManager",
       "type": "shell",
-      "command": "python3 sleep_cycle_manager.py",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build sleep-cycle-manager",
       "options": {
-        "cwd": "${workspaceFolder}/sleep_cycle_manager"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "group": "servers",
@@ -103,7 +103,7 @@
       "type": "shell",
       "command": "python3 clean_db.py",
       "options": {
-        "cwd": "${workspaceFolder}/Simulation"
+        "cwd": "${workspaceFolder}/simulation"
       },
       "presentation": {
         "group": "test",
@@ -123,7 +123,7 @@
         "20"
       ],
       "options": {
-        "cwd": "${workspaceFolder}/Simulation"
+        "cwd": "${workspaceFolder}/simulation"
       },
       "presentation": {
         "group": "test",
@@ -136,7 +136,7 @@
       "type": "shell",
       "command": "python3 sensor_simulation.py",
       "options": {
-        "cwd": "${workspaceFolder}/Simulation"
+        "cwd": "${workspaceFolder}/simulation"
       },
       "presentation": {
         "group": "test",
@@ -149,7 +149,7 @@
       "type": "shell",
       "command": "python3",
       "args": [
-        "Simulation/sensor_simulation.py"
+        "simulation/sensor_simulation.py"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

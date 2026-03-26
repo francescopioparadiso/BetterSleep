@@ -7,16 +7,16 @@
     "type": "TimeSeriesDB"
   },
  "MQTT": {
-      "broker": "127.0.0.1",
+   "broker": "mqtt-broker",
       "port": 1883,
       "topic_subscribe": ["House/+/Bedroom/+/sensor/+/+/data",
       "BedAnalitics/userid/+/SleepReport"],
       "clientID": "TimeSeriesDBAdapterClientBetterSleepIoT"
     },
-  "catalogURL": "http://127.0.0.1:8080",
+  "catalogURL": "http://catalog:8080",
   "removeInterval": 10,
     "timeSeriesDB": {
-        "host": "127.0.0.1",
+      "host": "timeseries-mongo",
         "port": 27017,
         "username": "admin",
         "password": "password_mongo",
