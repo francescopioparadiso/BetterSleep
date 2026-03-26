@@ -1,7 +1,4 @@
 import os
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from common.common import load_json_body, json_error_page, init_mqtt_helper
 import json
 import logging
@@ -35,11 +32,11 @@ class UserService:
             self.mqtt_client_publish = init_mqtt_helper(self, self.MQTT_info, logger)
             if self.mqtt_client_publish is None:
                 self.catalog.unregister()
-                sys.exit(1)
+                raise SystemExit(1)
         except Exception as e:
             logger.error(f"Error initializing MQTT client: {e}")
             self.catalog.unregister()
-            sys.exit(1)
+            raise SystemExit(1)
 
     def startClient(self):
         self.mqtt_client_publish.start()

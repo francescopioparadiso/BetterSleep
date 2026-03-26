@@ -1,11 +1,9 @@
 import logging
-import sys
 import os
 import time
 import json
 import random
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
 from common.common import init_mqtt_helper
@@ -85,12 +83,12 @@ class BaseIoTComponent:
 
             self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, logger, clientid_fallback=generate_client_id)
             if self.mqtt_client is None:
-                sys.exit(1)
+                raise SystemExit(1)
 
 
         except Exception as e:
             logger.error(f"MQTT init failed: {e}")
-            sys.exit(1)
+            raise SystemExit(1)
 
     def stop(self):
         self.catalog.unregister()

@@ -2,7 +2,7 @@
   "serviceInfo": {
     "serviceID": 5,
     "name": "BedAnalytics",
-    "host": "0.0.0.0",
+    "host": "bed-analytics",
     "port": 9097,
     "type": "Analytics"
   },

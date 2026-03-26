@@ -2,7 +2,7 @@
   "serviceInfo": {
     "serviceID": 3,
     "name": "Time Series DB Adapter",
-    "host": "0.0.0.0",
+    "host": "time-series",
     "port": 9093,
     "type": "TimeSeriesDB"
   },

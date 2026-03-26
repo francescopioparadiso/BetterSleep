@@ -1,13 +1,15 @@
 FROM python:3.12-slim
 
-WORKDIR /service
+WORKDIR /app
 
-COPY bed_analytics/requirements.txt .
-
+COPY bed_analytics/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bed_analytics ./
-COPY common ./common
+COPY bed_analytics /app/bed_analytics
+COPY common /app/common
+
+ENV PYTHONPATH=/app
+WORKDIR /app/bed_analytics
 
 CMD ["python3", "bed_analytics.py"]
 

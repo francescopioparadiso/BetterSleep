@@ -6,7 +6,7 @@
     "last_update": "2026-03-02"
   },
   "server": {
-    "host": "0.0.0.0",
+    "host": "catalog",
     "port": 8080
   },
   "database": {

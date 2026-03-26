@@ -6,7 +6,10 @@ COPY catalog/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY catalog ./
+COPY catalog ./catalog
 COPY common ./common
 
-CMD ["python3", "catalog.py"]
+# Make shared packages importable without modifying sys.path
+ENV PYTHONPATH=/service
+
+CMD ["python3", "catalog/catalog.py"]

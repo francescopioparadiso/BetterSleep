@@ -1,15 +1,11 @@
-import sys
 import math
 import threading
 import logging
 from datetime import datetime
 import cherrypy
-import os
 import re
 import json
 import requests
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
 from common.common import json_error_page, mqtt_to_regex, init_mqtt_helper
@@ -125,19 +121,21 @@ class BedAnalytics:
                 self.logger.error("Timeseries endpoint not found in Catalog response")
                 return None
         else:
-            self.logger.error(f"Failed to retrieve timeseries endpoint from Catalog: {status} - {error} Stopping service.")
-            sys.exit(1)
+            self.logger.error(
+                f"Failed to retrieve timeseries endpoint from Catalog: {status} - {error} Stopping service."
+            )
+            raise SystemExit(1)
 
     def init_mqtt_client(self):
         try:
             self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, logger)
             if self.mqtt_client is None:
                 self.catalog_client.unregister()
-                sys.exit(1)
+                raise SystemExit(1)
         except Exception as e:
             logger.error(f"Error initializing MQTT client: {e}")
             self.catalog_client.unregister()
-            sys.exit(1)
+            raise SystemExit(1)
 
     def startClient(self):
         self.mqtt_client.start()
@@ -341,13 +339,13 @@ if __name__ == "__main__":
             full_conf = json.load(f)
     except FileNotFoundError:
         logger.error("Configuration file 'conf.json' not found")
-        sys.exit(1)
+        raise SystemExit(1)
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in 'conf.json': {e}")
-        sys.exit(1)
+        raise SystemExit(1)
     except Exception as e:
         logger.error(f"Error reading configuration file: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
 
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
@@ -368,7 +366,7 @@ if __name__ == "__main__":
         cherrypy.engine.block()
     except KeyError as e:
         logger.error(f"Missing configuration key: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
     except Exception as e:
         logger.error(f"Error starting service: {e}")
-        sys.exit(1)
+        raise SystemExit(1)

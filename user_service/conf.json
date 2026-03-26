@@ -2,7 +2,7 @@
   "serviceInfo": {
     "serviceID": 4,
     "name": "User Service",
-    "host": "0.0.0.0",
+    "host": "user-service",
     "port": 9095,
     "type": "UserService"
   },

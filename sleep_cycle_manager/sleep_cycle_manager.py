@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 import time
 import logging
 import threading
@@ -8,8 +7,6 @@ import re
 from datetime import datetime
 
 import cherrypy
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from common.catalog_client import CatalogClient
 from common.common import mqtt_to_regex, json_error_page, init_mqtt_helper
@@ -95,7 +92,7 @@ class SleepCycleManager:
         self.mqtt_client = init_mqtt_helper(self, mqtt, self.logger)
         if self.mqtt_client is None:
             self.catalog_client.unregister()
-            sys.exit(1)
+            raise SystemExit(1)
 
         self.user_cache.seed_room_associations()
         self.user_cache.start_eviction_loop()
@@ -107,7 +104,7 @@ class SleepCycleManager:
             self.logger.error(f"Could not fetch user-service endpoint: {status} - {error}")
             self.stopClient()
             self.catalog_client.unregister()
-            sys.exit(1)
+            raise SystemExit(1)
         return endpoint
 
     def startClient(self): self.mqtt_client.start()
@@ -154,6 +151,7 @@ class SleepCycleManager:
             userid = self.room_to_user_map.get(room_id)
             if not userid:
                 self.logger.warning(f"Room {room_id!r} not in room_to_user_map")
+                self.logger.info(f"Current room_to_user_map: {self.room_to_user_map}")
                 return
 
             entry = self.user_cache.get_or_fetch(userid)
@@ -382,7 +380,7 @@ if __name__ == "__main__":
             full_conf = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
         logger.error(f"Config error: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
 
     manager = SleepCycleManager(full_conf, logger=logger)
 

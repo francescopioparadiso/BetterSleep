@@ -1,15 +1,9 @@
 import json
-import sys
-from pathlib import Path
 import logging
 import cherrypy
 import threading
 import time
 
-# Ensure sibling project packages (e.g. common/) are importable when run from catalog/.
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Use the single shared load_json_body helper from common.common
 from common.common import json_error_page, load_json_body, init_mqtt_helper
@@ -490,15 +484,15 @@ if __name__ == "__main__":
             service_ttl_s = cleanup_conf.get('ttl_seconds', 60)
     except FileNotFoundError:
         logger.error("Configuration file 'conf.json' not found")
-        sys.exit(1)
+        raise SystemExit(1)
     except Exception as e:
         logger.error(f"Error reading conf.json: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
     try:
         my_db_adaptor = MongoDBAdapter(db_conf)
     except Exception as e:
         logger.error(f"Failed to initialize database connection: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
     try:
         catalog = Catalog(my_db_adaptor, cleanup_interval_s, service_ttl_s, mqtt_conf)
         cherrypy.tree.mount(catalog, '/', conf)
@@ -518,7 +512,7 @@ if __name__ == "__main__":
         cherrypy.engine.block()
     except KeyError as e:
         logger.error(f"Missing server configuration key: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
     except Exception as e:
         logger.error(f"Error starting service: {e}")
-        sys.exit(1)
+        raise SystemExit(1)

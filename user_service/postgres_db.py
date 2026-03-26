@@ -1,4 +1,3 @@
-import sys
 import logging
 import psycopg2
 from psycopg2 import DatabaseError, IntegrityError, OperationalError
@@ -12,7 +11,7 @@ class PostgresDB:
         # Quick connection test
         if not self._execute_query("SELECT 1"):
             logger.critical("Unable to connect to the database.")
-            sys.exit(1)
+            raise SystemExit(1)
         logger.info("PostgreSQL connection established successfully.")
 
     def connect(self):

@@ -2,7 +2,7 @@
   "serviceInfo": {
     "serviceID": 2,
     "name": "Sleep Cycle Manager",
-    "host": "0.0.0.0",
+    "host": "sleep-cycle-manager",
     "port": 9092,
     "type": "Manager"
   },

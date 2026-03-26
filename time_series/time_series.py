@@ -1,10 +1,6 @@
 import json
 import logging
-import sys
-import os
 import re
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import cherrypy
 
@@ -73,11 +69,11 @@ class TimeSeries:
             self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, self.logger)
             if self.mqtt_client is None:
                 self.catalog.unregister()
-                sys.exit(1)
+                raise SystemExit(1)
         except Exception as e:
             self.logger.error(f"Error initializing MQTT client: {e}")
             self.catalog.unregister()
-            sys.exit(1)
+            raise SystemExit(1)
 
     def notify(self, topic, payload):
         try:
@@ -206,13 +202,13 @@ if __name__ == "__main__":
             full_conf = json.load(f)
     except FileNotFoundError:
         logger.error("Configuration file 'conf.json' not found")
-        sys.exit(1)
+        raise SystemExit(1)
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in 'conf.json': {e}")
-        sys.exit(1)
+        raise SystemExit(1)
     except Exception as e:
         logger.error(f"Error reading configuration file: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
 
     conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
 
@@ -235,7 +231,7 @@ if __name__ == "__main__":
         cherrypy.engine.block()
     except KeyError as e:
         logger.error(f"Missing configuration key: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
     except Exception as e:
         logger.error(f"Error starting service: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
