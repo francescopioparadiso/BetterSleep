@@ -33,7 +33,7 @@ class PhaseManager:
         self.window  = transition_window_min
         self.transition_curve_exponent = float(transition_curve_exponent)
         self.prefer_fan = prefer_fan
-        self._sensor_time_per_user = {}
+        self._sensor_time_per_user = {} # userid → datetime of last sensor time update (rounded to minute)
 
     def sync_from_sensor_time(self, unix_ts, userid):
         if userid is None:
@@ -47,9 +47,6 @@ class PhaseManager:
         except Exception as e:
             self.logger.error(f"PhaseManager sync error (user={userid}): {e}")
 
-    # ------------------------------------------------------------------
-    # Core phase logic
-    # ------------------------------------------------------------------
 
     def _check_user(self, userid):
         now = self._sensor_time_per_user.get(userid)
@@ -58,7 +55,6 @@ class PhaseManager:
 
         now_min = now.hour * 60 + now.minute
 
-        # Use UserCache instead of active_users_cache
         entry = self.manager.user_cache.get(userid)
         if not entry:
             self.logger.warning(f"[PhaseManager] user={userid} not in cache — skipping")
@@ -70,7 +66,7 @@ class PhaseManager:
             self.logger.warning(f"[PhaseManager] user={userid}: night_time or morning_time missing — skipping")
             return
 
-        wind_down_start = (night_min - self.window) % 1440
+        wind_down_start = (night_min - self.window) % 1440 #1440 is the number of minutes in a day
         wake_up_start   = (morn_min  - self.window) % 1440
 
         if _is_in_range(now_min, wind_down_start, night_min):
@@ -84,12 +80,7 @@ class PhaseManager:
         else:
             self._apply_static_phase(userid, entry, "DAY")
 
-    # ------------------------------------------------------------------
-    # Phase application
-    # ------------------------------------------------------------------
-
     def _apply_static_phase(self, userid, entry, phase):
-        # Clear any leftover transition anchor
         entry.live_targets.pop("transition_start_light", None)
 
         if phase == "SLEEP":
@@ -106,7 +97,6 @@ class PhaseManager:
     def _apply_transition(self, userid, entry, phase, progress):
         curved_progress = self._curve_progress(progress)
 
-        # Anchor the start-of-transition light level the first time we enter
         if "transition_start_light" not in entry.live_targets:
             current_light = entry.actuators_state.get("light") or entry.live_targets.get("light")
             if current_light is not None:

@@ -2,40 +2,38 @@ import time
 import logging
 import threading
 import requests
+from dataclasses import dataclass, field
+from typing import Any
 
 
+@dataclass
 class UserEntry:
-    def __init__(self, house_id, active_room_id, night_time, morning_time, config,
-                 live_targets, is_sleeping, phase, phase_published, start_sleep_sent,
-                 sensor_ts, light, actuators_state, last_seen_monotonic):
-        self.house_id       = house_id
-        self.active_room_id = active_room_id
-        self.night_time     = night_time
-        self.morning_time   = morning_time
+    house_id: Any
+    active_room_id: Any
+    night_time: Any
+    morning_time: Any
+    config: dict
+    live_targets: dict
+    is_sleeping: bool
+    phase: str  # DAY | WIND_DOWN | SLEEP | WAKE_UP
+    phase_published: bool
+    start_sleep_sent: bool
+    sensor_ts: Any
+    actuators_state: dict = field(default_factory=dict)
+    # {"light": 75.0, "heater": 22.0, ...} - dynamic state of actuators for this user/room
+    last_seen_monotonic: float = field(default_factory=time.monotonic)
 
-        self.config = config  # fixed targets from user preferences
-        self.live_targets = live_targets  # overridden mid-session by PhaseManager
-
-        self.is_sleeping      = is_sleeping
-        self.phase            = phase  # DAY | WIND_DOWN | SLEEP | WAKE_UP
-        self.phase_published  = phase_published
-        self.start_sleep_sent = start_sleep_sent
-        self.sensor_ts        = sensor_ts
-
-        # Store actuator states and current light value in a single dictionary
-        # Example: {"fan": 0, "heater": 1, "light": 50}
-        self.actuators_state = actuators_state or {}
-        self._last_seen      = last_seen_monotonic
+    def __post_init__(self):
+        # Ensure state dict is always mutable and owned by this entry.
+        self.actuators_state = dict(self.actuators_state or {})
+        if self.last_seen_monotonic is None:
+            self.last_seen_monotonic = time.monotonic()
 
     def touch(self):
-        self._last_seen = time.monotonic()
+        self.last_seen_monotonic = time.monotonic()
 
     def is_stale(self, ttl):
-        return (time.monotonic() - self._last_seen) > ttl
-
-    @property
-    def last_seen_monotonic(self):
-        return self._last_seen
+        return (time.monotonic() - self.last_seen_monotonic) > ttl
 
     def get_actuator_state(self, actuator_type):
         return self.actuators_state.get(actuator_type)
@@ -51,7 +49,7 @@ class UserEntry:
 
 
 class UserCache:
-    TTL_SECONDS       = 7200
+    TTL_SECONDS       = 7200 
     EVICTION_INTERVAL = 300
 
     def __init__(self, user_service_endpoint, catalog_url, room_to_user_map,
@@ -97,7 +95,7 @@ class UserCache:
         if not entry:
             return []
         if not entry.actuators_state.get("_types_fetched", False):
-            fetched = self._fetch_actuators(room_id)
+            fetched = self._get_actuators(room_id)
             for actuator_type in fetched:
                 if actuator_type not in entry.actuators_state:
                     entry.actuators_state[actuator_type] = 0  # Default state
@@ -106,6 +104,7 @@ class UserCache:
         return [k for k in entry.actuators_state.keys() if k not in ("_types_fetched", "light")]
 
     def add_actuator(self, room_id, actuator_type):
+        """ Add a new actuator type to the room's entry, if it doesn't already exist."""
         entry = self._entry_for_room(room_id)
         if entry and actuator_type not in entry.actuators_state:
             entry.actuators_state[actuator_type] = 0  # Default state
@@ -175,7 +174,7 @@ class UserCache:
             self.logger.info(f"[EVICTION] Evicted {len(stale)} user(s): {stale}")
 
     def _fetch(self, userid):
-        pref = self._fetch_preferences(userid)
+        pref = self._get_preferences(userid)
         if pref is None:
             return None
 
@@ -190,16 +189,18 @@ class UserCache:
             return getattr(previous, attr, fallback) if previous else fallback
 
         is_sleeping = pref.get("is_sleeping", prev("is_sleeping", False))
+        previous_last_seen = prev("last_seen_monotonic", time.monotonic())
+        last_seen_monotonic = (
+            float(previous_last_seen)
+            if isinstance(previous_last_seen, (int, float))
+            else time.monotonic()
+        )
 
         # Build actuators_state dict
         actuators_state = {}
         # If previous entry exists, copy its actuators_state
         if previous and hasattr(previous, "actuators_state"):
             actuators_state = dict(previous.actuators_state)
-        # Set current light value if available
-        if prev("light") is not None:
-            actuators_state["light"] = prev("light")
-
         entry = UserEntry(
             house_id       = pref.get("house_id"),
             active_room_id = r_id,
@@ -217,12 +218,11 @@ class UserCache:
             },
             is_sleeping       = is_sleeping,
             phase             = "SLEEP" if is_sleeping else "DAY",
-            phase_published   = prev("phase_published",  False),
-            start_sleep_sent  = prev("start_sleep_sent", False),
+            phase_published   = bool(prev("phase_published",  False)),
+            start_sleep_sent  = bool(prev("start_sleep_sent", False)),
             sensor_ts         = prev("sensor_ts"),
-            light             = None,  # Now stored in actuators_state
             actuators_state   = actuators_state,
-            last_seen_monotonic = prev("last_seen_monotonic", time.monotonic()),
+            last_seen_monotonic = last_seen_monotonic,
         )
 
         with self._lock:
@@ -231,7 +231,7 @@ class UserCache:
 
         return entry
 
-    def _fetch_preferences(self, userid):
+    def _get_preferences(self, userid):
         try:
             res = requests.get(
                 f"{self._user_endpoint}/getUserRoomPreferences",
@@ -248,7 +248,7 @@ class UserCache:
         pref = res.json().get("preferences", {})
         return pref.get("user_preferences", pref)
 
-    def _fetch_actuators(self, room_id):
+    def _get_actuators(self, room_id):
         try:
             res = requests.get(
                 f"{self._catalog_url}/getActuatorByRoom",
