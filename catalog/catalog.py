@@ -3,22 +3,14 @@ import logging
 import cherrypy
 import threading
 import time
-
-
-# Use the single shared load_json_body helper from common.common
 from common.common import json_error_page, load_json_body, init_mqtt_helper
-# Note: local duplicates removed; all modules should use `load_json_body`.
 from mongo_db import MongoDBAdapter
 
-# Configure logging with DEBUG level
 
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# VALIDATION FUNCTIONS
-# ============================================================
 
 def check_if_is_a_service(new_service):
     """Validate that the service contains all required fields."""
