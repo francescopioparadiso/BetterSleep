@@ -2,10 +2,10 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-COPY simulation/requirements.txt ./
+COPY Simulation/requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY simulation /app/simulation
+COPY Simulation /app/simulation
 COPY common /app/common
 COPY device_connector /app/device_connector
 

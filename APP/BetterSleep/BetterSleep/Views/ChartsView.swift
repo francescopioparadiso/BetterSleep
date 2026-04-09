@@ -72,17 +72,15 @@ struct ChartsView: View {
                         ProgressView("Loading sleep data...")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if !vm.hasActiveRoom {
-                        ScrollView {
-                            VStack {
-                                sleepScoreGauge
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.horizontal)
-                        }
-                        .scrollIndicators(.hidden)
-                        .refreshable {
-                            await vm.refresh()
-                        }
+                        ContentUnavailableView(
+                            "No Active Room",
+                            systemImage: "moon.zzz.fill",
+                            description: Text("Set a room as active in My Homes to see your sleep analytics.")
+                        )
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.indigo)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .offset(y: -36)
                     } else {
                         List {
                             sleepScoreGauge

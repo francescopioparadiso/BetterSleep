@@ -3,6 +3,7 @@ import logging
 import cherrypy
 import threading
 import time
+from urllib.parse import urlparse, urlunparse
 from common.common import json_error_page, load_json_body, init_mqtt_helper
 from mongo_db import MongoDBAdapter
 
@@ -314,7 +315,7 @@ class Catalog:
         try:
             endpoint = self.db.get_endpoint_Time_series_DB()
             if endpoint:
-                return json.dumps({"status": "success", "endpoint": endpoint})
+                return json.dumps({"status": "success", "endpoint": self._externalize_endpoint(endpoint)})
             print("TimeSeriesDB service not found")
             raise cherrypy.HTTPError(404, "TimeSeriesDB service not found")
         except cherrypy.HTTPError:
@@ -328,7 +329,7 @@ class Catalog:
         try:
             endpoint = self.db.get_endpoint_user_service()
             if endpoint:
-                return json.dumps({"status": "success", "endpoint": endpoint})
+                return json.dumps({"status": "success", "endpoint": self._externalize_endpoint(endpoint)})
             print("UserService not found")
             raise cherrypy.HTTPError(404, "UserService not found")
         except cherrypy.HTTPError:
@@ -349,6 +350,34 @@ class Catalog:
         except Exception as e:
             print(f"Error retrieving all services: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
+
+    def _externalize_endpoint(self, endpoint):
+        """Map internal Docker hostnames to a host reachable by the HTTP caller."""
+        try:
+            parsed = urlparse(endpoint)
+            host = parsed.hostname
+            if not host:
+                return endpoint
+
+            lowered = host.lower()
+            should_rewrite = (
+                "." not in lowered
+                or lowered in {"localhost", "127.0.0.1", "0.0.0.0"}
+                or lowered.startswith("172.")
+                or lowered.startswith("10.")
+                or lowered.startswith("192.168.")
+            )
+            if not should_rewrite:
+                return endpoint
+
+            request_host = (cherrypy.request.headers.get("Host") or "").split(":")[0].strip()
+            if not request_host:
+                return endpoint
+
+            netloc = f"{request_host}:{parsed.port}" if parsed.port else request_host
+            return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+        except Exception:
+            return endpoint
 
     def _get_service(self, params):
         """Get a specific service by serviceID."""

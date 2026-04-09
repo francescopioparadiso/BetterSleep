@@ -6,6 +6,7 @@ import Combine
 class HouseModel: ObservableObject {
     @Published var houses: [House] = []
     @Published var pendingInvites: [Invitation] = []
+    @Published var pendingInviteHouseNames: [Int: String] = [:]
     @Published var isLoading = true
     @Published var currentUserId: Int?
     
@@ -89,7 +90,17 @@ class HouseModel: ObservableObject {
             guard let myEmail = allUsers.first(where: { $0.id == userId })?.email else { return }
             
             let allInvites: [Invitation] = try await fetchFromAPI(endpoint: "getAllInvitations", responseKey: "invitations")
-            self.pendingInvites = allInvites.filter { $0.email.lowercased() == myEmail.lowercased() && $0.status == 0 }
+            let myPendingInvites = allInvites.filter { $0.email.lowercased() == myEmail.lowercased() && $0.status == 0 }
+            self.pendingInvites = myPendingInvites
+
+            let allHouses: [House] = try await fetchFromAPI(endpoint: "getAllHouses", responseKey: "houses")
+            var names: [Int: String] = [:]
+            for invite in myPendingInvites {
+                if let houseName = allHouses.first(where: { $0.id == invite.house_id })?.name {
+                    names[invite.house_id] = houseName
+                }
+            }
+            self.pendingInviteHouseNames = names
         } catch { print("Error fetching invites: \(error)") }
     }
     

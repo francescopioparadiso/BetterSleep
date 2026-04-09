@@ -198,9 +198,14 @@ def build_user_contexts(config):
 
 
 def default_night_bases(target_date=None):
-    if target_date:
+    if target_date is not None:
         if isinstance(target_date, str):
             target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+        elif isinstance(target_date, datetime):
+            target_date = target_date.date()
+        elif isinstance(target_date, int):
+            # Allow offsets like 1 => yesterday.
+            target_date = datetime.now().date() - timedelta(days=target_date)
         return [(f"{target_date.strftime('%Y%m%d')}_to_{(target_date + timedelta(days=1)).strftime('%Y%m%d')}", target_date)]
 
     today = datetime.now().date()
@@ -567,7 +572,12 @@ def run_simulation(duration_seconds=60, target_date=None):
 
     def _run_user(user_ctx):
         if target_date:
-            date_str = target_date if isinstance(target_date, str) else target_date.strftime("%Y-%m-%d")
+            if isinstance(target_date, str):
+                date_str = target_date
+            elif isinstance(target_date, int):
+                date_str = (datetime.now().date() - timedelta(days=target_date)).strftime("%Y-%m-%d")
+            else:
+                date_str = target_date.strftime("%Y-%m-%d")
             delete_previous_simulation_data(config, user_ctx.userid, date_str)
             time.sleep(1)
 

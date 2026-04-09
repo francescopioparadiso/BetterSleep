@@ -55,11 +55,30 @@ actor CatalogClient {
         }
 
         if let host = components.host,
-           loopbackHosts.contains(host.lowercased()) {
+           shouldRewriteHost(host) {
             components.host = publicHost
         }
 
         return components.string ?? endpoint
+    }
+
+    private func shouldRewriteHost(_ host: String) -> Bool {
+        let lowered = host.lowercased()
+        if loopbackHosts.contains(lowered) {
+            return true
+        }
+
+        // Docker service names like "user-service" are not resolvable from iOS.
+        if !lowered.contains(".") {
+            return true
+        }
+
+        // Private/local network addresses exposed by containers are not reachable from app clients.
+        if lowered.hasPrefix("10.") || lowered.hasPrefix("172.") || lowered.hasPrefix("192.168.") {
+            return true
+        }
+
+        return false
     }
 
     private func logPotentialDeviceMisconfiguration() {

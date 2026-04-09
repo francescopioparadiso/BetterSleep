@@ -138,7 +138,7 @@ services:
   simulation:
     build:
       context: .
-      dockerfile: simulation/dockerfile
+      dockerfile: Simulation/Dockerfile
     container_name: bs_simulation
     restart: always
     depends_on:

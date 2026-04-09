@@ -4,7 +4,7 @@
     {
       "label": "Database",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build catalog-postgres timeseries-mongo mqtt-broker",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -87,15 +87,29 @@
     },
     {
       "label": "🚀 Start All Servers",
-      "dependsOn": [
-        "Database",
-        "Catalog",
-        "User Service",
-        "TimeSeries",
-        "BedAnalytics",
-        "SleepCycleManager"
-      ],
-      "dependsOrder": "parallel",
+      "type": "shell",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker catalog user-service sleep-cycle-manager time-series bed-analytics",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "🛑 Stop All Servers",
+      "type": "shell",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" down",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "group": "servers",
+        "panel": "dedicated"
+      },
       "problemMatcher": []
     },
     {
