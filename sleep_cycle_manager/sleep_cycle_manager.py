@@ -32,8 +32,10 @@ def _resolve_temperature_action(temp, desired, actuators, prefer_fan=True, tol=0
 
 def _parse_preference_topic(topic):
     parts = topic.split("/")
-    if len(parts) >= 5 and parts[2] == "User":  return "user", parts[3]
-    if len(parts) >= 8 and parts[2] == "House": return "room", parts[5]
+    if len(parts) >= 4 and parts[2] == "User":
+        return "user", parts[3]
+    if len(parts) >= 6 and parts[2] == "House" and parts[4] == "Bedroom":
+        return "room", parts[5]
     return None, None
 
 
@@ -120,6 +122,9 @@ class SleepCycleManager:
     def notify(self, topic, payload):
         try:
             msg = json.loads(payload)
+            # Backward compatibility if some producers still send a JSON-encoded string.
+            if isinstance(msg, str):
+                msg = json.loads(msg)
         except json.JSONDecodeError:
             self.logger.error(f"Bad JSON on {topic}")
             return
@@ -149,6 +154,10 @@ class SleepCycleManager:
 
         with self._lock:
             userid = self.room_to_user_map.get(room_id)
+            if not userid:
+                self.user_cache.seed_room_associations()
+                userid = self.room_to_user_map.get(room_id)
+
             if not userid:
                 self.logger.warning(f"Room {room_id!r} not in room_to_user_map")
                 self.logger.info(f"Current room_to_user_map: {self.room_to_user_map}")
@@ -195,7 +204,25 @@ class SleepCycleManager:
         if kind == "user":
             keys = {k: msg[k] for k in ("night_time", "morning_time") if k in msg}
             if keys and not self.user_cache.patch_preferences(entity_id, keys):
-                self.logger.warning(f"User {entity_id} not in cache; preference skipped")
+                # Cache miss: fetch on demand so we don't lose runtime updates.
+                self.user_cache.refresh_user(entity_id)
+        elif kind == "room":
+            room_updates = {
+                k: msg[k]
+                for k in ("temperature_night", "temperature_morning", "light_night", "light_morning")
+                if k in msg
+            }
+            user_id = str(msg.get("user_id")) if msg.get("user_id") is not None else self.room_to_user_map.get(str(entity_id))
+            house_id = msg.get("house_id")
+
+            if not user_id:
+                self.logger.warning(f"Room preference update without user_id for room {entity_id}: {msg}")
+                return
+
+            patched = self.user_cache.patch_room_preferences(user_id, entity_id, house_id, room_updates)
+            if not patched:
+                # Ensure cache and room mapping are rebuilt after room activation/switch.
+                self.user_cache.refresh_user(user_id)
         else:
             self.logger.warning(f"Unhandled preference topic: {topic}")
 

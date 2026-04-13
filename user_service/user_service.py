@@ -24,6 +24,7 @@ class UserService:
         try:
             self.catalog.register()
         except Exception as e:
+
             logger.error(f'Failed to Register with Catalog: {e}')
             raise Exception
 
@@ -47,9 +48,51 @@ class UserService:
 
     def publish(self, topic, message):
         if self.mqtt_client_publish:
-            self.mqtt_client_publish.publish(topic, message)
+            self.mqtt_client_publish.myPublish(topic, message)
         else:
             logger.error("MQTT client not initialized, cannot publish message")
+
+    def _publish_cache_preferences(self, user_id, room_id=None):
+        """Publish latest user+room preferences so downstream caches can refresh immediately."""
+        user_id = str(user_id)
+        active_room = self.db.get_room_info(room_id) if room_id is not None else self.db.get_active_room(user_id)
+        if not active_room:
+            logger.warning(f"No active room found while publishing cache preferences for user {user_id}")
+            return
+
+        room_id = active_room.get('id')
+        house_id = active_room.get('house_id')
+        if room_id is None or house_id is None:
+            logger.warning(f"Missing room/house information for user {user_id}: {active_room}")
+            return
+
+        preferences = self.db.get_user_room_preferences(room_id)
+        if not preferences:
+            logger.warning(f"No preferences found for user {user_id}, room {room_id}")
+            return
+
+        merged = preferences.get('user_preferences', preferences)
+        user_topic = self.topic_publish[1].replace("{userID}", user_id)
+        room_topic = self.topic_publish[0].replace("{houseID}", str(house_id)).replace("{bedroomID}", str(room_id))
+
+        user_payload = {
+            "user_id": user_id,
+            "night_time": merged.get("night_time"),
+            "morning_time": merged.get("morning_time"),
+        }
+        room_payload = {
+            "user_id": user_id,
+            "house_id": str(house_id),
+            "room_id": str(room_id),
+            "temperature_night": merged.get("temperature_night"),
+            "temperature_morning": merged.get("temperature_morning"),
+            "light_night": merged.get("light_night"),
+            "light_morning": merged.get("light_morning"),
+        }
+
+        self.publish(user_topic, user_payload)
+        self.publish(room_topic, room_payload)
+        logger.info(f"Published cache preference snapshot for user {user_id} room {room_id}")
 
 
 
@@ -133,6 +176,11 @@ class UserService:
 
         room_id = self.db.insert_room(new_room)
         if room_id:
+            if new_room.get('user_id'):
+                try:
+                    self._publish_cache_preferences(new_room['user_id'], room_id=room_id)
+                except Exception as e:
+                    logger.error(f"Failed to publish cache preferences after addRoom: {e}")
             return json.dumps({
                 "status": "success",
                 "id": room_id,
@@ -187,10 +235,11 @@ class UserService:
             # Publish MQTT message for user cache invalidation
             # User preferences are global (not tied to a specific room)
             topic = self.topic_publish[1].replace("{userID}", str(user_id))
-            message = json.dumps(changed_preferences)
+            message = changed_preferences
 
             try:
                 self.publish(topic, message)
+                self._publish_cache_preferences(user_id)
                 logger.info(f"Published user preference change to {topic}: {message}")
             except Exception as e:
                 logger.error(f"Failed to publish user preference change: {e}")
@@ -221,7 +270,12 @@ class UserService:
                     # Publish MQTT message for cache invalidation
                     # Topic: UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
                     topic = self.topic_publish[0].replace("{houseID}", str(house_id)).replace("{bedroomID}", str(room_id)).replace("{userID}", str(user_id))
-                    message = json.dumps(changed_preferences)
+                    message = {
+                        **changed_preferences,
+                        "user_id": str(user_id),
+                        "house_id": str(house_id),
+                        "room_id": str(room_id),
+                    }
 
                     try:
                         self.publish(topic, message)
@@ -266,6 +320,10 @@ class UserService:
         # Then assign to the requested room
         success = self.db.assign_room(body['room_id'], body['user_id'])
         if success:
+            try:
+                self._publish_cache_preferences(body['user_id'], room_id=body['room_id'])
+            except Exception as e:
+                logger.error(f"Failed to publish cache preferences after assignRoom: {e}")
             return json.dumps({"status": "success", "message": "Room assigned"})
         raise cherrypy.HTTPError(404, "Room not found")
 
@@ -297,6 +355,10 @@ class UserService:
             success = self.db.set_room_active(room_id, user_id)
             if success:
                 logger.info(f"Room {room_id} is now active for user {user_id}")
+                try:
+                    self._publish_cache_preferences(user_id)
+                except Exception as e:
+                    logger.error(f"Failed to publish cache preferences after setActiveRoom: {e}")
                 return json.dumps({"status": "success", "message": "Room set as active"})
             raise cherrypy.HTTPError(404, "Room not found or not assigned to user")
         else:

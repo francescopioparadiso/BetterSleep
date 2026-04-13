@@ -64,20 +64,33 @@ class UserCache:
         self._lock = threading.RLock()
         self._user_cache: dict[str, UserEntry] = {}
 
+    @staticmethod
+    def _norm(value):
+        return str(value) if value is not None else None
+
 
     def get(self, userid):
-        return self._user_cache.get(userid)
+        return self._user_cache.get(self._norm(userid))
 
     def get_or_fetch(self, userid):
+        userid = self._norm(userid)
         return self._user_cache.get(userid) or self._fetch(userid)
 
+    def refresh_user(self, userid):
+        """Force a refresh from user-service and overwrite local cache entry."""
+        userid = self._norm(userid)
+        if not userid:
+            return None
+        return self._fetch(userid)
+
     def touch(self, userid):
-        entry = self._user_cache.get(userid)
+        entry = self._user_cache.get(self._norm(userid))
         if entry:
             entry.touch()
 
     def patch_preferences(self, userid, updates):
         """Apply schedule key updates (night_time / morning_time) without a full re-fetch."""
+        userid = self._norm(userid)
         with self._lock:
             entry = self._user_cache.get(userid)
             if not entry:
@@ -86,6 +99,40 @@ class UserCache:
                 if hasattr(entry, key):
                     setattr(entry, key, value)
                     self.logger.info(f"Preference updated: user={userid} {key}={value}")
+            return True
+
+    def patch_room_preferences(self, userid, room_id, house_id, updates):
+        """Apply room-level preference updates and keep room->user association aligned."""
+        userid = self._norm(userid)
+        room_id = self._norm(room_id)
+        house_id = self._norm(house_id)
+        if not userid:
+            return False
+
+        with self._lock:
+            entry = self._user_cache.get(userid)
+            if not entry:
+                return False
+
+            if entry.active_room_id and entry.active_room_id != room_id:
+                self._room_to_user.pop(self._norm(entry.active_room_id), None)
+
+            entry.active_room_id = room_id or entry.active_room_id
+            entry.house_id = house_id or entry.house_id
+
+            room_cfg_keys = {
+                "temperature_night",
+                "temperature_morning",
+                "light_night",
+                "light_morning",
+            }
+            for key in room_cfg_keys:
+                if key in updates:
+                    entry.config[key] = float(updates[key])
+
+            if room_id:
+                self._room_to_user[room_id] = userid
+            entry.touch()
             return True
 
 
@@ -135,7 +182,7 @@ class UserCache:
                 self.logger.error(f"Failed to seed room associations: {res.status_code}")
                 return
             mapping = {
-                str(room_id): user_id
+                str(room_id): str(user_id)
                 for user_id, room_id in res.json().get("active_rooms", {}).items()
             }
         except Exception as e:
@@ -153,7 +200,7 @@ class UserCache:
         )
 
     def _entry_for_room(self, room_id):
-        userid = self._room_to_user.get(room_id)
+        userid = self._room_to_user.get(self._norm(room_id))
         return self._user_cache.get(userid) if userid else None
 
     def _eviction_loop(self):
@@ -168,22 +215,24 @@ class UserCache:
         with self._lock:
             stale = [uid for uid, e in self._user_cache.items() if e.is_stale(self._ttl)]
             for uid in stale:
-                room_id = self._user_cache.pop(uid).active_room_id
+                room_id = self._norm(self._user_cache.pop(uid).active_room_id)
                 self._room_to_user.pop(room_id, None)
         if stale:
             self.logger.info(f"[EVICTION] Evicted {len(stale)} user(s): {stale}")
 
     def _fetch(self, userid):
+        userid = self._norm(userid)
         pref = self._get_preferences(userid)
         if pref is None:
             return None
 
-        r_id     = pref.get("room_id")
+        r_id     = self._norm(pref.get("room_id"))
         previous = self._user_cache.get(userid)
 
         if previous and previous.active_room_id and previous.active_room_id != r_id:
-            if self._room_to_user.get(previous.active_room_id) == userid:
-                del self._room_to_user[previous.active_room_id]
+            prev_room_id = self._norm(previous.active_room_id)
+            if self._room_to_user.get(prev_room_id) == userid:
+                del self._room_to_user[prev_room_id]
 
         def prev(attr, fallback=None):
             return getattr(previous, attr, fallback) if previous else fallback
@@ -226,7 +275,7 @@ class UserCache:
         )
 
         with self._lock:
-            self._user_cache[userid]       = entry
+            self._user_cache[userid] = entry
             self._room_to_user[r_id] = userid
 
         return entry
