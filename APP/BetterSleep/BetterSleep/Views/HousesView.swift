@@ -211,6 +211,8 @@ struct HouseView: View {
                                             .foregroundColor(.yellow)
                                             .padding(6)
                                             .shadow(color: .yellow, radius: 10, x: 0, y: 0)
+                                            .frame(width: 40)
+                                            .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
                                     } else {
                                         let emoji = flagForHouse(house.name)
                                         let glow = iconGlowColors(for: emoji)
@@ -218,6 +220,8 @@ struct HouseView: View {
                                             .font(.title)
                                             .shadow(color: glow.0.opacity(0.45), radius: 7, x: 0, y: 0)
                                             .shadow(color: glow.1.opacity(0.28), radius: 13, x: 0, y: 0)
+                                            .frame(width: 40)
+                                            .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
                                         }
                                     
                                     Text(house.name)
@@ -240,9 +244,11 @@ struct HouseView: View {
 
                             HStack(spacing: 10) {
                                 Text(emoji)
-                                    .font(.title3)
+                                    .font(.title2)
                                     .shadow(color: glow.0.opacity(0.45), radius: 6, x: 0, y: 0)
                                     .shadow(color: glow.1.opacity(0.28), radius: 10, x: 0, y: 0)
+                                    .frame(width: 32)
+                                    .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(houseName)
@@ -284,9 +290,9 @@ struct HouseView: View {
                                 }
                             }
                             .padding(.vertical, 4)
-
-                            addHouseRow
                         }
+                        
+                        addHouseRow
                     }
                     .listStyle(.insetGrouped)
                     .refreshable {
@@ -319,6 +325,9 @@ struct HouseView: View {
                 .font(.title)
                 .shadow(color: glow.0.opacity(0.45), radius: 7, x: 0, y: 0)
                 .shadow(color: glow.1.opacity(0.28), radius: 13, x: 0, y: 0)
+                .frame(width: 40)
+                .contentTransition(.numericText(value: Double(previewEmoji.hashValue)))
+                .animation(.snappy, value: previewEmoji)
 
             TextField("Type your new home name", text: $newHouseName)
                 .font(.headline)

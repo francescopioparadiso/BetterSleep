@@ -1,7 +1,13 @@
 import logging
 import math
 import os
+import sys
 from datetime import datetime, timedelta
+
+SIMULATION_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SIMULATION_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 logging.basicConfig(
     filename='test_cycle.log',
@@ -15,7 +21,7 @@ os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 from device_connector.Simulate_Sensor import *
 from common.MyMQTT import MyMQTT
 import requests
-from common_simulation import build_url, get_user_service_endpoint, load_json_file
+from common_simulation import apply_runtime_overrides, build_url, get_user_service_endpoint, load_json_file
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90
 RANDOM_AWAKE_PROBABILITY = 0.01
@@ -106,8 +112,10 @@ class UserContext:
         self.morning_time = morning_time
 
 
-def load_test_config(config_path="conf.json"):
-    return load_json_file(config_path)
+def load_test_config(config_path=None):
+    if config_path is None:
+        config_path = os.path.join(SIMULATION_DIR, "conf.json")
+    return apply_runtime_overrides(load_json_file(config_path))
 
 
 def _get_user_service_endpoint(catalog_url):

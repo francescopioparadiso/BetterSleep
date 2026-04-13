@@ -224,11 +224,15 @@ struct RoomsView: View {
                     .padding(6)
                     .foregroundColor(.yellow)
                     .shadow(color: .yellow, radius: 10, x: 0, y: 0)
+                    .frame(width: 40)
+                    .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
             } else {
                 Image(systemName: iconForRoom(room.name))
                     .font(.title)
                     .foregroundColor(room.user_id == nil ? Color.green : Color.red)
                     .shadow(color: room.user_id == nil ? Color.green.opacity(0.65) : Color.red.opacity(0.65), radius: 10, x: 0, y: 0)
+                    .frame(width: 40)
+                    .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
             }
             
             VStack(alignment: .leading, spacing: 3) {
@@ -286,7 +290,7 @@ struct RoomsView: View {
                 }
                 .tint(.orange)
             }
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) {
                     Task {
                         guard let roomId = room.id, let houseId = house.id else { return }
@@ -315,6 +319,8 @@ struct RoomsView: View {
                 .font(.title)
                 .foregroundColor(.indigo)
                 .shadow(color: .indigo.opacity(0.65), radius: 10, x: 0, y: 0)
+                .frame(width: 40)
+                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
 
             TextField("Type your new room name", text: $newRoomName)
                 .font(.headline)
@@ -503,9 +509,10 @@ struct MembersSheet: View {
                     // MARK: - Invite row (always last)
                     HStack {
                         Image(systemName: "arrowshape.turn.up.right.fill")
-                            .font(.title3)
+                            .font(.title2)
                             .foregroundColor(.blue)
                             .shadow(color: .blue.opacity(0.45), radius: 6, x: 0, y: 0)
+                            .frame(width: 32)
 
                         TextField("Invite housemate via email...", text: $emailToInvite)
                             .keyboardType(.emailAddress)
@@ -596,9 +603,10 @@ struct MembersSheet: View {
     private func memberRow(_ member: HouseMember) -> some View {
         HStack {
             Image(systemName: member.role == 0 ? "star.fill" : "person.fill")
-                .font(.title3)
+                .font(.title2)
                 .foregroundColor(member.role == 0 ? .yellow : .blue)
                 .shadow(color: member.role == 0 ? Color.yellow.opacity(0.45) : Color.blue.opacity(0.45), radius: 6, x: 0, y: 0)
+                .frame(width: 32)
 
             VStack(alignment: .leading) {
                 Text(member.email ?? "Unknown User")

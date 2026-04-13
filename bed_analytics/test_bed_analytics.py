@@ -30,14 +30,14 @@ if __name__ == "__main__":
 
     port = 1883
     clientID = "testPublisher"
-    broker= "localhost"
+    broker= "mqtt-broker"
     userid = "1"
     
     night_hr, night_min = 22, 0
     morning_hr, morning_min = 7, 0
     try:
         import requests
-        cat_res = requests.get("http://localhost:8080/getEndpointUserService", timeout=5)
+        cat_res = requests.get("http://catalog:8080/getEndpointUserService", timeout=5)
         if cat_res.status_code == 200:
             us_endpoint = cat_res.json().get("endpoint")
             if us_endpoint:

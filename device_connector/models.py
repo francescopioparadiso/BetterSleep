@@ -14,7 +14,7 @@ class BaseIoTComponent:
     def __init__(self, config):
         self.mqtt_client = None
         self.config = config
-        self.catalog_url = config.get("catalogURL", "http://localhost:8080")
+        self.catalog_url = config.get("catalogURL", "http://catalog:8080")
         self.service_info = config.get("serviceInfo", {})
         self.remove_interval = config.get("removeInterval", 30)
         self.MQTT_info = config.get("MQTT", {})

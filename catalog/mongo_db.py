@@ -15,7 +15,7 @@ class MongoDBAdapter:
         Args:
             config: Dictionary with keys: host, port, username, password, database
         """
-        self.host = config.get('host', 'localhost')
+        self.host = config.get('host', 'timeseries-mongo')
         self.port = config.get('port', 27017)
         self.username = config.get('username')
         self.password = config.get('password')

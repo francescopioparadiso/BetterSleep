@@ -48,10 +48,8 @@ def resolve_public_host(default="127.0.0.1"):
     if env_host:
         return env_host, "PUBLIC_HOST env var"
 
-    detected_host = _parse_ifconfig_ipv4()
-    if detected_host:
-        return detected_host, "auto-detected LAN IPv4"
-
+    # In a Docker environment, we want to register using the container name (e.g. 'catalog', 'user-service')
+    # passed as `default` from conf.json rather than detecting LAN IPs.
     return default, "config fallback"
 
 

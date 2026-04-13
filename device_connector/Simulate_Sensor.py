@@ -3,6 +3,7 @@ import time
 import json
 import random
 import logging
+import os
 
 from device_connector.models import Sensor, Actuator
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +34,7 @@ def create_config(
             "type": comp_type,
             "houseID": house_id,
             "roomID": room_id,
-            "host": "localhost",
+            "host": os.environ.get("SIMULATION_PUBLIC_HOST", "simulate-sensor"),
             "port": 0,
         },
         "MQTT": {
@@ -184,4 +185,3 @@ class FanActuator(Actuator):
             logger.info(f"[FAN ACTUATOR] Received command: {action}, Fan state: {self.state}")
         except Exception as e:
             logger.error(f"[FAN ACTUATOR] Error processing command on topic '{topic}': {e}")
-

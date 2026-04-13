@@ -87,11 +87,15 @@
     },
     {
       "label": "🚀 Start All Servers",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker catalog user-service sleep-cycle-manager time-series bed-analytics",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
+      "dependsOn": [
+        "Database",
+        "Catalog",
+        "User Service",
+        "TimeSeries",
+        "BedAnalytics",
+        "SleepCycleManager"
+      ],
+      "dependsOrder": "parallel",
       "presentation": {
         "group": "servers",
         "panel": "dedicated"
@@ -115,9 +119,9 @@
     {
       "label": "🧹 Clean DB (Previous Test Cycle)",
       "type": "shell",
-      "command": "python3 clean_db.py",
+      "command": "python3 Simulation/clean_db.py",
       "options": {
-        "cwd": "${workspaceFolder}/simulation"
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
         "group": "test",
@@ -130,14 +134,21 @@
       "type": "shell",
       "command": "python3",
       "args": [
-        "night_simulation.py",
+        "Simulation/night_simulation.py",
         "--target-date",
         "${input:nightSimulationDate}",
         "--duration-seconds",
         "20"
       ],
       "options": {
-        "cwd": "${workspaceFolder}/simulation"
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "SIMULATION_CATALOG_URL": "http://127.0.0.1:8080",
+          "SIMULATION_MQTT_BROKER": "127.0.0.1",
+          "SIMULATION_MQTT_PORT": "1883",
+          "SIMULATION_PUBLIC_HOST": "127.0.0.1",
+          "PUBLIC_HOST": "127.0.0.1"
+        }
       },
       "presentation": {
         "group": "test",
@@ -148,9 +159,16 @@
     {
       "label": "🧪 Backfill Sensor Data",
       "type": "shell",
-      "command": "python3 sensor_simulation.py",
+      "command": "python3 Simulation/sensor_simulation.py",
       "options": {
-        "cwd": "${workspaceFolder}/simulation"
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "SIMULATION_CATALOG_URL": "http://127.0.0.1:8080",
+          "SIMULATION_MQTT_BROKER": "127.0.0.1",
+          "SIMULATION_MQTT_PORT": "1883",
+          "SIMULATION_PUBLIC_HOST": "127.0.0.1",
+          "PUBLIC_HOST": "127.0.0.1"
+        }
       },
       "presentation": {
         "group": "test",

@@ -2,12 +2,18 @@ import math
 import os
 import random
 import re
+import sys
 from datetime import datetime, timedelta
+
+SIMULATION_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SIMULATION_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 import requests
 
 
-from common_simulation import build_url, get_user_service_endpoint, load_json_file
+from common_simulation import apply_runtime_overrides, build_url, get_user_service_endpoint, load_json_file
 from time_series.mongo_db import MongoDB
 
 
@@ -135,10 +141,14 @@ def backfill_sensor(measurements, sensor, room, start_dt, end_dt):
 # ---------------------------------------------------------------------------
 
 def main(
-    simulation_conf_path="conf.json",
-    time_series_conf_path="../time_series/conf.json",
+    simulation_conf_path=None,
+    time_series_conf_path=None,
 ):
-    sim_conf = load_json_file(simulation_conf_path)
+    if simulation_conf_path is None:
+        simulation_conf_path = os.path.join(SIMULATION_DIR, "conf.json")
+    if time_series_conf_path is None:
+        time_series_conf_path = os.path.join(PROJECT_ROOT, "time_series", "conf.json")
+    sim_conf = apply_runtime_overrides(load_json_file(simulation_conf_path))
     ts_conf  = load_json_file(time_series_conf_path)
 
     end_dt   = datetime.now().replace(minute=0, second=0, microsecond=0)

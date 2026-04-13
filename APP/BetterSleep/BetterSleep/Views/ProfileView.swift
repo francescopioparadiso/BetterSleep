@@ -57,7 +57,7 @@ struct ProfileView: View {
                         Section {
                             Button(role: .destructive, action: {
                                 Task {
-                                    await authVM.signOut()
+                                    authVM.signOut()
                                 }
                             }) {
                                 HStack {
