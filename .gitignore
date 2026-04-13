@@ -5,3 +5,5 @@ telegram_bot/.env
 /simulation/SimulationStats
 /simulation/test_cycle.log
 .DS_Store
+
+*.xcuserstate
