@@ -111,7 +111,7 @@ class BedAnalytics:
         self.cache_sleep_time = {}   # {userid: {"start": datetime, "end": datetime}}
 
     def get_endpoint_timeseries(self):
-        data, status, error = self.catalog_client.get(f"getEndpointTimeSeries")
+        data, status, error = self.catalog_client.get("catalog/services/time_series?scope=internal")
         if status == 200 and data:
             endpoint = data.get("endpoint")
             if endpoint:

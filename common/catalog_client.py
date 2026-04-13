@@ -119,19 +119,31 @@ class CatalogClient:
         return self.request('delete', endpoint, **kwargs)
 
     def register(self):
-        endpoint, public_host, source = build_public_endpoint(
+        external_endpoint, public_host, source = build_public_endpoint(
             self.service_info['host'],
             self.service_info['port']
         )
+        internal_endpoint = self.service_info.get(
+            'internal_endpoint',
+            f"http://{self.service_info['host']}:{self.service_info['port']}"
+        )
+        external_endpoint = self.service_info.get('external_endpoint', external_endpoint)
         service = {
             self.id_key: int(self.service_info[ self.id_key ]),
             "name": self.service_info['name'],
-            "endpoint": endpoint,
+            "endpoint": internal_endpoint,
+            "endpoint_internal": internal_endpoint,
+            "endpoint_external": external_endpoint,
+            "endpoints": {
+                "internal": internal_endpoint,
+                "external": external_endpoint,
+            },
             "type": self.service_info.get('type', 'generic')
         }
         logger.info(
-            "Advertising service endpoint %s using host %s (%s)",
-            endpoint,
+            "Advertising service endpoints internal=%s external=%s (host source: %s via %s)",
+            internal_endpoint,
+            external_endpoint,
             public_host,
             source
         )

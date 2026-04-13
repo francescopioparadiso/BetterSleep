@@ -4,6 +4,8 @@
     "name": "Sleep Cycle Manager",
     "host": "sleep-cycle-manager",
     "port": 9092,
+    "internal_endpoint": "http://sleep-cycle-manager:9092",
+    "external_endpoint": "http://localhost:9092",
     "type": "Manager"
   },
   "MQTT": {

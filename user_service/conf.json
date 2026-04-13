@@ -4,6 +4,8 @@
     "name": "User Service",
     "host": "user-service",
     "port": 9095,
+    "internal_endpoint": "http://user-service:9095",
+    "external_endpoint": "http://localhost:9095",
     "type": "UserService"
   },
   "catalogURL": "http://catalog:8080",

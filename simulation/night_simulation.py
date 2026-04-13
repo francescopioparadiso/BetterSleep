@@ -566,7 +566,7 @@ def delete_previous_simulation_data(config, userid, date_str):
     print(f"\n[*] Attempting to delete old data for User {userid} on {date_str}...")
 
     try:
-        cat_res = requests.get(f"{catalog_url}/getEndpointTimeSeries", timeout=5)
+        cat_res = requests.get(f"{catalog_url}/catalog/services/time_series?scope=external", timeout=5)
         if cat_res.status_code == 200:
             data_endpoint = cat_res.json().get("endpoint")
             if data_endpoint:

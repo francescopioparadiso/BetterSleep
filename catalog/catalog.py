@@ -294,6 +294,9 @@ class Catalog:
             print("GET request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
+        if uri == ("catalog", "services", "time_series"):
+            return self._get_endpoint_Time_series_DB(params)
+
         handlers = {
             "getAllServices": self._get_all_services,
             "getService": self._get_service,
@@ -312,9 +315,14 @@ class Catalog:
     def _get_endpoint_Time_series_DB(self, params=None):
         """Get the endpoint of the TimeSeriesDB service."""
         try:
-            endpoint = self.db.get_endpoint_Time_series_DB()
+            raw_scope = (params or {}).get("scope", "internal")
+            scope = str(raw_scope).strip().lower()
+            if scope not in {"internal", "external"}:
+                raise cherrypy.HTTPError(400, "Invalid 'scope' parameter. Allowed values: internal, external")
+
+            endpoint = self.db.get_endpoint_Time_series_DB(scope=scope)
             if endpoint:
-                return json.dumps({"status": "success", "endpoint": endpoint})
+                return json.dumps({"status": "success", "scope": scope, "endpoint": endpoint})
             print("TimeSeriesDB service not found")
             raise cherrypy.HTTPError(404, "TimeSeriesDB service not found")
         except cherrypy.HTTPError:
