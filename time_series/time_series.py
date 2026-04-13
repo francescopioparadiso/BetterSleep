@@ -125,6 +125,18 @@ class TimeSeries:
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
 
+    def DELETE(self, *uri, **params):
+        if not uri:
+            raise cherrypy.HTTPError(400, "Endpoint not specified")
+
+        handlers = {
+            "deleteSleepData": self._delete_sleep_data,
+        }
+        handler = handlers.get(uri[0])
+        if not handler:
+            raise cherrypy.HTTPError(404, "Endpoint not found")
+        return handler(params)
+
     def _get_sensor_by_room(self, params):
         room_id = params.get("room_id")
         if not room_id:
@@ -192,6 +204,20 @@ class TimeSeries:
 
     def _get_all_sensors(self, params):
         return _json_response(self.db.get_all_sensors())
+
+    def _delete_sleep_data(self, params):
+        user_id = params.get("user_id")
+        date_str = params.get("date")
+        if not user_id or not date_str:
+            raise cherrypy.HTTPError(400, "Missing 'user_id' or 'date' parameter")
+
+        deleted_count = self.db.delete_sleep_data_by_user_and_date(user_id, date_str)
+        return _json_response({
+            "status": "success",
+            "user_id": str(user_id),
+            "date": date_str,
+            "deleted_count": deleted_count,
+        })
 
 
 

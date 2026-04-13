@@ -1,13 +1,7 @@
 import logging
 import math
 import os
-import sys
-from datetime import datetime, timedelta
-
-SIMULATION_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SIMULATION_DIR)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from datetime import date, datetime, timedelta
 
 logging.basicConfig(
     filename='test_cycle.log',
@@ -21,7 +15,7 @@ os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 from device_connector.Simulate_Sensor import *
 from common.MyMQTT import MyMQTT
 import requests
-from common_simulation import apply_runtime_overrides, build_url, get_user_service_endpoint, load_json_file
+from common_simulation import build_url, get_user_service_endpoint, load_json_file
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90
 RANDOM_AWAKE_PROBABILITY = 0.01
@@ -112,10 +106,8 @@ class UserContext:
         self.morning_time = morning_time
 
 
-def load_test_config(config_path=None):
-    if config_path is None:
-        config_path = os.path.join(SIMULATION_DIR, "conf.json")
-    return apply_runtime_overrides(load_json_file(config_path))
+def load_test_config(config_path="conf.json"):
+    return load_json_file(config_path)
 
 
 def _get_user_service_endpoint(catalog_url):
@@ -206,15 +198,12 @@ def build_user_contexts(config):
 
 
 def default_night_bases(target_date=None):
-    if target_date is not None:
-        if isinstance(target_date, str):
-            target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
-        elif isinstance(target_date, datetime):
-            target_date = target_date.date()
-        elif isinstance(target_date, int):
-            # Allow offsets like 1 => yesterday.
-            target_date = datetime.now().date() - timedelta(days=target_date)
-        return [(f"{target_date.strftime('%Y%m%d')}_to_{(target_date + timedelta(days=1)).strftime('%Y%m%d')}", target_date)]
+    normalized_target_date = normalize_target_date(target_date)
+    if normalized_target_date:
+        return [(
+            f"{normalized_target_date.strftime('%Y%m%d')}_to_{(normalized_target_date + timedelta(days=1)).strftime('%Y%m%d')}",
+            normalized_target_date
+        )]
 
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
@@ -223,6 +212,38 @@ def default_night_bases(target_date=None):
         (f"{two_days_ago.strftime('%Y%m%d')}_to_{(two_days_ago + timedelta(days=1)).strftime('%Y%m%d')}", two_days_ago),
         (f"{yesterday.strftime('%Y%m%d')}_to_{today.strftime('%Y%m%d')}", yesterday),
     ]
+
+
+def normalize_target_date(target_date):
+    """Normalize input date to a date object.
+
+    Supported formats:
+    - None: use default two-night behavior
+    - int: day offset from today (1 = yesterday)
+    - str: YYYY-MM-DD
+    - datetime/date objects
+    """
+    if target_date is None:
+        return None
+
+    if isinstance(target_date, int):
+        return datetime.now().date() - timedelta(days=max(0, target_date))
+
+    if isinstance(target_date, str):
+        try:
+            return datetime.strptime(target_date, "%Y-%m-%d").date()
+        except ValueError:
+            logger.warning(f"Invalid target_date string '{target_date}', expected YYYY-MM-DD. Using default nights.")
+            return None
+
+    if isinstance(target_date, datetime):
+        return target_date.date()
+
+    if isinstance(target_date, date):
+        return target_date
+
+    logger.warning(f"Unsupported target_date type '{type(target_date).__name__}'. Using default nights.")
+    return None
 
 
 def build_sleep_window(night_str, morning_str, base_date, label):
@@ -545,7 +566,7 @@ def delete_previous_simulation_data(config, userid, date_str):
     print(f"\n[*] Attempting to delete old data for User {userid} on {date_str}...")
 
     try:
-        cat_res = requests.get(f"{catalog_url}/getEndpointTimeSeries", timeout=5)
+        cat_res = requests.get(f"{catalog_url}/catalog/services/time_series?scope=external", timeout=5)
         if cat_res.status_code == 200:
             data_endpoint = cat_res.json().get("endpoint")
             if data_endpoint:
@@ -567,7 +588,8 @@ def delete_previous_simulation_data(config, userid, date_str):
 def run_simulation(duration_seconds=60, target_date=None):
     config        = load_test_config()
     user_contexts = build_user_contexts(config)
-    bases         = default_night_bases(target_date)
+    normalized_target_date = normalize_target_date(target_date)
+    bases         = default_night_bases(normalized_target_date)
 
     if not user_contexts:
         logger.warning("No users to simulate. Exiting.")
@@ -579,13 +601,8 @@ def run_simulation(duration_seconds=60, target_date=None):
     threads    = []
 
     def _run_user(user_ctx):
-        if target_date:
-            if isinstance(target_date, str):
-                date_str = target_date
-            elif isinstance(target_date, int):
-                date_str = (datetime.now().date() - timedelta(days=target_date)).strftime("%Y-%m-%d")
-            else:
-                date_str = target_date.strftime("%Y-%m-%d")
+        if normalized_target_date:
+            date_str = normalized_target_date.strftime("%Y-%m-%d")
             delete_previous_simulation_data(config, user_ctx.userid, date_str)
             time.sleep(1)
 

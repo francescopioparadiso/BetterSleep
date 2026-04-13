@@ -4,6 +4,8 @@
     "name": "BedAnalytics",
     "host": "bed-analytics",
     "port": 9097,
+    "internal_endpoint": "http://bed-analytics:9097",
+    "external_endpoint": "http://localhost:9097",
     "type": "Analytics"
   },
  "MQTT": {

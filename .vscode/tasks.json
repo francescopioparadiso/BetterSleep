@@ -4,7 +4,7 @@
     {
       "label": "Database",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build catalog-postgres timeseries-mongo mqtt-broker",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -96,32 +96,14 @@
         "SleepCycleManager"
       ],
       "dependsOrder": "parallel",
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "🛑 Stop All Servers",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" down",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
       "problemMatcher": []
     },
     {
       "label": "🧹 Clean DB (Previous Test Cycle)",
       "type": "shell",
-      "command": "python3 Simulation/clean_db.py",
+      "command": "python3 clean_db.py",
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}/simulation"
       },
       "presentation": {
         "group": "test",
@@ -134,21 +116,14 @@
       "type": "shell",
       "command": "python3",
       "args": [
-        "Simulation/night_simulation.py",
+        "night_simulation.py",
         "--target-date",
         "${input:nightSimulationDate}",
         "--duration-seconds",
         "20"
       ],
       "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "SIMULATION_CATALOG_URL": "http://127.0.0.1:8080",
-          "SIMULATION_MQTT_BROKER": "127.0.0.1",
-          "SIMULATION_MQTT_PORT": "1883",
-          "SIMULATION_PUBLIC_HOST": "127.0.0.1",
-          "PUBLIC_HOST": "127.0.0.1"
-        }
+        "cwd": "${workspaceFolder}/simulation"
       },
       "presentation": {
         "group": "test",
@@ -159,16 +134,9 @@
     {
       "label": "🧪 Backfill Sensor Data",
       "type": "shell",
-      "command": "python3 Simulation/sensor_simulation.py",
+      "command": "python3 sensor_simulation.py",
       "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "SIMULATION_CATALOG_URL": "http://127.0.0.1:8080",
-          "SIMULATION_MQTT_BROKER": "127.0.0.1",
-          "SIMULATION_MQTT_PORT": "1883",
-          "SIMULATION_PUBLIC_HOST": "127.0.0.1",
-          "PUBLIC_HOST": "127.0.0.1"
-        }
+        "cwd": "${workspaceFolder}/simulation"
       },
       "presentation": {
         "group": "test",

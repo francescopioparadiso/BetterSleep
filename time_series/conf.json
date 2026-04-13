@@ -4,6 +4,8 @@
     "name": "Time Series DB Adapter",
     "host": "time-series",
     "port": 9093,
+    "internal_endpoint": "http://time-series:9093",
+    "external_endpoint": "http://localhost:9093",
     "type": "TimeSeriesDB"
   },
  "MQTT": {

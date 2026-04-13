@@ -15,7 +15,7 @@ class MongoDBAdapter:
         Args:
             config: Dictionary with keys: host, port, username, password, database
         """
-        self.host = config.get('host', 'timeseries-mongo')
+        self.host = config.get('host', 'localhost')
         self.port = config.get('port', 27017)
         self.username = config.get('username')
         self.password = config.get('password')
@@ -149,14 +149,28 @@ class MongoDBAdapter:
         )
         return total_deleted, (stale_actuators or [])
 
-    def get_endpoint_Time_series_DB(self):
+    def get_endpoint_Time_series_DB(self, scope="internal"):
 
         try:
             service = self.db.services.find_one({"type": "TimeSeriesDB"})
-            if service:
-                logger.info(f"TimeSeriesDB service found: {service['endpoint']}")
-                return service['endpoint']
-            logger.warning("No TimeSeriesDB service found")
+            if not service:
+                logger.warning("No TimeSeriesDB service found")
+                return None
+
+            endpoints = service.get("endpoints") if isinstance(service.get("endpoints"), dict) else {}
+            scoped_endpoint = endpoints.get(scope) or service.get(f"endpoint_{scope}")
+
+            if scoped_endpoint:
+                logger.info(f"TimeSeriesDB service found for scope={scope}: {scoped_endpoint}")
+                return scoped_endpoint
+
+            # Backward compatibility for legacy documents with a single endpoint field.
+            legacy_endpoint = service.get("endpoint")
+            if legacy_endpoint:
+                logger.info(f"TimeSeriesDB legacy endpoint used for scope={scope}: {legacy_endpoint}")
+                return legacy_endpoint
+
+            logger.warning(f"TimeSeriesDB service found but endpoint missing for scope={scope}")
             return None
         except Exception as e:
             logger.error(f"Error retrieving TimeSeriesDB endpoint: {e}")

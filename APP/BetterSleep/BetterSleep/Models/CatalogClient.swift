@@ -119,7 +119,7 @@ actor CatalogClient {
             return cached
         }
 
-        let url = URL(string: "\(catalogURL)/getEndpointTimeSeries")!
+        let url = URL(string: "\(catalogURL)/catalog/services/time_series?scope=external")!
         logPotentialDeviceMisconfiguration()
         print("CatalogClient getTimeSeriesURL -> \(url.absoluteString)")
         let (data, _) = try await URLSession.shared.data(from: url)

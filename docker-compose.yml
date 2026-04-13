@@ -135,23 +135,6 @@ services:
       - ./bed_analytics:/service
       - ./common:/service/common
 
-  simulation:
-    build:
-      context: .
-      dockerfile: Simulation/Dockerfile
-    container_name: bs_simulation
-    restart: always
-    depends_on:
-      - mqtt-broker
-      - catalog
-      - time-series
-      - sleep-cycle-manager
-      - bed-analytics
-      - user-service
-      - postgresUser
-      - timeseries-mongo
-    environment:
-      TZ: "Europe/Rome"
 
 volumes:
   postgres_data:

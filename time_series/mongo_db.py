@@ -228,3 +228,34 @@ class MongoDB:
         except Exception as e:
             logger.error(f"Error retrieving latest analytics for user {user_id}: {e}")
             return None
+
+    def delete_sleep_data_by_user_and_date(self, user_id, date_str):
+        """Delete sleep analytics rows for a user and date.
+
+        Supports both string/int user_id storage for backward compatibility.
+        """
+        if self.db is None:
+            logger.warning("Database not connected")
+            return 0
+        try:
+            collection = self.db["sleep_analytics"]
+            user_variants = [str(user_id)]
+            try:
+                user_variants.append(int(user_id))
+            except Exception:
+                pass
+
+            result = collection.delete_many({
+                "user_id": {"$in": user_variants},
+                "date": date_str,
+            })
+            logger.info(
+                "Deleted %s sleep_analytics records for user_id=%s date=%s",
+                result.deleted_count,
+                user_id,
+                date_str,
+            )
+            return result.deleted_count
+        except Exception as e:
+            logger.error(f"Error deleting analytics for user {user_id} on {date_str}: {e}")
+            return 0

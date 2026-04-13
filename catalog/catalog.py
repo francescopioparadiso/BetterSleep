@@ -3,7 +3,6 @@ import logging
 import cherrypy
 import threading
 import time
-from urllib.parse import urlparse, urlunparse
 from common.common import json_error_page, load_json_body, init_mqtt_helper
 from mongo_db import MongoDBAdapter
 
@@ -295,6 +294,9 @@ class Catalog:
             print("GET request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
+        if uri == ("catalog", "services", "time_series"):
+            return self._get_endpoint_Time_series_DB(params)
+
         handlers = {
             "getAllServices": self._get_all_services,
             "getService": self._get_service,
@@ -313,9 +315,14 @@ class Catalog:
     def _get_endpoint_Time_series_DB(self, params=None):
         """Get the endpoint of the TimeSeriesDB service."""
         try:
-            endpoint = self.db.get_endpoint_Time_series_DB()
+            raw_scope = (params or {}).get("scope", "internal")
+            scope = str(raw_scope).strip().lower()
+            if scope not in {"internal", "external"}:
+                raise cherrypy.HTTPError(400, "Invalid 'scope' parameter. Allowed values: internal, external")
+
+            endpoint = self.db.get_endpoint_Time_series_DB(scope=scope)
             if endpoint:
-                return json.dumps({"status": "success", "endpoint": self._externalize_endpoint(endpoint)})
+                return json.dumps({"status": "success", "scope": scope, "endpoint": endpoint})
             print("TimeSeriesDB service not found")
             raise cherrypy.HTTPError(404, "TimeSeriesDB service not found")
         except cherrypy.HTTPError:
@@ -329,7 +336,7 @@ class Catalog:
         try:
             endpoint = self.db.get_endpoint_user_service()
             if endpoint:
-                return json.dumps({"status": "success", "endpoint": self._externalize_endpoint(endpoint)})
+                return json.dumps({"status": "success", "endpoint": endpoint})
             print("UserService not found")
             raise cherrypy.HTTPError(404, "UserService not found")
         except cherrypy.HTTPError:
@@ -350,34 +357,6 @@ class Catalog:
         except Exception as e:
             print(f"Error retrieving all services: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
-
-    def _externalize_endpoint(self, endpoint):
-        """Map internal Docker hostnames to a host reachable by the HTTP caller."""
-        try:
-            parsed = urlparse(endpoint)
-            host = parsed.hostname
-            if not host:
-                return endpoint
-
-            lowered = host.lower()
-            should_rewrite = (
-                "." not in lowered
-                or lowered in {"localhost", "127.0.0.1", "0.0.0.0"}
-                or lowered.startswith("172.")
-                or lowered.startswith("10.")
-                or lowered.startswith("192.168.")
-            )
-            if not should_rewrite:
-                return endpoint
-
-            request_host = (cherrypy.request.headers.get("Host") or "").split(":")[0].strip()
-            if not request_host:
-                return endpoint
-
-            netloc = f"{request_host}:{parsed.port}" if parsed.port else request_host
-            return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
-        except Exception:
-            return endpoint
 
     def _get_service(self, params):
         """Get a specific service by serviceID."""
