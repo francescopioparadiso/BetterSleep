@@ -1,7 +1,7 @@
 import logging
 import math
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 logging.basicConfig(
     filename='test_cycle.log',
@@ -198,10 +198,12 @@ def build_user_contexts(config):
 
 
 def default_night_bases(target_date=None):
-    if target_date:
-        if isinstance(target_date, str):
-            target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
-        return [(f"{target_date.strftime('%Y%m%d')}_to_{(target_date + timedelta(days=1)).strftime('%Y%m%d')}", target_date)]
+    normalized_target_date = normalize_target_date(target_date)
+    if normalized_target_date:
+        return [(
+            f"{normalized_target_date.strftime('%Y%m%d')}_to_{(normalized_target_date + timedelta(days=1)).strftime('%Y%m%d')}",
+            normalized_target_date
+        )]
 
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
@@ -210,6 +212,38 @@ def default_night_bases(target_date=None):
         (f"{two_days_ago.strftime('%Y%m%d')}_to_{(two_days_ago + timedelta(days=1)).strftime('%Y%m%d')}", two_days_ago),
         (f"{yesterday.strftime('%Y%m%d')}_to_{today.strftime('%Y%m%d')}", yesterday),
     ]
+
+
+def normalize_target_date(target_date):
+    """Normalize input date to a date object.
+
+    Supported formats:
+    - None: use default two-night behavior
+    - int: day offset from today (1 = yesterday)
+    - str: YYYY-MM-DD
+    - datetime/date objects
+    """
+    if target_date is None:
+        return None
+
+    if isinstance(target_date, int):
+        return datetime.now().date() - timedelta(days=max(0, target_date))
+
+    if isinstance(target_date, str):
+        try:
+            return datetime.strptime(target_date, "%Y-%m-%d").date()
+        except ValueError:
+            logger.warning(f"Invalid target_date string '{target_date}', expected YYYY-MM-DD. Using default nights.")
+            return None
+
+    if isinstance(target_date, datetime):
+        return target_date.date()
+
+    if isinstance(target_date, date):
+        return target_date
+
+    logger.warning(f"Unsupported target_date type '{type(target_date).__name__}'. Using default nights.")
+    return None
 
 
 def build_sleep_window(night_str, morning_str, base_date, label):
@@ -554,7 +588,8 @@ def delete_previous_simulation_data(config, userid, date_str):
 def run_simulation(duration_seconds=60, target_date=None):
     config        = load_test_config()
     user_contexts = build_user_contexts(config)
-    bases         = default_night_bases(target_date)
+    normalized_target_date = normalize_target_date(target_date)
+    bases         = default_night_bases(normalized_target_date)
 
     if not user_contexts:
         logger.warning("No users to simulate. Exiting.")
@@ -566,8 +601,8 @@ def run_simulation(duration_seconds=60, target_date=None):
     threads    = []
 
     def _run_user(user_ctx):
-        if target_date:
-            date_str = target_date if isinstance(target_date, str) else target_date.strftime("%Y-%m-%d")
+        if normalized_target_date:
+            date_str = normalized_target_date.strftime("%Y-%m-%d")
             delete_previous_simulation_data(config, user_ctx.userid, date_str)
             time.sleep(1)
 
