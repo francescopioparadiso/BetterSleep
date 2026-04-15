@@ -182,9 +182,9 @@ class CatalogClient:
             if self.type == 0:
                 endpoint = f"removeService?serviceID={self.service_info['serviceID']}"
             elif self.type == 1:
-                endpoint = f"removeSensor?sensorID={self.service_info['sensorID']}&&roomID={self.service_info.get('roomID','')}"
+                endpoint = f"removeSensor?sensorID={self.service_info['sensorID']}&roomID={self.service_info.get('roomID','')}"
             else:
-                endpoint = f"removeActuator?ActuatorID={self.service_info['ActuatorID']}&&roomID={self.service_info.get('roomID','')}"
+                endpoint = f"removeActuator?ActuatorID={self.service_info['ActuatorID']}&roomID={self.service_info.get('roomID','')}"
             response = requests.delete(
                 f'{self.catalog_url}/{endpoint}',
                 timeout=5

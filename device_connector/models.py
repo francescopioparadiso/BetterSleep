@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 import json
 import random
@@ -29,7 +28,11 @@ class BaseIoTComponent:
             self.id_key = "ActuatorID"
             self.type_device = 2
             self.category = "actuator"
-        print(self.service_info)
+        else:
+            logger.error("serviceInfo must include either 'sensorID' or 'ActuatorID': %s", self.service_info)
+            raise ValueError("Invalid serviceInfo: missing device identifier")
+
+        logger.debug("Device service info loaded: %s", self.service_info)
         self.id=None
         self.comp_id = self.service_info.get(self.id_key)
 
@@ -66,7 +69,7 @@ class BaseIoTComponent:
 
         # Handle topic_subscribe (from config)
         ts = self.MQTT_info.get("topic_subscribe")
-        print("topic_subscribe from config:", ts)
+        logger.debug("topic_subscribe from config: %s", ts)
         if ts:
             # Convert single string to list for consistency
             ts_list = ts if isinstance(ts, list) else [ts]

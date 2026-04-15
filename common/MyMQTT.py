@@ -1,6 +1,10 @@
 import json
+import logging
 
 import paho.mqtt.client as PahoMQTT
+
+
+logger = logging.getLogger(__name__)
 
 
 class MyMQTT:
@@ -18,7 +22,7 @@ class MyMQTT:
         self._paho_mqtt.on_message = self.myOnMessageReceived
 
     def myOnConnect(self, paho_mqtt, userdata, flags, rc):
-        print("Connected to %s with result code: %d" % (self.broker, rc))
+        logger.info("Connected to %s with result code: %d", self.broker, rc)
 
     def myOnMessageReceived(self, paho_mqtt, userdata, msg):
         # A new message is received
@@ -28,6 +32,10 @@ class MyMQTT:
         # publish a message with a certain topic
         self._paho_mqtt.publish(topic, json.dumps(msg), 2)
 
+    # Human-readable alias kept for consistency in newer code.
+    def publish(self, topic, msg):
+        self.myPublish(topic, msg)
+
     def mySubscribe(self, topic):
 
         # subscribe for a topic
@@ -35,7 +43,11 @@ class MyMQTT:
         # just to remember that it works also as a subscriber
         self._isSubscriber = True
         self._topics.add(topic)
-        print("subscribed to %s" % topic)
+        logger.info("Subscribed to %s", topic)
+
+    # Human-readable alias kept for consistency in newer code.
+    def subscribe(self, topic):
+        self.mySubscribe(topic)
 
     def start(self):
         # manage connection to broker

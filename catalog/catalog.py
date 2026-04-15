@@ -84,12 +84,12 @@ class Catalog:
                 try:
                     deleted, stale_actuators = self.db.delete_stale(self.service_ttl_s)
                     if deleted > 0:
-                        print(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
+                        logger.info(f"Removed {deleted} stale services (ttl={self.service_ttl_s}s)")
                     if stale_actuators:
                         for act in stale_actuators:
                             self.publish_actuator_removed(act)
                 except Exception as e:
-                    print(f"Error during cleanup loop: {e}")
+                    logger.error(f"Error during cleanup loop: {e}")
                 time.sleep(self.cleanup_interval_s)
 
         self._worker = threading.Thread(target=_loop, daemon=True)
@@ -113,7 +113,7 @@ class Catalog:
     def POST(self, *uri, **params):
         """Handle POST requests to add new Services, Devices, or Users."""
         if not uri:
-            print("POST request with no endpoint specified")
+            logger.warning("POST request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
@@ -123,7 +123,7 @@ class Catalog:
         }
         handler = handlers.get(uri[0])
         if not handler:
-            print(f"POST handler not found for endpoint: {uri[0]}")
+            logger.warning(f"POST handler not found for endpoint: {uri[0]}")
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler()
 
@@ -138,10 +138,10 @@ class Catalog:
             if success:
                 return json.dumps({"status": "success", "message": "Service Added"})
 
-            print(f"Service ID {new_service.get('serviceID')} already exists")
+            logger.info(f"Service ID {new_service.get('serviceID')} already exists")
             raise cherrypy.HTTPError(409, "The Service ID already exists")
         except Exception as e:
-            print(f"Error in _post_add_service: {e}")
+            logger.error(f"Error in _post_add_service: {e}")
             raise
 
     def _post_add_sensor(self):
@@ -169,7 +169,7 @@ class Catalog:
         """Handle PUT requests to update Services, Devices, or Users."""
         logger.info(f"PUT method called with uri={uri}, params={params}")
         if not uri:
-            print("PUT request with no endpoint specified")
+            logger.warning("PUT request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
@@ -181,7 +181,7 @@ class Catalog:
         handler = handlers.get(uri[0])
         logger.info(f"Looking for handler: {uri[0]}, found: {handler is not None}")
         if not handler:
-            print(f"Handler not found for endpoint: {uri[0]}")
+            logger.warning(f"Handler not found for endpoint: {uri[0]}")
             raise cherrypy.HTTPError(404, "Endpoint not found")
         logger.info(f"Calling handler for {uri[0]}")
         return handler()
@@ -195,7 +195,7 @@ class Catalog:
         success = self.db.update(updated_service)
         if success:
             return json.dumps({"status": "success", "message": "Service updated"})
-        print(f"Update failed for serviceID {updated_service.get('serviceID')}")
+        logger.warning(f"Update failed for serviceID {updated_service.get('serviceID')}")
         raise cherrypy.HTTPError(404, "The Service ID does not exist")
 
     def _put_update_service_last_update(self):
@@ -209,12 +209,12 @@ class Catalog:
             if success:
                 return json.dumps({"status": "success", "message": "Service last_update updated"})
 
-            print(f"Update failed for serviceID {updated_service.get('serviceID')} - service not found")
+            logger.warning(f"Update failed for serviceID {updated_service.get('serviceID')} - service not found")
             raise cherrypy.HTTPError(404, "The Service ID does not exist")
         except cherrypy.HTTPError:
             raise
         except Exception as e:
-            print(f"Error in _put_update_service_last_update: {e}")
+            logger.error(f"Error in _put_update_service_last_update: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _put_update_sensor_last_update(self):
@@ -291,16 +291,16 @@ class Catalog:
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
         logger.info(f"GET method called with uri={uri}, params={params}")
         if not uri:
-            print("GET request with no endpoint specified")
+            logger.warning("GET request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         if uri == ("catalog", "services", "time_series"):
-            return self._get_endpoint_Time_series_DB(params)
+            return self._get_endpoint_time_series_db(params)
 
         handlers = {
             "getAllServices": self._get_all_services,
             "getService": self._get_service,
-            "getEndpointTimeSeries": self._get_endpoint_Time_series_DB,
+            "getEndpointTimeSeries": self._get_endpoint_time_series_db,
             "getEndpointUserService": self._get_endpoint_user_service,
             "getSensorByRoom": self._get_sensor_by_room,
             "getActuatorByRoom": self._get_actuator_by_room
@@ -308,11 +308,11 @@ class Catalog:
         }
         handler = handlers.get(uri[0])
         if not handler:
-            print(f"GET handler not found for endpoint: {uri[0]}")
+            logger.warning(f"GET handler not found for endpoint: {uri[0]}")
             raise cherrypy.HTTPError(404, "Endpoint not found")
         return handler(params)
 
-    def _get_endpoint_Time_series_DB(self, params=None):
+    def _get_endpoint_time_series_db(self, params=None):
         """Get the endpoint of the TimeSeriesDB service."""
         try:
             raw_scope = (params or {}).get("scope", "internal")
@@ -323,13 +323,17 @@ class Catalog:
             endpoint = self.db.get_endpoint_Time_series_DB(scope=scope)
             if endpoint:
                 return json.dumps({"status": "success", "scope": scope, "endpoint": endpoint})
-            print("TimeSeriesDB service not found")
+            logger.warning("TimeSeriesDB service not found")
             raise cherrypy.HTTPError(404, "TimeSeriesDB service not found")
         except cherrypy.HTTPError:
             raise
         except Exception as e:
-            print(f"Error retrieving TimeSeriesDB endpoint: {e}")
+            logger.error(f"Error retrieving TimeSeriesDB endpoint: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
+
+    # Backward-compatible alias for older internal references.
+    def _get_endpoint_Time_series_DB(self, params=None):
+        return self._get_endpoint_time_series_db(params)
 
     def _get_endpoint_user_service(self, params=None):
         """Get the endpoint of the UserService."""
@@ -337,12 +341,12 @@ class Catalog:
             endpoint = self.db.get_endpoint_user_service()
             if endpoint:
                 return json.dumps({"status": "success", "endpoint": endpoint})
-            print("UserService not found")
+            logger.warning("UserService not found")
             raise cherrypy.HTTPError(404, "UserService not found")
         except cherrypy.HTTPError:
             raise
         except Exception as e:
-            print(f"Error retrieving UserService endpoint: {e}")
+            logger.error(f"Error retrieving UserService endpoint: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_all_services(self, params):
@@ -355,7 +359,7 @@ class Catalog:
                 services_json.append(service)
             return json.dumps({"status": "success", "count": len(services), "services": services_json})
         except Exception as e:
-            print(f"Error retrieving all services: {e}")
+            logger.error(f"Error retrieving all services: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
     def _get_service(self, params):
@@ -368,12 +372,12 @@ class Catalog:
             if service:
                 service['_id'] = str(service.get('_id', ''))
                 return json.dumps({"status": "success", "service": service})
-            print(f"Service {service_id} not found")
+            logger.warning(f"Service {service_id} not found")
             raise cherrypy.HTTPError(404, f"Service {service_id} not found")
         except cherrypy.HTTPError:
             raise
         except Exception as e:
-            print(f"Error retrieving service {service_id}: {e}")
+            logger.error(f"Error retrieving service {service_id}: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
     def _get_sensor_by_room(self, params):
         """Get sensors by roomID."""
@@ -388,11 +392,11 @@ class Catalog:
                 sensors_json.append(sensor)
             return json.dumps({"status": "success", "count": len(sensors), "sensors": sensors_json})
         except Exception as e:
-            print(f"Error retrieving sensors for room {room_id}: {e}")
+            logger.error(f"Error retrieving sensors for room {room_id}: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
     def _get_actuator_by_room(self, params):
         """Get actuators by roomID."""
-        room_id = params.get('room_id')
+        room_id = params.get('room_id') or params.get('roomID')
         if not room_id:
             raise cherrypy.HTTPError(400, "Missing 'roomID' parameter")
         try:
@@ -403,7 +407,7 @@ class Catalog:
                 actuators_json.append(actuator)
             return json.dumps({"status": "success", "count": len(actuators), "actuators": actuators_json})
         except Exception as e:
-            print(f"Error retrieving actuators for room {room_id}: {e}")
+            logger.error(f"Error retrieving actuators for room {room_id}: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
 
 
@@ -504,7 +508,7 @@ if __name__ == "__main__":
             'error_page.default': json_error_page
         })
 
-        print(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
+        logger.info(f"Starting Catalog Service on {server_conf['host']}:{server_conf['port']}")
         cherrypy.engine.subscribe('start', catalog.start_cleanup_loop)
         cherrypy.engine.subscribe('stop', catalog.stop_cleanup_loop)
         cherrypy.engine.subscribe('stop', catalog.stop_mqtt)

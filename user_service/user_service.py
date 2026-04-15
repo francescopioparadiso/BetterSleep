@@ -42,8 +42,14 @@ class UserService:
     def startClient(self):
         self.mqtt_client_publish.start()
 
+    def start_client(self):
+        self.startClient()
+
     def stopClient(self):
         self.mqtt_client_publish.stop()
+
+    def stop_client(self):
+        self.stopClient()
 
 
     def publish(self, topic, message):
@@ -440,7 +446,7 @@ class UserService:
             "getRoomById": self._get_room_by_id,
             "getUserRoomPreferences": self._get_user_room_preferences,
             "getActiveRoom": self._get_active_room,
-            "getActiveRoomsWithUser": self._get_all_active_room_associeted_user,
+            "getActiveRoomsWithUser": self._get_all_active_rooms_with_associated_user,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -517,10 +523,14 @@ class UserService:
         return json.dumps({"status": "success", "active_room": None}, default=str)
     
     
-    def _get_all_active_room_associeted_user(self, params):
+    def _get_all_active_rooms_with_associated_user(self, params):
         """Get all active rooms with the associated user information."""
         active_rooms = self.db.get_all_active_rooms_with_user()
         return json.dumps({"status": "success", "active_rooms": active_rooms}, default=str)
+
+    # Backward-compatible alias.
+    def _get_all_active_room_associeted_user(self, params):
+        return self._get_all_active_rooms_with_associated_user(params)
 
 
 

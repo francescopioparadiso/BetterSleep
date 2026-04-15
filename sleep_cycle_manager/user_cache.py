@@ -51,6 +51,8 @@ class UserEntry:
 class UserCache:
     TTL_SECONDS       = 7200 
     EVICTION_INTERVAL = 300
+    _ACTUATOR_TYPES_FETCHED_KEY = "_types_fetched"
+    _ACTUATOR_TYPES_EXCLUDED = {"light", _ACTUATOR_TYPES_FETCHED_KEY}
 
     def __init__(self, user_service_endpoint, catalog_url, room_to_user_map,
                  ttl_seconds=TTL_SECONDS, eviction_interval=EVICTION_INTERVAL, logger=None):
@@ -65,57 +67,85 @@ class UserCache:
         self._user_cache: dict[str, UserEntry] = {}
 
     @staticmethod
-    def _norm(value):
+    def _normalize_id(value):
         return str(value) if value is not None else None
 
+    # Backward-compatible alias.
+    _norm = _normalize_id
+
+
+    def get_user_entry(self, user_id):
+        user_id = self._normalize_id(user_id)
+        if not user_id:
+            return None
+        return self._user_cache.get(user_id)
 
     def get(self, userid):
-        return self._user_cache.get(self._norm(userid))
+        return self.get_user_entry(userid)
+
+    def get_or_fetch_user(self, user_id):
+        user_id = self._normalize_id(user_id)
+        if not user_id:
+            return None
+        return self._user_cache.get(user_id) or self._fetch(user_id)
 
     def get_or_fetch(self, userid):
-        userid = self._norm(userid)
-        return self._user_cache.get(userid) or self._fetch(userid)
+        return self.get_or_fetch_user(userid)
+
+    def refresh_user_entry(self, user_id):
+        """Force a refresh from user-service and overwrite local cache entry."""
+        user_id = self._normalize_id(user_id)
+        if not user_id:
+            return None
+        return self._fetch(user_id)
 
     def refresh_user(self, userid):
-        """Force a refresh from user-service and overwrite local cache entry."""
-        userid = self._norm(userid)
-        if not userid:
-            return None
-        return self._fetch(userid)
+        return self.refresh_user_entry(userid)
 
-    def touch(self, userid):
-        entry = self._user_cache.get(self._norm(userid))
+    def touch_user(self, user_id):
+        user_id = self._normalize_id(user_id)
+        if not user_id:
+            return
+        entry = self._user_cache.get(user_id)
         if entry:
             entry.touch()
 
-    def patch_preferences(self, userid, updates):
+    def touch(self, userid):
+        self.touch_user(userid)
+
+    def update_schedule_preferences(self, user_id, updates):
         """Apply schedule key updates (night_time / morning_time) without a full re-fetch."""
-        userid = self._norm(userid)
+        user_id = self._normalize_id(user_id)
+        if not user_id:
+            return False
         with self._lock:
-            entry = self._user_cache.get(userid)
+            entry = self._user_cache.get(user_id)
             if not entry:
                 return False
             for key, value in updates.items():
                 if hasattr(entry, key):
                     setattr(entry, key, value)
-                    self.logger.info(f"Preference updated: user={userid} {key}={value}")
+                    self.logger.info(f"Preference updated: user={user_id} {key}={value}")
             return True
 
-    def patch_room_preferences(self, userid, room_id, house_id, updates):
+    def patch_preferences(self, userid, updates):
+        return self.update_schedule_preferences(userid, updates)
+
+    def update_room_preferences(self, user_id, room_id, house_id, updates):
         """Apply room-level preference updates and keep room->user association aligned."""
-        userid = self._norm(userid)
-        room_id = self._norm(room_id)
-        house_id = self._norm(house_id)
-        if not userid:
+        user_id = self._normalize_id(user_id)
+        room_id = self._normalize_id(room_id)
+        house_id = self._normalize_id(house_id)
+        if not user_id:
             return False
 
         with self._lock:
-            entry = self._user_cache.get(userid)
+            entry = self._user_cache.get(user_id)
             if not entry:
                 return False
 
             if entry.active_room_id and entry.active_room_id != room_id:
-                self._room_to_user.pop(self._norm(entry.active_room_id), None)
+                self._room_to_user.pop(self._normalize_id(entry.active_room_id), None)
 
             entry.active_room_id = room_id or entry.active_room_id
             entry.house_id = house_id or entry.house_id
@@ -131,50 +161,65 @@ class UserCache:
                     entry.config[key] = float(updates[key])
 
             if room_id:
-                self._room_to_user[room_id] = userid
+                self._room_to_user[room_id] = user_id
             entry.touch()
             return True
 
+    def patch_room_preferences(self, userid, room_id, house_id, updates):
+        return self.update_room_preferences(userid, room_id, house_id, updates)
 
-    def get_actuators_for_room(self, room_id):
+
+    def list_room_actuator_types(self, room_id):
         """Return actuator types for a room, fetching from catalog on first call."""
         entry = self._entry_for_room(room_id)
         if not entry:
             return []
-        if not entry.actuators_state.get("_types_fetched", False):
+        if not entry.actuators_state.get(self._ACTUATOR_TYPES_FETCHED_KEY, False):
             fetched = self._get_actuators(room_id)
             for actuator_type in fetched:
                 if actuator_type not in entry.actuators_state:
                     entry.actuators_state[actuator_type] = 0  # Default state
-            entry.actuators_state["_types_fetched"] = True
+            entry.actuators_state[self._ACTUATOR_TYPES_FETCHED_KEY] = True
             self.logger.info(f"Actuators lazy-fetched for room {room_id}: {fetched}")
-        return [k for k in entry.actuators_state.keys() if k not in ("_types_fetched", "light")]
+        return [k for k in entry.actuators_state.keys() if k not in self._ACTUATOR_TYPES_EXCLUDED]
 
-    def add_actuator(self, room_id, actuator_type):
+    def get_actuators_for_room(self, room_id):
+        return self.list_room_actuator_types(room_id)
+
+    def register_room_actuator(self, room_id, actuator_type):
         """ Add a new actuator type to the room's entry, if it doesn't already exist."""
         entry = self._entry_for_room(room_id)
         if entry and actuator_type not in entry.actuators_state:
             entry.actuators_state[actuator_type] = 0  # Default state
-            entry.actuators_state["_types_fetched"] = True
+            entry.actuators_state[self._ACTUATOR_TYPES_FETCHED_KEY] = True
             self.logger.info(f"Actuator added: room={room_id} type={actuator_type}")
 
-    def remove_actuator(self, room_id, actuator_type):
+    def add_actuator(self, room_id, actuator_type):
+        self.register_room_actuator(room_id, actuator_type)
+
+    def remove_room_actuator(self, room_id, actuator_type):
         entry = self._entry_for_room(room_id)
         if entry and actuator_type in entry.actuators_state:
             del entry.actuators_state[actuator_type]
             self.logger.info(f"Actuator removed: room={room_id} type={actuator_type}")
 
-    def invalidate_actuators(self, room_id):
-        """Force a re-fetch on the next get_actuators_for_room call."""
+    def remove_actuator(self, room_id, actuator_type):
+        self.remove_room_actuator(room_id, actuator_type)
+
+    def invalidate_room_actuator_cache(self, room_id):
+        """Force a re-fetch on the next room actuator lookup."""
         entry = self._entry_for_room(room_id)
         if entry:
             keys_to_remove = [k for k in entry.actuators_state.keys() if k not in ("light",)]
             for k in keys_to_remove:
                 del entry.actuators_state[k]
-            entry.actuators_state["_types_fetched"] = False
+            entry.actuators_state[self._ACTUATOR_TYPES_FETCHED_KEY] = False
             self.logger.info(f"Actuator cache invalidated for room {room_id}")
 
-    def seed_room_associations(self):
+    def invalidate_actuators(self, room_id):
+        self.invalidate_room_actuator_cache(room_id)
+
+    def seed_room_user_map(self):
         """Populate the room→user map from the user-service at startup."""
         try:
             res = requests.get(f"{self._user_endpoint}/getActiveRoomsWithUser")
@@ -193,15 +238,22 @@ class UserCache:
             self._room_to_user.update(mapping)
         self.logger.info(f"Room→user map seeded: {mapping}")
 
-    def start_eviction_loop(self):
+    def seed_room_associations(self):
+        self.seed_room_user_map()
+
+    def start_cache_eviction_loop(self):
         threading.Thread(target=self._eviction_loop, daemon=True, name="cache-eviction").start()
         self.logger.info(
             f"Cache eviction loop started (TTL={self._ttl}s, interval={self._eviction_interval}s)"
         )
 
+    def start_eviction_loop(self):
+        self.start_cache_eviction_loop()
+
     def _entry_for_room(self, room_id):
-        userid = self._room_to_user.get(self._norm(room_id))
-        return self._user_cache.get(userid) if userid else None
+        room_id = self._normalize_id(room_id)
+        user_id = self._room_to_user.get(room_id)
+        return self._user_cache.get(user_id) if user_id else None
 
     def _eviction_loop(self):
         while True:
@@ -220,18 +272,21 @@ class UserCache:
         if stale:
             self.logger.info(f"[EVICTION] Evicted {len(stale)} user(s): {stale}")
 
-    def _fetch(self, userid):
-        userid = self._norm(userid)
-        pref = self._get_preferences(userid)
+    def _fetch(self, user_id):
+        user_id = self._normalize_id(user_id)
+        if not user_id:
+            return None
+
+        pref = self._get_preferences(user_id)
         if pref is None:
             return None
 
-        r_id     = self._norm(pref.get("room_id"))
-        previous = self._user_cache.get(userid)
+        room_id  = self._normalize_id(pref.get("room_id"))
+        previous = self._user_cache.get(user_id)
 
-        if previous and previous.active_room_id and previous.active_room_id != r_id:
-            prev_room_id = self._norm(previous.active_room_id)
-            if self._room_to_user.get(prev_room_id) == userid:
+        if previous and previous.active_room_id and previous.active_room_id != room_id:
+            prev_room_id = self._normalize_id(previous.active_room_id)
+            if self._room_to_user.get(prev_room_id) == user_id:
                 del self._room_to_user[prev_room_id]
 
         def prev(attr, fallback=None):
@@ -252,7 +307,7 @@ class UserCache:
             actuators_state = dict(previous.actuators_state)
         entry = UserEntry(
             house_id       = pref.get("house_id"),
-            active_room_id = r_id,
+            active_room_id = room_id,
             night_time     = pref.get("night_time"),
             morning_time   = pref.get("morning_time"),
             config = {
@@ -275,23 +330,24 @@ class UserCache:
         )
 
         with self._lock:
-            self._user_cache[userid] = entry
-            self._room_to_user[r_id] = userid
+            self._user_cache[user_id] = entry
+            if room_id:
+                self._room_to_user[room_id] = user_id
 
         return entry
 
-    def _get_preferences(self, userid):
+    def _get_preferences(self, user_id):
         try:
             res = requests.get(
                 f"{self._user_endpoint}/getUserRoomPreferences",
-                params={"user_id": userid},
+                params={"user_id": user_id},
             )
         except requests.RequestException as e:
-            self.logger.error(f"Network error fetching preferences for {userid}: {e}")
+            self.logger.error(f"Network error fetching preferences for {user_id}: {e}")
             return None
 
         if res.status_code != 200:
-            self.logger.error(f"HTTP {res.status_code} fetching preferences for {userid}")
+            self.logger.error(f"HTTP {res.status_code} fetching preferences for {user_id}")
             return None
 
         pref = res.json().get("preferences", {})
@@ -312,7 +368,7 @@ class UserCache:
             return []
 
         try:
-            print(f"Raw actuator response for room {room_id}: {res.text}")
+            self.logger.debug(f"Raw actuator response for room {room_id}: {res.text}")
             return list({
                 str(a["type"]).lower()
                 for a in res.json().get("actuators", []) if a.get("type")

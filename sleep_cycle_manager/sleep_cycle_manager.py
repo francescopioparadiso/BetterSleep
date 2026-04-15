@@ -1,5 +1,4 @@
 import json
-import os
 import time
 import logging
 import threading
@@ -96,8 +95,8 @@ class SleepCycleManager:
             self.catalog_client.unregister()
             raise SystemExit(1)
 
-        self.user_cache.seed_room_associations()
-        self.user_cache.start_eviction_loop()
+        self.user_cache.seed_room_user_map()
+        self.user_cache.start_cache_eviction_loop()
 
     def _get_user_service_endpoint(self):
         data, status, error = self.catalog_client.get("getEndpointUserService")
@@ -155,7 +154,7 @@ class SleepCycleManager:
         with self._lock:
             userid = self.room_to_user_map.get(room_id)
             if not userid:
-                self.user_cache.seed_room_associations()
+                self.user_cache.seed_room_user_map()
                 userid = self.room_to_user_map.get(room_id)
 
             if not userid:
@@ -163,21 +162,21 @@ class SleepCycleManager:
                 self.logger.info(f"Current room_to_user_map: {self.room_to_user_map}")
                 return
 
-            entry = self.user_cache.get_or_fetch(userid)
+            entry = self.user_cache.get_or_fetch_user(userid)
             if not entry:
                 return
 
-            self.user_cache.touch(userid)
-            ts = msg['e'][0].get('t') if msg.get('e') else None
-            if ts is not None:
-                entry.sensor_ts = int(float(ts))
+            self.user_cache.touch_user(userid)
+            sensor_timestamp = msg['e'][0].get('t') if msg.get('e') else None
+            if sensor_timestamp is not None:
+                entry.sensor_ts = int(float(sensor_timestamp))
 
             phase, live_tgt, config = entry.phase, entry.live_targets, entry.config
-            actuators = self.user_cache.get_actuators_for_room(room_id)
+            actuators = self.user_cache.list_room_actuator_types(room_id)
 
-        if ts is not None:
+        if sensor_timestamp is not None:
             try:
-                self.phase_manager.sync_from_sensor_time(float(ts), userid)
+                self.phase_manager.sync_from_sensor_time(float(sensor_timestamp), userid)
             except Exception as e:
                 self.logger.error(f"Phase sync error: {e}")
 
@@ -203,9 +202,9 @@ class SleepCycleManager:
         kind, entity_id = _parse_preference_topic(topic)
         if kind == "user":
             keys = {k: msg[k] for k in ("night_time", "morning_time") if k in msg}
-            if keys and not self.user_cache.patch_preferences(entity_id, keys):
+            if keys and not self.user_cache.update_schedule_preferences(entity_id, keys):
                 # Cache miss: fetch on demand so we don't lose runtime updates.
-                self.user_cache.refresh_user(entity_id)
+                self.user_cache.refresh_user_entry(entity_id)
         elif kind == "room":
             room_updates = {
                 k: msg[k]
@@ -219,10 +218,10 @@ class SleepCycleManager:
                 self.logger.warning(f"Room preference update without user_id for room {entity_id}: {msg}")
                 return
 
-            patched = self.user_cache.patch_room_preferences(user_id, entity_id, house_id, room_updates)
+            patched = self.user_cache.update_room_preferences(user_id, entity_id, house_id, room_updates)
             if not patched:
                 # Ensure cache and room mapping are rebuilt after room activation/switch.
-                self.user_cache.refresh_user(user_id)
+                self.user_cache.refresh_user_entry(user_id)
         else:
             self.logger.warning(f"Unhandled preference topic: {topic}")
 
@@ -241,9 +240,9 @@ class SleepCycleManager:
         atype   = str(msg["type"]).lower() if msg.get("type") else None
         with self._lock:
             if atype:
-                (self.user_cache.add_actuator if add else self.user_cache.remove_actuator)(room_id, atype)
+                (self.user_cache.register_room_actuator if add else self.user_cache.remove_room_actuator)(room_id, atype)
             else:
-                self.user_cache.invalidate_actuators(room_id)
+                self.user_cache.invalidate_room_actuator_cache(room_id)
 
     def _handle_temperature(self, msg, actuators, desired, house_id, room_id):
         e = msg['e'][0]

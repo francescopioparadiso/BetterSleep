@@ -17,20 +17,24 @@ def require_fields(payload, required_fields):
         raise cherrypy.HTTPError(400, "Missing required fields in JSON")
 
 
-def checkSenML(newmeasurament):
+def validate_senml(new_measurement):
     required_top = ["bn", "e"]
     required_event = ["n", "u", "t", "v"]
 
-    if not all(k in newmeasurament for k in required_top):
+    if not all(k in new_measurement for k in required_top):
         raise cherrypy.HTTPError(400, "Missing bn or e")
 
-    if not isinstance(newmeasurament["e"], list) or len(newmeasurament["e"]) == 0:
+    if not isinstance(new_measurement["e"], list) or len(new_measurement["e"]) == 0:
         raise cherrypy.HTTPError(400, "Field 'e' must be a non-empty list")
 
     if not all(all(field in event for field in required_event)
-               for event in newmeasurament["e"]):
+               for event in new_measurement["e"]):
         raise cherrypy.HTTPError(400, "Missing required fields inside 'e'")
-    return  True
+    return True
+
+
+# Backward-compatible alias.
+checkSenML = validate_senml
 
 
 def _json_response(data):
@@ -82,12 +86,12 @@ class TimeSeries:
             logger.error(f"Invalid JSON payload received on topic {topic}: {e}")
             return
         if "sensor" in topic:
-            if checkSenML(message_received):
+            if validate_senml(message_received):
                 logger.debug(f"Received valid SenML message: {message_received}")
                 self.db.insert_measurements_data("measurements", message_received)
             else:
                 logger.warning(f"Received invalid SenML message: {message_received}")
-        elif "BedAnalitics" in topic:
+        elif "BedAnalitics" in topic or "BedAnalytics" in topic:
             logger.debug(f"Received sleep analytics message: {message_received}")
             if "user_id" in message_received  :
                 self.db.insert_sleep_score(message_received)
@@ -98,8 +102,14 @@ class TimeSeries:
     def startClient(self):
         self.mqtt_client.start()
 
+    def start_client(self):
+        self.startClient()
+
     def stopClient(self):
         self.mqtt_client.stop()
+
+    def stop_client(self):
+        self.stopClient()
 
 
 # REST
