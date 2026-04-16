@@ -28,18 +28,33 @@ class SensorModel: ObservableObject {
     @Published var isChartLoading = false
     @Published var selectedTimeRange: TimeRange = .today
 
+    private var currentUserId: Int? {
+        if let idString = UserDefaults.standard.string(forKey: "currentUserId"),
+           let id = Int(idString) {
+            return id
+        }
+        return nil
+    }
+
     // MARK: - Fetch sensors for a room from the Catalog
     func fetchSensors(for roomId: Int, houseId: Int? = nil) async {
         isLoading = true
         do {
-            self.sensors = try await CatalogClient.shared.getSensorsForRoom(roomID: String(roomId))
-            // If no sensors found and we have a houseId, activate them first
-            if self.sensors.isEmpty, let houseId = houseId {
-                try await CatalogClient.shared.activateSensors(roomId: roomId, houseId: houseId)
+            if let houseId, let userId = currentUserId {
+                self.sensors = try await CatalogClient.shared.getDataSensors(
+                    roomId: roomId,
+                    houseId: houseId,
+                    userId: userId
+                )
+            } else {
                 self.sensors = try await CatalogClient.shared.getSensorsForRoom(roomID: String(roomId))
             }
         } catch {
-            print("Error fetching sensors from catalog: \(error)")
+            do {
+                self.sensors = try await CatalogClient.shared.getSensorsForRoom(roomID: String(roomId))
+            } catch {
+                print("Error fetching sensors from catalog fallback: \(error)")
+            }
         }
         isLoading = false
     }

@@ -52,32 +52,7 @@ class RoomModel: ObservableObject {
                 return
             }
 
-            let responseRoomId = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["id"] as? Int
-
             await fetchRooms(for: houseId)
-
-            let resolvedRoomId =
-                responseRoomId.flatMap { responseId in
-                    rooms.contains(where: { $0.id == responseId }) ? responseId : nil
-                }
-                ?? rooms
-                    .filter { $0.house_id == houseId && $0.name == name }
-                    .compactMap(\.id)
-                    .max()
-                ?? rooms
-                    .filter { $0.house_id == houseId }
-                    .compactMap(\.id)
-                    .max()
-
-            if let roomId = resolvedRoomId {
-                do {
-                    try await CatalogClient.shared.activateSensors(roomId: roomId, houseId: houseId)
-                } catch {
-                    print("Warning: room created but sensor activation failed for room \(roomId): \(error)")
-                }
-            } else {
-                print("Warning: room created but could not resolve the new room id for sensor activation")
-            }
         } catch { print("Error adding room: \(error)") }
     }
     

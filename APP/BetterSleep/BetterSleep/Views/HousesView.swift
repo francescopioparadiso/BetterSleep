@@ -250,18 +250,10 @@ struct HouseView: View {
                                     .frame(width: 32)
                                     .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(houseName)
-                                        .font(.headline)
-                                        .fontWeight(.semibold)
-                                        .fontDesign(.rounded)
-                                    Text("Invited by \(invite.email)")
-                                        .font(.caption)
-                                        .fontDesign(.rounded)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                }
+                                Text(houseName)
+                                    .font(.headline)
+                                    .fontWeight(.semibold)
+                                    .fontDesign(.rounded)
 
                                 Spacer()
 

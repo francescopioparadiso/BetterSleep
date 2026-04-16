@@ -3,6 +3,7 @@ from common.common import load_json_body, json_error_page, init_mqtt_helper
 import json
 import logging
 import cherrypy
+import requests
 from postgres_db import PostgresDB
 from common import catalog_client
 logger = logging.getLogger(__name__)
@@ -447,6 +448,7 @@ class UserService:
             "getUserRoomPreferences": self._get_user_room_preferences,
             "getActiveRoom": self._get_active_room,
             "getActiveRoomsWithUser": self._get_all_active_rooms_with_associated_user,
+            "getDatasensor": self._get_data_sensor,
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -521,6 +523,102 @@ class UserService:
         if active_room:
             return json.dumps({"status": "success", "active_room": active_room}, default=str)
         return json.dumps({"status": "success", "active_room": None}, default=str)
+
+    def _get_time_series_endpoint(self):
+        try:
+            res = requests.get(
+                f"{self.catalog_url}/catalog/services/time_series",
+                params={"scope": "internal"},
+                timeout=5
+            )
+            res.raise_for_status()
+            payload = res.json()
+            endpoint = payload.get("endpoint")
+            if endpoint:
+                return endpoint.rstrip("/")
+        except Exception as exc:
+            logger.error(f"Failed to resolve TimeSeries endpoint from catalog: {exc}")
+        return None
+
+    def _get_latest_sensor_documents(self, room_id):
+        endpoint = self._get_time_series_endpoint()
+        if not endpoint:
+            raise cherrypy.HTTPError(503, "TimeSeries service unavailable")
+
+        try:
+            res = requests.get(
+                f"{endpoint}/getSensorByRoom",
+                params={"room_id": room_id},
+                timeout=10
+            )
+            res.raise_for_status()
+            records = res.json()
+        except Exception as exc:
+            logger.error(f"Failed to fetch sensor data from TimeSeries for room {room_id}: {exc}")
+            raise cherrypy.HTTPError(503, "Unable to retrieve sensor data")
+
+        def normalize_sensor_type(sensor_name):
+            normalized = str(sensor_name or "").strip().lower().replace(" ", "_")
+            if normalized in {"temperature", "ambient_temperature"}:
+                return "ambient_temp"
+            if normalized in {"heart_rate", "heartrate"}:
+                return "heart_rate"
+            return normalized or "unknown"
+
+        latest_by_type = {}
+        for record in records if isinstance(records, list) else []:
+            bn = str(record.get("bn", ""))
+            parts = bn.split(":")
+            if len(parts) != 4:
+                continue
+
+            try:
+                house_id = int(parts[0])
+                record_room_id = int(parts[1])
+                sensor_id = int(parts[2])
+                sensor_type_code = int(parts[3])
+            except (TypeError, ValueError):
+                continue
+
+            events = [event for event in record.get("e", []) if isinstance(event, dict) and event.get("t") is not None]
+            if not events:
+                continue
+
+            latest_event = max(events, key=lambda event: event.get("t", 0))
+            current = latest_by_type.get(sensor_type_code)
+            if current is None or latest_event.get("t", 0) > current["last_update"]:
+                sensor_name = latest_event.get("n") or f"Sensor {sensor_type_code}"
+                sensor_type = normalize_sensor_type(sensor_name)
+                latest_by_type[sensor_type_code] = {
+                    "sensorID": str(sensor_id),
+                    "name": sensor_name,
+                    "type": sensor_type,
+                    "last_update": str(latest_event.get("t")),
+                    "roomID": str(record_room_id),
+                    "houseID": str(house_id),
+                    "latest_value": latest_event.get("v"),
+                    "latest_unit": latest_event.get("u"),
+                }
+
+        return list(latest_by_type.values())
+
+    def _get_data_sensor(self, params):
+        room_id = params.get("roomid")
+        house_id = params.get("houseid")
+        user_id = params.get("userid")
+
+        if not room_id or not house_id or not user_id:
+            raise cherrypy.HTTPError(400, "Missing 'roomid', 'houseid', or 'userid' parameter")
+
+        room = self.db.get_room_info(room_id)
+        if not room:
+            raise cherrypy.HTTPError(404, "Room not found")
+
+        if str(room.get("house_id")) != str(house_id):
+            raise cherrypy.HTTPError(404, "Room not found for the specified house")
+
+        sensors = self._get_latest_sensor_documents(room_id)
+        return json.dumps({"status": "success", "sensors": sensors}, default=str)
     
     
     def _get_all_active_rooms_with_associated_user(self, params):

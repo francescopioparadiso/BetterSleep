@@ -221,12 +221,25 @@ class TimeSeries:
         if not user_id or not date_str:
             raise cherrypy.HTTPError(400, "Missing 'user_id' or 'date' parameter")
 
-        deleted_count = self.db.delete_sleep_data_by_user_and_date(user_id, date_str)
+        deleted_sleep_analytics = self.db.delete_sleep_data_by_user_and_date(user_id, date_str)
+        deleted_measurements = 0
+
+        room_id = params.get("room_id")
+        start_time = params.get("start_time")
+        end_time = params.get("end_time")
+        if room_id and start_time and end_time:
+            deleted_measurements = self.db.delete_measurements_by_room_and_time_range(
+                room_id, start_time, end_time
+            )
+
         return _json_response({
             "status": "success",
             "user_id": str(user_id),
             "date": date_str,
-            "deleted_count": deleted_count,
+            "room_id": str(room_id) if room_id is not None else None,
+            "deleted_sleep_analytics": deleted_sleep_analytics,
+            "deleted_measurements": deleted_measurements,
+            "deleted_count": deleted_sleep_analytics + deleted_measurements,
         })
 
 

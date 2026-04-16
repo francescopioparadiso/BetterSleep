@@ -144,6 +144,42 @@ actor CatalogClient {
         return try JSONDecoder().decode([Sensor].self, from: sensorsData)
     }
 
+    /// Fetch sensors for the sensor view using room, house, and user ids.
+    func getDataSensors(roomId: Int, houseId: Int, userId: Int) async throws -> [Sensor] {
+        let base = try await getUserServiceURL()
+        var components = URLComponents(string: "\(base)/getDatasensor")!
+        components.queryItems = [
+            URLQueryItem(name: "roomid", value: String(roomId)),
+            URLQueryItem(name: "houseid", value: String(houseId)),
+            URLQueryItem(name: "userid", value: String(userId))
+        ]
+
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+
+        if let httpResponse = response as? HTTPURLResponse,
+           httpResponse.statusCode == 404 {
+            throw NSError(
+                domain: "CatalogClient",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "getDatasensor endpoint not available"]
+            )
+        }
+
+        if let sensors = try? JSONDecoder().decode([Sensor].self, from: data) {
+            return sensors
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let payload =
+            json?["sensors"] ??
+            json?["sensor"] ??
+            json?["data"] ??
+            json?["results"] ??
+            []
+        let sensorsData = try JSONSerialization.data(withJSONObject: payload)
+        return try JSONDecoder().decode([Sensor].self, from: sensorsData)
+    }
+
     /// Ask the user service to register default sensors for a room
     func activateSensors(roomId: Int, houseId: Int) async throws {
         let base = try await getUserServiceURL()

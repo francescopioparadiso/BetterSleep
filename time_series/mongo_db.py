@@ -259,3 +259,35 @@ class MongoDB:
         except Exception as e:
             logger.error(f"Error deleting analytics for user {user_id} on {date_str}: {e}")
             return 0
+
+    def delete_measurements_by_room_and_time_range(self, room_id, start_time, end_time):
+        """Delete measurement rows for a room whose event timestamps fall in a time range."""
+        if self.db is None:
+            logger.warning("Database not connected")
+            return 0
+        try:
+            collection = self.db["measurements"]
+            result = collection.delete_many({
+                "room_id": int(room_id),
+                "e": {
+                    "$elemMatch": {
+                        "t": {
+                            "$gte": int(float(start_time)),
+                            "$lte": int(float(end_time))
+                        }
+                    }
+                }
+            })
+            logger.info(
+                "Deleted %s measurement records for room_id=%s start=%s end=%s",
+                result.deleted_count,
+                room_id,
+                start_time,
+                end_time,
+            )
+            return result.deleted_count
+        except Exception as e:
+            logger.error(
+                f"Error deleting measurements for room {room_id} in range {start_time}-{end_time}: {e}"
+            )
+            return 0

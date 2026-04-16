@@ -4,7 +4,7 @@
     {
       "label": "Database",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build catalog-postgres timeseries-mongo mqtt-broker",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -18,7 +18,7 @@
     {
       "label": "Catalog",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build catalog",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps catalog",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -32,7 +32,7 @@
     {
       "label": "User Service",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build user-service",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps user-service",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -46,7 +46,7 @@
     {
       "label": "TimeSeries",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build time-series",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps time-series",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -60,7 +60,7 @@
     {
       "label": "BedAnalytics",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build bed-analytics",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps bed-analytics",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -74,7 +74,7 @@
     {
       "label": "SleepCycleManager",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build sleep-cycle-manager",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps sleep-cycle-manager",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -103,7 +103,10 @@
       "type": "shell",
       "command": "python3 clean_db.py",
       "options": {
-        "cwd": "${workspaceFolder}/simulation"
+        "cwd": "${workspaceFolder}/Simulation",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
       },
       "presentation": {
         "group": "test",
@@ -114,16 +117,33 @@
     {
       "label": "🧪 Test Sleep Cycle",
       "type": "shell",
+      "command": "python3 interactive_night_simulation.py",
+      "options": {
+        "cwd": "${workspaceFolder}/Simulation",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
+      },
+      "presentation": {
+        "group": "test",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean night simulation",
+      "type": "shell",
       "command": "python3",
       "args": [
-        "night_simulation.py",
+        "clean_night_simulation.py",
         "--target-date",
-        "${input:nightSimulationDate}",
-        "--duration-seconds",
-        "20"
+        "${input:nightSimulationDate}"
       ],
       "options": {
-        "cwd": "${workspaceFolder}/simulation"
+        "cwd": "${workspaceFolder}/Simulation",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
       },
       "presentation": {
         "group": "test",
@@ -136,7 +156,10 @@
       "type": "shell",
       "command": "python3 sensor_simulation.py",
       "options": {
-        "cwd": "${workspaceFolder}/simulation"
+        "cwd": "${workspaceFolder}/Simulation",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
       },
       "presentation": {
         "group": "test",

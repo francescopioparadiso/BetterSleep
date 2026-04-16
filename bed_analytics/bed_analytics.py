@@ -306,6 +306,7 @@ class BedAnalytics:
         if not raw_data:
             return {"error": "No sensor data available"}
         sensors        = self._parse_and_cleaning_data(raw_data)
+        temp_list      = sensors.get("temperature",  [])
         vibration_list = sensors.get("vibration",    [])
         presence_list  = sensors.get("presence",     [])
         hr_list        = sensors.get("heart_rate",   [])
@@ -321,6 +322,12 @@ class BedAnalytics:
         counts, stage_percent = _compute_stage_stats(classified)
         wake_ups, sleep_hours = _count_wakeups(classified)
         hrv_rmssd = _compute_hrv(hr_list)
+        avg_temp = None
+        if temp_list:
+            avg_temp = round(
+                sum(float(event.get("v", 0.0)) for event in temp_list) / len(temp_list),
+                2
+            )
         score, quality = self._get_sleep_score(sleep_hours, wake_ups, stage_percent, avg_temp)
         return {
             "sleep_score":   score,

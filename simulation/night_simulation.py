@@ -1,3 +1,4 @@
+import argparse
 import logging
 import math
 import os
@@ -15,7 +16,7 @@ os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 from device_connector.Simulate_Sensor import *
 from common.MyMQTT import MyMQTT
 import requests
-from common_simulation import build_url, get_user_service_endpoint, load_json_file
+from common_simulation import build_url, get_user_service_endpoint, load_json_file, normalize_service_endpoint
 
 SLEEP_CYCLE_LENGTH_MINUTES = 90
 RANDOM_AWAKE_PROBABILITY = 0.01
@@ -179,11 +180,14 @@ def fetch_users_from_user_service(config):
     return discovered
 
 
-def build_user_contexts(config):
-    users = config.get("users") or [config.get("simulation")]
+def build_user_contexts(config, selected_user_ids=None):
+    users = fetch_users_from_user_service(config)
+    selected_user_ids = {str(user_id) for user_id in (selected_user_ids or [])}
     contexts = []
     for user_info in users:
         userid = str(user_info.get("userid") or user_info.get("id") or "").strip()
+        if selected_user_ids and userid not in selected_user_ids:
+            continue
         houseid = str(user_info.get("houseid") or user_info.get("house_id") or "").strip()
         bedroomid = str(user_info.get("bedroomid") or user_info.get("bedroom_id") or user_info.get("roomid") or "").strip()
         night, morning = get_user_sleep_times(config["catalog"]["url"], userid) if userid else ("22:00", "07:00")
@@ -333,14 +337,28 @@ def get_user_sleep_times(catalog_url, userid):
     default_night = "22:00"
     default_morning = "07:00"
     try:
-        cat_res = requests.get(build_url(catalog_url, "getEndpointUserService"), timeout=5)
-        if cat_res.status_code == 200:
-            us_endpoint = cat_res.json().get("endpoint")
-            if us_endpoint:
-                pref_res = requests.get(f"{us_endpoint}/getUserRoomPreferences?user_id={userid}", timeout=5)
-                if pref_res.status_code == 200:
-                    prefs = pref_res.json().get("preferences", {})
-                    return prefs.get("night_time", default_night), prefs.get("morning_time", default_morning)
+        us_endpoint = get_user_service_endpoint(catalog_url)
+        if us_endpoint:
+            users_res = requests.get(f"{us_endpoint}/getAllUsers", timeout=5)
+            if users_res.status_code == 200:
+                users = users_res.json().get("users", [])
+                user_match = next(
+                    (
+                        user for user in users
+                        if str(user.get("id")) == str(userid)
+                    ),
+                    None
+                )
+                if user_match:
+                    return (
+                        user_match.get("night_time", default_night),
+                        user_match.get("morning_time", default_morning)
+                    )
+
+            pref_res = requests.get(f"{us_endpoint}/getUserRoomPreferences?user_id={userid}", timeout=5)
+            if pref_res.status_code == 200:
+                prefs = pref_res.json().get("preferences", {})
+                return prefs.get("night_time", default_night), prefs.get("morning_time", default_morning)
     except Exception as e:
         logger.error(f"Error fetching user preferences for user {userid}: {e}")
     return default_night, default_morning
@@ -441,7 +459,7 @@ def _update_temperature(current_temp, baseline_temp, fan_on, heater_on, thermal_
     return max(thermal_config["min_temp"], min(thermal_config["max_temp"], current_temp))
 
 
-def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts):
+def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_states=None):
     """
     Publish one tick of sensor data and return the computed
     (presence_value, sleep_phase, heart_rate_value, vibration_value).
@@ -453,6 +471,9 @@ def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts):
 
     vt = window.sim_start + timedelta(minutes=step)
     presence_value = 1 if (window.sleep_start <= vt < window.sleep_end) else 0
+    current_phase = (mqtt_states or {}).get("phase")
+    if current_phase == "DAY" and presence_value == 1:
+        presence_value = 0
     presence_sensor.publish_data(presence_value, timestamp=sim_ts)
 
     minute_of_night = int((vt - window.sleep_start).total_seconds() / 60)
@@ -543,15 +564,16 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
 
             current_temp = _update_temperature(current_temp, baseline_temp, fan_on, heater_on, thermal_config)
             sim_ts       = simulated_timestamp()
+            mqtt_states  = mqtt_monitor.get_states()
 
             presence_value, sleep_phase, heart_rate_value, vibration_value = _publish_sensor_readings(
-                sensors, step, window, current_temp, sim_ts
+                sensors, step, window, current_temp, sim_ts, mqtt_states
             )
 
             _log_step(
                 filepath, user, window, step,
                 current_temp, presence_value, heart_rate_value, vibration_value,
-                sleep_phase, mqtt_monitor.get_states()
+                sleep_phase, mqtt_states
             )
 
             time.sleep(real_step_seconds)
@@ -561,20 +583,30 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
         _teardown_components(all_components, mqtt_monitor, user.userid)
 
 
-def delete_previous_simulation_data(config, userid, date_str):
+def delete_previous_simulation_data(config, userid, room_id, date_str, start_time, end_time):
     catalog_url = config["catalog"]["url"]
-    print(f"\n[*] Attempting to delete old data for User {userid} on {date_str}...")
+    print(f"\n[*] Attempting to delete old data for User {userid}, Room {room_id} on {date_str}...")
 
     try:
         cat_res = requests.get(f"{catalog_url}/catalog/services/time_series?scope=external", timeout=5)
         if cat_res.status_code == 200:
-            data_endpoint = cat_res.json().get("endpoint")
+            data_endpoint = normalize_service_endpoint(cat_res.json().get("endpoint"))
             if data_endpoint:
-                delete_url = f"{data_endpoint}/deleteSleepData?user_id={userid}&date={date_str}"
+                delete_url = (
+                    f"{data_endpoint}/deleteSleepData"
+                    f"?user_id={userid}"
+                    f"&room_id={room_id}"
+                    f"&date={date_str}"
+                    f"&start_time={int(start_time)}"
+                    f"&end_time={int(end_time)}"
+                )
                 print(f"[*] Sending DELETE request to: {delete_url}")
                 res = requests.delete(delete_url, timeout=5)
                 if res.status_code in [200, 204]:
-                    print(f"[*] SUCCESS: Cleared previous database records for User {userid} on {date_str}\n")
+                    print(
+                        f"[*] SUCCESS: Cleared previous database records for "
+                        f"User {userid}, Room {room_id} on {date_str}\n"
+                    )
                 else:
                     print(f"[!] FAILED: Backend returned HTTP {res.status_code}. (Did you add the Flask route?)\n")
             else:
@@ -585,9 +617,9 @@ def delete_previous_simulation_data(config, userid, date_str):
         print(f"[!] ERROR: Something crashed while calling the delete endpoint: {e}\n")
 
 
-def run_simulation(duration_seconds=60, target_date=None):
+def run_simulation(duration_seconds=60, target_date=None, selected_user_ids=None):
     config        = load_test_config()
-    user_contexts = build_user_contexts(config)
+    user_contexts = build_user_contexts(config, selected_user_ids=selected_user_ids)
     normalized_target_date = normalize_target_date(target_date)
     bases         = default_night_bases(normalized_target_date)
 
@@ -601,15 +633,23 @@ def run_simulation(duration_seconds=60, target_date=None):
     threads    = []
 
     def _run_user(user_ctx):
-        if normalized_target_date:
-            date_str = normalized_target_date.strftime("%Y-%m-%d")
-            delete_previous_simulation_data(config, user_ctx.userid, date_str)
-            time.sleep(1)
-
         windows = build_sleep_windows(user_ctx.night_time, user_ctx.morning_time, bases)
         for window in windows:
             if stop_event.is_set():
                 break
+            if normalized_target_date:
+                date_str = normalized_target_date.strftime("%Y-%m-%d")
+                start_time = window.sim_start.timestamp()
+                end_time = (window.sim_start + timedelta(minutes=window.sim_minutes)).timestamp()
+                delete_previous_simulation_data(
+                    config,
+                    user_ctx.userid,
+                    user_ctx.bedroomid,
+                    date_str,
+                    start_time,
+                    end_time,
+                )
+                time.sleep(1)
             simulate_single_user_night(user_ctx, config, window, duration_seconds, stop_event)
 
     for user_ctx in user_contexts:
@@ -630,7 +670,34 @@ def run_simulation(duration_seconds=60, target_date=None):
 
 
 def main():
-    run_simulation(duration_seconds=DEFAULT_DURATION_SECONDS, target_date=DEFAULT_TARGET_DATE)
+    parser = argparse.ArgumentParser(description="Run the BetterSleep night simulation")
+    parser.add_argument(
+        "--target-date",
+        dest="target_date",
+        default=DEFAULT_TARGET_DATE,
+        help="Night base date in YYYY-MM-DD format"
+    )
+    parser.add_argument(
+        "--duration-seconds",
+        dest="duration_seconds",
+        type=int,
+        default=DEFAULT_DURATION_SECONDS,
+        help="Real-time duration of the simulation run"
+    )
+    parser.add_argument(
+        "--user-ids",
+        dest="user_ids",
+        default="",
+        help="Comma-separated list of user ids to simulate"
+    )
+    args = parser.parse_args()
+
+    selected_user_ids = [user_id.strip() for user_id in args.user_ids.split(",") if user_id.strip()]
+    run_simulation(
+        duration_seconds=args.duration_seconds,
+        target_date=args.target_date,
+        selected_user_ids=selected_user_ids,
+    )
 
 
 if __name__ == "__main__":
