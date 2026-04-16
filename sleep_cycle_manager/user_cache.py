@@ -35,17 +35,6 @@ class UserEntry:
     def is_stale(self, ttl):
         return (time.monotonic() - self.last_seen_monotonic) > ttl
 
-    def get_actuator_state(self, actuator_type):
-        return self.actuators_state.get(actuator_type)
-
-    def set_actuator_state(self, actuator_type, value):
-        self.actuators_state[actuator_type] = value
-
-    def get_light(self):
-        return self.actuators_state.get("light")
-
-    def set_light(self, value):
-        self.actuators_state["light"] = value
 
 
 class UserCache:
