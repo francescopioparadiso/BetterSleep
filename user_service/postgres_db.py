@@ -120,6 +120,32 @@ class PostgresDB:
 
     # --- INVITATIONS ---
     def insert_invitation(self, i):
+        # 1. Check if an invitation already exists for this house and email
+        existing_invite = self._execute_query(
+            "SELECT 1 FROM invitations WHERE house_id = %s AND email = %s",
+            (i['house_id'], i['email']),
+            fetch=True, single=True
+        )
+        if existing_invite:
+            return None
+
+        # 2. Check if the user is already a member of this house
+        # First, find the user_id for the given email
+        user = self._execute_query(
+            "SELECT id FROM users WHERE email = %s",
+            (i['email'],),
+            fetch=True, single=True
+        )
+        
+        if user:
+            existing_member = self._execute_query(
+                "SELECT 1 FROM house_members WHERE house_id = %s AND user_id = %s",
+                (i['house_id'], user['id']),
+                fetch=True, single=True
+            )
+            if existing_member:
+                return None
+
         query = "INSERT INTO invitations (house_id, email, status) VALUES (%s, %s, %s) RETURNING id"
         result = self._execute_query(query, (i['house_id'], i['email'], i.get('status', 0)), fetch=True, single=True)
         return result['id'] if result else None

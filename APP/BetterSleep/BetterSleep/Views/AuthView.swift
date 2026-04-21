@@ -1,5 +1,49 @@
 import SwiftUI
 
+// MARK: - Support Types
+enum AuthField: Hashable {
+    case email
+    case password
+}
+
+enum AuthStatus: Equatable {
+    case idle
+    case loading
+    case success
+    case error(String)
+    
+    var value: Double {
+        switch self {
+        case .idle: return 0
+        case .loading: return 1
+        case .success: return 2
+        case .error: return 3
+        }
+    }
+    
+    func tint(isInputValid: Bool) -> Color {
+        if !isInputValid && self == .idle {
+            return .blue.opacity(0.1)
+        }
+        switch self {
+        case .error: return .red.opacity(0.2)
+        case .success: return .green.opacity(0.2)
+        default: return .blue.opacity(0.2)
+        }
+    }
+    
+    func foreground(isInputValid: Bool) -> Color {
+        if !isInputValid && self == .idle {
+            return .blue.opacity(0.5)
+        }
+        switch self {
+        case .error: return .red
+        case .success: return .green
+        default: return .blue
+        }
+    }
+}
+
 struct AuthView: View {
     @Environment(\.colorScheme) var colorScheme
     
@@ -7,27 +51,45 @@ struct AuthView: View {
     @State private var email = ""
     @State private var password = ""
     
+    // MARK: - Focus Management
+    @FocusState private var focusedField: AuthField?
+    
     @State private var toastAnimation = Animation.bouncy(duration: 0.5)
     
+    @State private var signInStatus: AuthStatus = .idle
+    @State private var signUpStatus: AuthStatus = .idle
+    
+    private var isInputValid: Bool {
+        !email.isEmpty && !password.isEmpty
+    }
+    
     var body: some View {
-        ZStack(alignment: .top) {
-            
+        ZStack {    
             // MARK: - Main Content
-            VStack(spacing: 80) {
+            VStack(spacing: focusedField != nil ? 20 : 80) {
                 Spacer()
                 
-                // MARK: - Header
-                VStack(spacing: 8) {
-                    Text("BetterSleep")
-                        .font(.largeTitle)
-                        .fontWeight(.heavy)
-                        .fontDesign(.rounded)
-                        .foregroundColor(.primary)
-                    
-                    Text("Your smart home sleep companion")
-                        .font(.subheadline)
-                        .fontDesign(.rounded)
-                        .foregroundColor(.secondary)
+                if focusedField == nil {
+                    // MARK: - Header
+                    VStack(spacing: 8) {
+                        Image("bettersleep-logo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 60, height: 60)
+                            .shadow(color: Color.blue.opacity(0.9), radius: 60, x: 0, y: 0)
+                        
+                        Text("BetterSleep")
+                            .font(.largeTitle)
+                            .fontWeight(.heavy)
+                            .fontDesign(.rounded)
+                            .foregroundColor(.primary)
+                        
+                        Text("Your smart home sleep companion")
+                            .font(.subheadline)
+                            .fontDesign(.rounded)
+                            .foregroundColor(.secondary)
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 
                 VStack(spacing: 32) {
@@ -42,6 +104,8 @@ struct AuthView: View {
                             TextField("Email address", text: $email)
                                 .textInputAutocapitalization(.never)
                                 .keyboardType(.emailAddress)
+                                .focused($focusedField, equals: .email)
+                                .submitLabel(.next)
                         }
                         .padding()
                         .background(Color(.systemGray6))
@@ -53,32 +117,70 @@ struct AuthView: View {
                                 .frame(width: 24)
                             
                             SecureField("Password", text: $password)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
+                                .focused($focusedField, equals: .password)
+                                .submitLabel(.next)
                         }
                         .padding()
                         .background(Color(.systemGray6))
                         .cornerRadius(32)
                     }
+                    .onSubmit {
+                        if focusedField == .email {
+                            focusedField = .password
+                        } else {
+                            focusedField = nil
+                        }
+                    }
                     
                     // MARK: - Action Buttons
                     VStack(spacing: 16) {
                         Button(action: {
+                            focusedField = nil
                             Task {
-                                // Clear old errors so the animation can re-trigger if needed
-                                withAnimation { authVM.errorMessage = nil }
+                                withAnimation { signInStatus = .loading }
+                                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                
                                 await authVM.signIn(email: email, password: password)
+                                
+                                if let error = authVM.errorMessage {
+                                    withAnimation { signInStatus = .error(error) }
+                                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                    withAnimation { signInStatus = .idle }
+                                } else {
+                                    withAnimation { signInStatus = .success }
+                                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                    authVM.isAuthenticated = true
+                                }
                             }
                         }) {
                             HStack {
                                 Spacer()
-                                Text("Sign In")
+
+                                var textString: String {
+                                    switch signInStatus {
+                                    case .idle: return "Sign In"
+                                    case .loading: return "Logging in..."
+                                    case .success: return "Successful"
+                                    case .error(let msg): return msg
+                                    }
+                                }
+
+                                Text(textString)
                                     .font(.headline)
                                     .fontDesign(.rounded)
+                                    .contentTransition(.numericText(value: Double(textString.hashValue)))
+
                                 Spacer()
                             }
                             .padding()
                         }
                         .frame(maxWidth: .infinity)
                         .buttonStyle(.glassProminent)
+                        .tint(signInStatus.tint(isInputValid: isInputValid))
+                        .foregroundStyle(signInStatus.foreground(isInputValid: isInputValid))
+                        .disabled(signInStatus != .idle || signUpStatus != .idle || !isInputValid)
                         
                         HStack(spacing: 4) {
                             Text("Don't have an account?")
@@ -86,16 +188,42 @@ struct AuthView: View {
                                 .foregroundColor(.secondary)
                             
                             Button(action: {
+                                focusedField = nil
                                 Task {
-                                    withAnimation { authVM.errorMessage = nil }
+                                    withAnimation { signUpStatus = .loading }
+                                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                    
                                     await authVM.signUp(email: email, password: password)
+                                    
+                                    if let error = authVM.errorMessage {
+                                        withAnimation { signUpStatus = .error(error) }
+                                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                        withAnimation { signUpStatus = .idle }
+                                    } else {
+                                        withAnimation { signUpStatus = .success }
+                                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                        authVM.isAuthenticated = true
+                                    }
                                 }
                             }) {
-                                Text("Sign Up")
-                                    .fontWeight(.semibold)
-                                    .fontDesign(.rounded)
-                                    .foregroundColor(.blue)
+                                Group {
+                                    switch signUpStatus {
+                                    case .idle:
+                                        Text("Sign Up")
+                                    case .loading:
+                                        Text("Signing up...")
+                                    case .success:
+                                        Text("Successful")
+                                    case .error(let msg):
+                                        Text(msg)
+                                    }
+                                }
+                                .fontWeight(.semibold)
+                                .fontDesign(.rounded)
+                                .foregroundColor(signUpStatus.foreground(isInputValid: isInputValid))
+                                .contentTransition(.numericText(value: Double(signUpStatus.value)))
                             }
+                            .disabled(signInStatus != .idle || signUpStatus != .idle || !isInputValid)
                         }
                         .font(.footnote)
                     }
@@ -104,43 +232,18 @@ struct AuthView: View {
                 Spacer()
             }
             .padding(.horizontal)
-            
-            // MARK: - Dynamic Island Error Toast
-            if let errorMessage = authVM.errorMessage {
-                HStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                    
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .fontDesign(.rounded)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .foregroundStyle(Color.red)
-                .background(Color.red.opacity(0.15))
-                .clipShape(.rect(cornerRadius: 24))
-                .shadow(color: Color.red, radius: 30, x: 0, y: 0)
-                
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5)),
-                    removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5))
-                ))
-                .zIndex(1)
-                .onAppear {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                        withAnimation(toastAnimation) {
-                            authVM.errorMessage = nil
-                        }
-                    }
-                }
-            }
+            .animation(.snappy, value: focusedField)
         }
         .animation(toastAnimation, value: authVM.errorMessage)
     }
 }
 
-#Preview {
+#Preview("Normal State") {
     AuthView(authVM: AuthModel())
+}
+
+#Preview("Error State") {
+    let vm = AuthModel()
+    vm.errorMessage = "Invalid email or password."
+    return AuthView(authVM: vm)
 }

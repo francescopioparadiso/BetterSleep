@@ -256,6 +256,33 @@ struct SensorDetailView: View {
                             }
                         }
                         .chartYScale(domain: yAxisBounds)
+                        .chartYAxis {
+                            if sType == .vibration {
+                                AxisMarks(values: [0.0, 0.1]) { value in
+                                    AxisGridLine()
+                                    AxisTick()
+                                    AxisValueLabel {
+                                        if let v = value.as(Double.self) {
+                                            Text(v >= 0.05 ? "Detected" : "Undetected")
+                                                .fontDesign(.rounded)
+                                        }
+                                    }
+                                }
+                            } else if sType == .presence {
+                                AxisMarks(values: [0.0, 1.0]) { value in
+                                    AxisGridLine()
+                                    AxisTick()
+                                    AxisValueLabel {
+                                        if let v = value.as(Double.self) {
+                                            Text(v >= 0.5 ? "Occupied" : "Empty")
+                                                .fontDesign(.rounded)
+                                        }
+                                    }
+                                }
+                            } else {
+                                AxisMarks()
+                            }
+                        }
                         .chartXAxis {
                             switch sensorModel.selectedTimeRange {
                             case .today:

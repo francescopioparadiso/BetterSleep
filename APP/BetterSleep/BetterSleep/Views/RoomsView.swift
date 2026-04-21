@@ -466,39 +466,7 @@ struct MembersSheet: View {
 
                     // 3) Pending invites
                     ForEach(pendingInvites) { invite in
-                        HStack {
-                            Image(systemName: "questionmark.circle.fill")
-                                .font(.title3)
-                                .foregroundColor(.orange)
-                                .shadow(color: .orange.opacity(0.45), radius: 6, x: 0, y: 0)
-
-                            Text(invite.email)
-                                .foregroundColor(.primary)
-
-                            Spacer()
-
-                            Button {} label: {
-                                Text("Pending")
-                                    .fontDesign(.rounded)
-                            }
-                            .buttonStyle(.glassProminent)
-                            .foregroundStyle(Color.orange)
-                            .tint(Color.orange.opacity(0.15))
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if isCurrentUserOwner {
-                                Button(role: .destructive) {
-                                    Task {
-                                        if let id = invite.id {
-                                            await invitationModel.deleteInvite(inviteId: id)
-                                            await invitationModel.fetchHouseDetails(for: house.id!)
-                                        }
-                                    }
-                                } label: {
-                                    Label("Cancel", systemImage: "xmark.circle")
-                                }
-                            }
-                        }
+                        pendingInviteRow(invite)
                     }
 
                     // 4) Remaining guests alphabetically
@@ -507,29 +475,39 @@ struct MembersSheet: View {
                     }
 
                     // MARK: - Invite row (always last)
-                    HStack {
-                        Image(systemName: "arrowshape.turn.up.right.fill")
-                            .font(.title2)
-                            .foregroundColor(.blue)
-                            .shadow(color: .blue.opacity(0.45), radius: 6, x: 0, y: 0)
-                            .frame(width: 32)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "arrowshape.turn.up.right.fill")
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                                .shadow(color: .blue.opacity(0.45), radius: 6, x: 0, y: 0)
+                                .frame(width: 32)
 
-                        TextField("Invite housemate via email...", text: $emailToInvite)
-                            .keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
+                            TextField("Invite housemate via email...", text: $emailToInvite)
+                                .keyboardType(.emailAddress)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
 
-                        if isSending {
-                            ProgressView()
-                        } else {
-                            Button(action: sendInvite) {
-                                Text("Send")
-                                    .fontDesign(.rounded)
+                            if isSending {
+                                ProgressView()
+                            } else {
+                                Button(action: sendInvite) {
+                                    Text("Send")
+                                        .fontDesign(.rounded)
+                                }
+                                .buttonStyle(.glassProminent)
+                                .disabled(emailToInvite.isEmpty || !emailToInvite.contains("@"))
+                                .tint((emailToInvite.isEmpty || !emailToInvite.contains("@") ? Color.gray : Color.blue).opacity(0.15))
+                                .foregroundStyle(emailToInvite.isEmpty || !emailToInvite.contains("@") ? Color.gray : Color.blue)
                             }
-                            .buttonStyle(.glassProminent)
-                            .disabled(emailToInvite.isEmpty || !emailToInvite.contains("@"))
-                            .tint((emailToInvite.isEmpty || !emailToInvite.contains("@") ? Color.gray : Color.blue).opacity(0.15))
-                            .foregroundStyle(emailToInvite.isEmpty || !emailToInvite.contains("@") ? Color.gray : Color.blue)
+                        }
+                        
+                        if let errorMessage = invitationModel.errorMessage {
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .fontDesign(.rounded)
+                                .padding(.leading, 40)
                         }
                     }
                     .padding(.vertical, 4)
@@ -538,36 +516,6 @@ struct MembersSheet: View {
                 .refreshable {
                     guard let houseId = house.id else { return }
                     await invitationModel.fetchHouseDetails(for: houseId)
-                }
-
-                // MARK: - Error Toast
-                if let errorMessage = invitationModel.errorMessage {
-                    HStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                        Text(errorMessage)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .fontDesign(.rounded)
-                            .lineLimit(2)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .foregroundStyle(Color.white)
-                    .background(Color.red.opacity(0.8))
-                    .clipShape(.rect(cornerRadius: 24))
-                    .shadow(color: Color.red, radius: 30, x: 0, y: 0)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5)),
-                        removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.5))
-                    ))
-                    .zIndex(1)
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                            withAnimation(toastAnimation) {
-                                invitationModel.errorMessage = nil
-                            }
-                        }
-                    }
                 }
             }
             .animation(toastAnimation, value: invitationModel.errorMessage)
@@ -584,18 +532,80 @@ struct MembersSheet: View {
     private func sendInvite() {
         Task {
             isSending = true
-            invitationModel.errorMessage = nil
-            let userExists = await invitationModel.checkUserExists(email: emailToInvite.lowercased())
+            withAnimation {
+                invitationModel.errorMessage = nil
+            }
+            
+            let normalizedEmail = emailToInvite.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let userExists = await invitationModel.checkUserExists(email: normalizedEmail)
+            
             if userExists {
-                await invitationModel.inviteUser(email: emailToInvite, to: house.id!)
-                emailToInvite = ""
-                await invitationModel.fetchHouseDetails(for: house.id!)
+                do {
+                    await invitationModel.inviteUser(email: normalizedEmail, to: house.id!)
+                    
+                    // If inviteUser was successful but we still have an error message (from backend handling)
+                    if let error = invitationModel.errorMessage {
+                        withAnimation(toastAnimation) {
+                            invitationModel.errorMessage = error
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                            withAnimation { invitationModel.errorMessage = nil }
+                        }
+                    } else {
+                        emailToInvite = ""
+                        await invitationModel.fetchHouseDetails(for: house.id!)
+                    }
+                }
             } else {
                 withAnimation(toastAnimation) {
                     invitationModel.errorMessage = "User not found. They must sign up first."
                 }
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                    withAnimation {
+                        invitationModel.errorMessage = nil
+                    }
+                }
             }
             isSending = false
+        }
+    }
+
+    @ViewBuilder
+    private func pendingInviteRow(_ invite: Invitation) -> some View {
+        HStack {
+            Image(systemName: "questionmark.circle.fill")
+                .font(.title3)
+                .foregroundColor(.orange)
+                .shadow(color: .orange.opacity(0.45), radius: 6, x: 0, y: 0)
+                .frame(width: 32)
+
+            Text(invite.email)
+                .foregroundColor(.primary)
+
+            Spacer()
+
+            Button {} label: {
+                Text("Pending")
+                    .fontDesign(.rounded)
+            }
+            .buttonStyle(.glassProminent)
+            .foregroundStyle(Color.orange)
+            .tint(Color.orange.opacity(0.15))
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if isCurrentUserOwner {
+                Button(role: .destructive) {
+                    Task {
+                        if let id = invite.id {
+                            await invitationModel.deleteInvite(inviteId: id)
+                            await invitationModel.fetchHouseDetails(for: house.id!)
+                        }
+                    }
+                } label: {
+                    Label("Cancel", systemImage: "xmark.circle")
+                }
+            }
         }
     }
 

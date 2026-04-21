@@ -164,7 +164,7 @@ class UserService:
         invite_id = self.db.insert_invitation(new_invite)
         if invite_id:
             return json.dumps({"status": "success", "id": invite_id, "message": "Invitation Added"})
-        raise cherrypy.HTTPError(409, "The Invitation already exists")
+        raise cherrypy.HTTPError(409, "This user is already a member or has an active invitation.")
 
     def _post_add_house_member(self):
         """Add a new house member to the catalog."""

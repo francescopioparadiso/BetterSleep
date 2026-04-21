@@ -111,7 +111,7 @@ enum SensorType: String, Codable, CaseIterable, Hashable {
         case .ambient_temp: return String(format: "%.1f°C", value)
         case .humidity, .light: return String(format: "%.0f%%", value)
         case .heart_rate: return String(format: "%.0f bpm", value)
-        case .vibration: return String(format: "%.1f", value)
+        case .vibration: return value >= 0.05 ? "Detected" : "Undetected"
         case .presence: return value >= 0.5 ? "Occupied" : "Empty"
         }
     }
@@ -163,7 +163,7 @@ struct Sensor: Codable, Identifiable, Hashable {
 // MARK: - SenML Models (from TimeSeries DB)
 struct SenMLEvent: Codable, Hashable {
     var n: String   // name / measurement type
-    var u: String   // unit
+    var u: String?  // unit (optional, can be null)
     var t: Double   // timestamp (unix)
     var v: Double   // value
 }

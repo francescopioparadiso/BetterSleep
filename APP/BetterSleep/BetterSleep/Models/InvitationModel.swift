@@ -53,8 +53,27 @@ class InvitationModel: ObservableObject {
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try JSONSerialization.data(withJSONObject: ["house_id": houseId, "email": email, "status": 0])
-            _ = try await URLSession.shared.data(for: req)
-        } catch { print("Error sending invite: \(error)") }
+            
+            let (data, response) = try await URLSession.shared.data(for: req)
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 && httpResponse.statusCode != 201 {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if let message = json["error"] as? String {
+                        self.errorMessage = message
+                    } else if let message = json["message"] as? String {
+                        self.errorMessage = message
+                    } else {
+                        self.errorMessage = "Failed to send invitation."
+                    }
+                } else {
+                    self.errorMessage = "Failed to send invitation."
+                }
+            } else {
+                self.errorMessage = nil
+            }
+        } catch { 
+            print("Error sending invite: \(error)")
+            self.errorMessage = "Network error occurred."
+        }
     }
     
     func checkUserExists(email: String) async -> Bool {
