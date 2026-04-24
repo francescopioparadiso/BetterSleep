@@ -29,18 +29,10 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		2C9B52862F4F0D2200C7053C /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Frameworks;
-			sourceTree = "<group>";
-		};
 		2CB7BE492F4DBFCE0065BE27 = {
 			isa = PBXGroup;
 			children = (
 				2CB7BE542F4DBFCE0065BE27 /* BetterSleep */,
-				2C9B52862F4F0D2200C7053C /* Frameworks */,
 				2CB7BE532F4DBFCE0065BE27 /* Products */,
 			);
 			sourceTree = "<group>";

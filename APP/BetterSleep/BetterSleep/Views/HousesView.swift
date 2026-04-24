@@ -208,6 +208,7 @@ struct HouseView: View {
                                     if activeRoomsByHouse[house.id ?? 0] == true {
                                         Image(systemName: "star.fill")
                                             .font(.title)
+                                            .symbolColorRenderingMode(.gradient)
                                             .foregroundColor(.yellow)
                                             .padding(6)
                                             .shadow(color: .yellow, radius: 10, x: 0, y: 0)

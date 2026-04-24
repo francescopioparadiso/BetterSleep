@@ -296,6 +296,8 @@ struct ChartsView: View {
                     Text(vm.sleepQualityLabel)
                         .font(.subheadline).fontWeight(.semibold).fontDesign(.rounded)
                         .foregroundStyle(vm.sleepQualityColor)
+                        .contentTransition(.numericText(value: vm.sleepScore))
+                        .animation(.snappy, value: vm.sleepScore)
                     Text("Sleep Score")
                         .font(.caption).fontWeight(.semibold).fontDesign(.rounded)
                         .foregroundStyle(Color.secondary)

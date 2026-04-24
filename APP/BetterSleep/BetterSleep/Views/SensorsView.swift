@@ -49,8 +49,10 @@ struct SensorsView: View {
                                 HStack(spacing: 14) {
                                     Image(systemName: sType.icon)
                                         .font(.title2)
+                                        .symbolColorRenderingMode(.gradient)
                                         .foregroundColor(sType.color)
                                         .frame(width: 36)
+                                        .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
 
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(sensor.name)
@@ -72,7 +74,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "moon.stars.fill")
                                                 .foregroundColor(.indigo)
+                                                .symbolColorRenderingMode(.gradient)
                                                 .shadow(color: .indigo, radius: 10, x: 0, y: 0)
+                                                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
 
                                             Text("Night: \(room.temperature_night ?? 18)°C")
                                                 .font(.subheadline)
@@ -91,7 +95,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "sun.max.fill")
                                                 .foregroundColor(.orange)
+                                                .symbolColorRenderingMode(.gradient)
                                                 .shadow(color: .orange, radius: 10, x: 0, y: 0)
+                                                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
                                             
                                             Text("Morning: \(room.temperature_morning ?? 22)°C")
                                                 .font(.subheadline)
@@ -116,7 +122,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "moon.stars.fill")
                                                 .foregroundColor(.indigo)
+                                                .symbolColorRenderingMode(.gradient)
                                                 .shadow(color: .indigo, radius: 10, x: 0, y: 0)
+                                                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
                                             Text("Night: \(room.light_night ?? 0)%")
                                                 .font(.subheadline)
                                                 .fontWeight(.bold)
@@ -134,7 +142,9 @@ struct SensorsView: View {
                                         HStack {
                                             Image(systemName: "sun.max.fill")
                                                 .foregroundColor(.orange)
+                                                .symbolColorRenderingMode(.gradient)
                                                 .shadow(color: .orange, radius: 10, x: 0, y: 0)
+                                                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
                                             Text("Morning: \(room.light_morning ?? 100)%")
                                                 .font(.subheadline)
                                                 .fontWeight(.bold)
@@ -170,7 +180,7 @@ struct SensorsView: View {
         ContentUnavailableView(
             "No Sensors",
             systemImage: "sensor",
-            description: Text("Sensors are created automatically when a room is added.")
+            description: Text("Sensors are created automatically when a night of sleep data is recorded. Make sure your sleep tracking devices are properly connected and have recorded data for this room.")
         )
     }
 

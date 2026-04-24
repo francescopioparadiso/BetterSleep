@@ -18,7 +18,7 @@ struct ProfileView: View {
                                 Image(systemName: "person.crop.circle.fill")
                                     .font(.system(size: 80))
                                     .foregroundColor(.blue)
-                                    .shadow(color: .blue, radius: 12, x: 0, y: 0)
+                                    .shadow(color: .blue, radius: 20, x: 0, y: 0)
                                     .padding(.top, 48)
                                 
                                 // Display the email, falling back to "Account Settings" if empty
@@ -38,16 +38,20 @@ struct ProfileView: View {
                             .fontDesign(.rounded)) {
                             HStack {
                                 Image(systemName: "moon.zzz.fill")
+                                    .font(.title)
+                                    .frame(width: 40)
                                     .foregroundColor(.indigo)
-                                    .frame(width: 30)
+                                    .shadow(color: .indigo.opacity(0.5), radius: 10, x: 0, y: 0)
                                 DatePicker("Bedtime", selection: $viewModel.bedtime, displayedComponents: .hourAndMinute)
                             }
                             .padding(.vertical, 6)
                             
                             HStack {
                                 Image(systemName: "sun.max.fill")
+                                    .font(.title)
+                                    .frame(width: 40)
                                     .foregroundColor(.orange)
-                                    .frame(width: 30)
+                                    .shadow(color: .orange.opacity(0.5), radius: 10, x: 0, y: 0)
                                 DatePicker("Wake Up", selection: $viewModel.wakeTime, displayedComponents: .hourAndMinute)
                             }
                             .padding(.vertical, 6)

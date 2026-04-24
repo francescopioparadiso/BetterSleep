@@ -318,12 +318,10 @@ class UserService:
         raise cherrypy.HTTPError(404, "Room not found")
 
     def _put_assign_room(self):
-        """Assign the current user to a room, unassigning them from any other room in the same house."""
+        """Assign the current user to a room."""
         body = load_json_body()
         require_fields(body, ['room_id', 'user_id', 'house_id'])
 
-        # First unassign user from all rooms in this house
-        self.db.unassign_user_from_house_rooms(body['user_id'], body['house_id'])
         # Then assign to the requested room
         success = self.db.assign_room(body['room_id'], body['user_id'])
         if success:

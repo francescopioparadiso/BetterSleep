@@ -79,8 +79,8 @@ struct RoomsView: View {
         invitationModel.currentHouseInvites.filter { $0.status == 0 }
     }
 
-    private var myRoom: Room? {
-        roomModel.rooms.first { $0.user_id == currentUserId }
+    private var myRooms: [Room] {
+        roomModel.rooms.filter { $0.user_id == currentUserId }
     }
 
     private var availableRooms: [Room] {
@@ -93,18 +93,16 @@ struct RoomsView: View {
     
     var body: some View {
         List {
-            // MARK: - My Room
-            Section(header: Text("My Room")) {
-                    if let room = myRoom {
-                        myRoomRow(room)
-                    } else {
+            // MARK: - My Rooms
+            Section(header: Text("My Rooms")) {
+                    if myRooms.isEmpty {
                         HStack {
                             Spacer()
                             VStack(spacing: 8) {
                                 Image(systemName: "person.crop.circle.badge.questionmark")
                                     .font(.largeTitle)
                                     .foregroundStyle(.secondary)
-                                Text("No room assigned")
+                                Text("No rooms assigned")
                                     .font(.subheadline)
                                     .fontDesign(.rounded)
                                     .foregroundStyle(.secondary)
@@ -116,6 +114,10 @@ struct RoomsView: View {
                             }
                             .padding(.vertical, 20)
                             Spacer()
+                        }
+                    } else {
+                        ForEach(myRooms) { room in
+                            myRoomRow(room)
                         }
                     }
                 }
@@ -218,22 +220,13 @@ struct RoomsView: View {
     // MARK: - Room Row Helpers
     private func roomContent(_ room: Room) -> some View {
         HStack(spacing: 14) {
-            if room.active {
-                Image(systemName: "star.fill")
-                    .font(.title)
-                    .padding(6)
-                    .foregroundColor(.yellow)
-                    .shadow(color: .yellow, radius: 10, x: 0, y: 0)
-                    .frame(width: 40)
-                    .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
-            } else {
-                Image(systemName: iconForRoom(room.name))
-                    .font(.title)
-                    .foregroundColor(room.user_id == nil ? Color.green : Color.red)
-                    .shadow(color: room.user_id == nil ? Color.green.opacity(0.65) : Color.red.opacity(0.65), radius: 10, x: 0, y: 0)
-                    .frame(width: 40)
-                    .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
-            }
+            Image(systemName: room.active ? "star.fill" : iconForRoom(room.name))
+                .font(.title)
+                .symbolColorRenderingMode(.gradient)
+                .foregroundColor(room.active ? .yellow : (room.user_id == nil ? Color.green : Color.red))
+                .shadow(color: room.active ? .yellow : (room.user_id == nil ? Color.green.opacity(0.65) : Color.red.opacity(0.65)), radius: 10, x: 0, y: 0)
+                .frame(width: 40)
+                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer)))
             
             VStack(alignment: .leading, spacing: 3) {
                 Text(room.name)
@@ -264,7 +257,20 @@ struct RoomsView: View {
             NavigationLink(destination: SensorsView(house: house, room: $roomModel.rooms[index], roomModel: roomModel)) {
                 roomContent(room)
             }
-            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                Button {
+                    Task {
+                        guard let roomId = room.id, let houseId = house.id else { return }
+                        if room.active {
+                            await roomModel.deactivateRoom(roomId: roomId, houseId: houseId)
+                        }
+                        await roomModel.unassignRoom(roomId: roomId, houseId: houseId)
+                    }
+                } label: {
+                    Label("Unassign", systemImage: "person.crop.circle.badge.minus")
+                }
+                .tint(.orange)
+
                 Button {
                     Task {
                         guard let roomId = room.id, let houseId = house.id else { return }
@@ -278,17 +284,6 @@ struct RoomsView: View {
                     Label(room.active ? "Deactivate" : "Make Active", systemImage: room.active ? "star.slash.fill" : "star.fill")
                 }
                 .tint(room.active ? .gray : .yellow)
-            }
-            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                Button {
-                    Task {
-                        guard let roomId = room.id, let houseId = house.id else { return }
-                        await roomModel.unassignRoom(roomId: roomId, houseId: houseId)
-                    }
-                } label: {
-                    Label("Unassign", systemImage: "person.crop.circle.badge.minus")
-                }
-                .tint(.orange)
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) {
@@ -479,6 +474,7 @@ struct MembersSheet: View {
                         HStack {
                             Image(systemName: "arrowshape.turn.up.right.fill")
                                 .font(.title2)
+                                .symbolColorRenderingMode(.gradient)
                                 .foregroundColor(.blue)
                                 .shadow(color: .blue.opacity(0.45), radius: 6, x: 0, y: 0)
                                 .frame(width: 32)
@@ -576,6 +572,7 @@ struct MembersSheet: View {
         HStack {
             Image(systemName: "questionmark.circle.fill")
                 .font(.title3)
+                .symbolColorRenderingMode(.gradient)
                 .foregroundColor(.orange)
                 .shadow(color: .orange.opacity(0.45), radius: 6, x: 0, y: 0)
                 .frame(width: 32)
@@ -603,7 +600,7 @@ struct MembersSheet: View {
                         }
                     }
                 } label: {
-                    Label("Cancel", systemImage: "xmark.circle")
+                    Label("Cancel", systemImage: "xmark")
                 }
             }
         }
@@ -614,6 +611,7 @@ struct MembersSheet: View {
         HStack {
             Image(systemName: member.role == 0 ? "star.fill" : "person.fill")
                 .font(.title2)
+                .symbolColorRenderingMode(.gradient)
                 .foregroundColor(member.role == 0 ? .yellow : .blue)
                 .shadow(color: member.role == 0 ? Color.yellow.opacity(0.45) : Color.blue.opacity(0.45), radius: 6, x: 0, y: 0)
                 .frame(width: 32)

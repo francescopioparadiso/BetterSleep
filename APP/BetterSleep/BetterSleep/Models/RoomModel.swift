@@ -121,6 +121,7 @@ class RoomModel: ObservableObject {
             ])
             _ = try await URLSession.shared.data(for: req)
             await fetchRooms(for: houseId)
+            await fetchActiveRoom(for: userId)
         } catch { print("Error unassigning room: \(error)") }
     }
 
@@ -136,6 +137,7 @@ class RoomModel: ObservableObject {
             ])
             _ = try await URLSession.shared.data(for: req)
             await fetchRooms(for: houseId)
+            await fetchActiveRoom(for: userId)
         } catch { print("Error setting active room: \(error)") }
     }
 
@@ -152,6 +154,7 @@ class RoomModel: ObservableObject {
             ])
             _ = try await URLSession.shared.data(for: req)
             await fetchRooms(for: houseId)
+            await fetchActiveRoom(for: userId)
         } catch { print("Error deactivating room: \(error)") }
     }
 
