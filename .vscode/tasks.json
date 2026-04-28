@@ -2,116 +2,17 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Database",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "Catalog",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps catalog",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "User Service",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps user-service",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "TimeSeries",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps time-series",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "BedAnalytics",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps bed-analytics",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "SleepCycleManager",
-      "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build --no-deps sleep-cycle-manager",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "presentation": {
-        "group": "servers",
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
       "label": "🚀 Start All Servers",
-      "dependsOn": [
-        "Database",
-        "Catalog",
-        "User Service",
-        "TimeSeries",
-        "BedAnalytics",
-        "SleepCycleManager"
-      ],
-      "dependsOrder": "parallel",
-      "problemMatcher": []
-    },
-    {
-      "label": "🧹 Clean DB (Previous Test Cycle)",
       "type": "shell",
-      "command": "python3 clean_db.py",
+      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker catalog user-service time-series bed-analytics sleep-cycle-manager",
       "options": {
-        "cwd": "${workspaceFolder}/Simulation",
-        "env": {
-          "PYTHONPATH": "${workspaceFolder}"
-        }
+        "cwd": "${workspaceFolder}"
       },
       "presentation": {
-        "group": "test",
+        "group": "servers",
         "panel": "dedicated"
       },
+      "isBackground": true,
       "problemMatcher": []
     },
     {
@@ -131,7 +32,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Clean night simulation",
+      "label": "🧹 Clean night simulation (mongo)",
       "type": "shell",
       "command": "python3",
       "args": [
@@ -152,9 +53,9 @@
       "problemMatcher": []
     },
     {
-      "label": "🧪 Backfill Sensor Data",
+      "label": "🧹 Clean database (postgres)",
       "type": "shell",
-      "command": "python3 sensor_simulation.py",
+      "command": "python3 clean_db.py",
       "options": {
         "cwd": "${workspaceFolder}/Simulation",
         "env": {
@@ -166,23 +67,6 @@
         "panel": "dedicated"
       },
       "problemMatcher": []
-    },
-    {
-      "label": "Simulate Sensors Backfill",
-      "type": "shell",
-      "command": "python3",
-      "args": [
-        "simulation/sensor_simulation.py"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      }
     }
   ],
   "inputs": [

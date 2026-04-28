@@ -19,7 +19,6 @@ class BaseIoTComponent:
         self.MQTT_info = config.get("MQTT", {})
         self.timestamp_provider = time.time
 
-        # 1. Identify Device Type
         if "sensorID" in self.service_info:
             self.id_key = "sensorID"
             self.type_device = 1
@@ -50,7 +49,6 @@ class BaseIoTComponent:
         self.init_mqtt_client()
 
     def _setup_topics(self):
-        """Resolves placeholders in topics from config or generates defaults."""
         mapping = {
             "houseID": str(self.service_info.get("houseID", "")),
             "roomID": str(self.service_info.get("roomID", "")),
@@ -59,28 +57,22 @@ class BaseIoTComponent:
             "type": str(self.service_info.get("type", ""))
         }
 
-        # Handle topic_publish
         tp = self.MQTT_info.get("topic_publish")
         if tp:
             self.topic_publish = tp.format(**mapping)
         else:
-            # Fallback to your base pattern
             self.topic_publish = f"House/{mapping['houseID']}/Bedroom/{mapping['roomID']}/{self.category}/{self.comp_id}/{mapping['type']}/data"
 
-        # Handle topic_subscribe (from config)
         ts = self.MQTT_info.get("topic_subscribe")
         logger.debug("topic_subscribe from config: %s", ts)
         if ts:
-            # Convert single string to list for consistency
             ts_list = ts if isinstance(ts, list) else [ts]
-            # Resolve placeholders for every topic in the list
             self.topic_subscribe_list = [t.format(**mapping) for t in ts_list]
         else:
             self.topic_subscribe_list = []
 
     def init_mqtt_client(self):
         try:
-            # Fallback generator for clientID
             def generate_client_id():
                 return f"{self.category}_{self.comp_id}_{random.randint(0, 1000)}"
 
@@ -122,7 +114,6 @@ class BaseIoTComponent:
             except ValueError:
                 pass
 
-        # Use provided name, fallback to sensor_type_long for sensors, or use component type
         measurement_name = name or getattr(self, 'sensor_type_long', self.service_info.get('type', 'Value').title())
 
         payload = {
@@ -162,5 +153,4 @@ class Actuator(BaseIoTComponent):
             logger.error(f"[{self.comp_id}] Invalid JSON: {payload}")
 
     def on_command(self, topic, data):
-        # To be overridden
         pass

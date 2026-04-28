@@ -13,11 +13,9 @@ class MyMQTT:
         self.port = port
         self.notifier = notifier
         self.clientID = clientID
-        self._topics = set()  # Track all subscribed topics
+        self._topics = set()
         self._isSubscriber = False
-        # create an instance of paho.mqtt.client
         self._paho_mqtt = PahoMQTT.Client(clientID, True)
-        # register the callback
         self._paho_mqtt.on_connect = self.myOnConnect
         self._paho_mqtt.on_message = self.myOnMessageReceived
 
@@ -25,32 +23,18 @@ class MyMQTT:
         logger.info("Connected to %s with result code: %d", self.broker, rc)
 
     def myOnMessageReceived(self, paho_mqtt, userdata, msg):
-        # A new message is received
         self.notifier.notify(msg.topic, msg.payload)
 
     def myPublish(self, topic, msg):
-        # publish a message with a certain topic
         self._paho_mqtt.publish(topic, json.dumps(msg), 2)
 
-    # Human-readable alias kept for consistency in newer code.
-    def publish(self, topic, msg):
-        self.myPublish(topic, msg)
-
     def mySubscribe(self, topic):
-
-        # subscribe for a topic
         self._paho_mqtt.subscribe(topic, 2)
-        # just to remember that it works also as a subscriber
         self._isSubscriber = True
         self._topics.add(topic)
         logger.info("Subscribed to %s", topic)
 
-    # Human-readable alias kept for consistency in newer code.
-    def subscribe(self, topic):
-        self.mySubscribe(topic)
-
     def start(self):
-        # manage connection to broker
         self._paho_mqtt.connect(self.broker, self.port)
         self._paho_mqtt.loop_start()
 

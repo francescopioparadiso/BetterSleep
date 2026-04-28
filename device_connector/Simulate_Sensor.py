@@ -126,7 +126,6 @@ class LightActuator(Actuator):
                 next_value = int(value)
                 if next_value != self.value:
                     self.value = next_value
-                    # Publish state change
                     self.publish_data(self.value, unit="%", name="LightLevel")
 
             logger.info(f"[LIGHT ACTUATOR] Received command: {action} with value: {value}")
@@ -150,7 +149,6 @@ class HeaterActuator(Actuator):
             else:
                 self.state = "OFF"
 
-            # Publish state only if it changed
             if self.state != self.previous_state:
                 self.previous_state = self.state
                 self.publish_data(1 if self.state == "ON" else 0, name="HeaterState")
@@ -176,7 +174,6 @@ class FanActuator(Actuator):
             else:
                 self.state = "OFF"
 
-            # Publish state only if it changed
             if self.state != self.previous_state:
                 self.previous_state = self.state
                 self.publish_data(1 if self.state == "ON" else 0, name="FanState")
@@ -184,4 +181,3 @@ class FanActuator(Actuator):
             logger.info(f"[FAN ACTUATOR] Received command: {action}, Fan state: {self.state}")
         except Exception as e:
             logger.error(f"[FAN ACTUATOR] Error processing command on topic '{topic}': {e}")
-
