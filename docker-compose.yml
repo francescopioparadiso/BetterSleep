@@ -16,8 +16,6 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./Database/init_catalog.sql:/docker-entrypoint-initdb.d/init_catalog.sql
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
 
   timeseries-mongo:
     image: mongo:latest
@@ -31,8 +29,6 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
 
   mqtt-broker:
     image: eclipse-mosquitto:latest
