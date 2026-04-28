@@ -12,7 +12,7 @@ from common.common import json_error_page, mqtt_to_regex, init_mqtt_helper
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s %(name)s %(levelname)s %(message)s',
 )
 logger = logging.getLogger(__name__)
 
@@ -145,21 +145,30 @@ class BedAnalytics:
 
     def _process_finish_sleep(self, userid, bedroomid, timestamp):
         logger.info(f"Recorded FINISH_SLEEP for user {userid} at {timestamp}")
-        report = self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
-        if report:
-            report['user_id'] = userid
-            try:
-                dt = datetime.fromtimestamp(timestamp)
-                report['date'] = dt.strftime("%Y-%m-%d")
-            except Exception as e:
-                logger.error(f"Error parsing timestamp {timestamp}: {e}")
-                report['date'] = datetime.now().strftime("%Y-%m-%d")
-            
-            topic = f"BedAnalitics/userid/{userid}/SleepReport"
-            self.mqtt_client.myPublish(topic, report)
-            logger.info(f"Published analytics report for user {userid} to topic {topic}")
-        else:
-            logger.error(f"Analytics failed for user {userid} - no report generated")
+        logger.debug(f"Retrieving cached sleep time for user {userid}")
+
+        try:
+            report = self.startAnalytics(self.cache_sleep_time[userid], bedroomid, userid)
+            if report:
+                report['user_id'] = userid
+                try:
+                    dt = datetime.fromtimestamp(timestamp)
+                    report['date'] = dt.strftime("%Y-%m-%d")
+                    logger.debug(f"Report date set to {report['date']}")
+                except Exception as e:
+                    logger.error(f"Error parsing timestamp {timestamp}: {e}")
+                    report['date'] = datetime.now().strftime("%Y-%m-%d")
+
+                topic = f"BedAnalitics/userid/{userid}/SleepReport"
+                logger.debug(f"Publishing sleep report to topic: {topic}")
+                self.mqtt_client.myPublish(topic, report)
+                logger.info(f"✓ Published analytics report for user {userid} to topic {topic}")
+            else:
+                logger.error(f"Analytics failed for user {userid} - no report generated")
+        except KeyError:
+            logger.error(f"ERROR: No START_SLEEP found for user {userid}. Cannot process analytics.")
+        except Exception as e:
+            logger.error(f"Exception in _process_finish_sleep: {e}", exc_info=True)
 
     def notify(self, topic, payload):
         if not "SleepReport" in topic:
@@ -170,23 +179,30 @@ class BedAnalytics:
                 bedroomid = topic.split("/")[4]
                 timestamp = message_received.get("timestamp")
 
+                logger.debug(f"MQTT Message received - Topic: {topic}, Action: {action}, UserID: {userid}")
+
                 if action == "START_SLEEP":
                     self.cache_sleep_time[userid] = {"start": timestamp, "end": None}
-                    logger.info(f"Recorded START_SLEEP for user {userid} at {timestamp}")
+                    logger.info(f"✓ START_SLEEP recorded for user {userid} at timestamp {timestamp}")
 
                 elif action == "FINISH_SLEEP":
                     if userid in self.cache_sleep_time and self.cache_sleep_time[userid]["start"] is not None:
                         self.cache_sleep_time[userid]["end"] = timestamp
+                        logger.info(f"✓ FINISH_SLEEP recorded for user {userid} at timestamp {timestamp}")
+                        logger.debug(f"Sleep duration: {self.cache_sleep_time[userid]['start']} → {timestamp}")
                         # we start a new thread to process the analytics so we don't block if we receive multiple FINISH_SLEEP messages in a short time
+                        logger.info(f"Starting analytics thread for user {userid}...")
                         threading.Thread(target=self._process_finish_sleep, args=(userid, bedroomid, timestamp)).start()
                     else:
                         logger.warning(
                             f"Received FINISH_SLEEP for user {userid} without a corresponding START_SLEEP"
                         )
+                else:
+                    logger.warning(f"Unknown action received: {action} for user {userid}")
             except json.JSONDecodeError:
                 logger.error(f"Invalid JSON payload received on topic {topic}")
             except Exception as e:
-                logger.error(f"Error processing payload on topic {topic}: {e}")
+                logger.error(f"Error processing payload on topic {topic}: {e}", exc_info=True)
 
     def get_data_from_timeseries(self, bedroomid, start_time, end_time):
         logger.info(f"Retrieving data for bedroom {bedroomid} from {start_time} to {end_time}")
@@ -211,7 +227,7 @@ class BedAnalytics:
             logger.error("Can not start analytics - missing start or end time")
             return None
 
-        logger.info(f"Starting analytics for sleep period: {start_time} to {end_time}")
+        logger.info(f"🔍 Starting analytics for sleep period: {start_time} to {end_time} (Bedroom: {bedroomid})")
         raw_data = self.get_data_from_timeseries(bedroomid, start_time, end_time)
 
         if not raw_data:
@@ -224,7 +240,7 @@ class BedAnalytics:
             logger.error(f"Analytics error for bedroom {bedroomid}: {report['error']}")
             return None
 
-        logger.info(f"Analytics result for user {userid} → Sleep Score: {report['sleep_score']} | "
+        logger.info(f"✓ Analytics completed for user {userid} → Sleep Score: {report['sleep_score']} | "
                     f"Quality: {report['quality']} | Sleep Hours: {report['sleep_hours']} | "
                     f"Wake-ups: {report['wake_ups']} | Resting HR: {report['resting_hr']} bpm | "
                     f"HRV (RMSSD): {report['hrv_rmssd_ms']} ms | Stage %: {report['stage_percent']} ")
@@ -310,25 +326,50 @@ class BedAnalytics:
         vibration_list = sensors.get("vibration",    [])
         presence_list  = sensors.get("presence",     [])
         hr_list        = sensors.get("heart_rate",   [])
+
+        self.logger.info(f"Sensor data parsed - HR: {len(hr_list)} readings, "
+                        f"Presence: {len(presence_list)}, Temp: {len(temp_list)}, "
+                        f"Vibration: {len(vibration_list)}")
+
         if not hr_list:
             return {"error": "No Heart Rate data found"}
         if not presence_list:
             return {"error": "No Presence data found — cannot determine time in bed"}
+
         rhr, rem_threshold = _compute_hr_thresholds(hr_list)
+        self.logger.info(f"HR thresholds calculated - Resting HR: {rhr:.1f} bpm, REM threshold: {rem_threshold:.1f} bpm")
+
         classified = self._classify_sleep_stages(
             presence_list, hr_list, vibration_list, rhr, rem_threshold
         )
-        print(classified)
+        self.logger.debug(f"Sleep stages classified - Total readings: {len(classified)}")
+
         counts, stage_percent = _compute_stage_stats(classified)
+        self.logger.info(f"Stage distribution - Deep: {stage_percent['DEEP']}%, "
+                        f"Light: {stage_percent['LIGHT']}%, REM: {stage_percent['REM']}%, "
+                        f"Awake: {stage_percent['AWAKE']}%")
+
         wake_ups, sleep_hours = _count_wakeups(classified)
+        self.logger.info(f"Sleep metrics - Total sleep: {sleep_hours}h, Wake-ups: {wake_ups}")
+
         hrv_rmssd = _compute_hrv(hr_list)
+        self.logger.info(f"HRV (RMSSD) calculated: {hrv_rmssd} ms")
+
+        # Initialize avg_temp to None first
         avg_temp = None
         if temp_list:
             avg_temp = round(
                 sum(float(event.get("v", 0.0)) for event in temp_list) / len(temp_list),
                 2
             )
+            self.logger.info(f"Average room temperature: {avg_temp}°C")
+        else:
+            self.logger.warning("No temperature data available for analysis")
+
+        self.logger.debug(f"Calling _get_sleep_score with avg_temp={avg_temp}")
         score, quality = self._get_sleep_score(sleep_hours, wake_ups, stage_percent, avg_temp)
+        self.logger.info(f"Sleep score calculated: {score}/100 ({quality})")
+
         return {
             "sleep_score":   score,
             "quality":       quality,

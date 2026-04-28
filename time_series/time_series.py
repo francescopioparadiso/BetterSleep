@@ -8,7 +8,11 @@ from common import catalog_client
 from common.common import json_error_page, mqtt_to_regex, init_mqtt_helper
 from mongo_db import MongoDB
 
-# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(name)s %(levelname)s %(message)s',
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,6 +92,7 @@ class TimeSeries:
         if "sensor" in topic:
             if validate_senml(message_received):
                 logger.debug(f"Received valid SenML message: {message_received}")
+                logger.info(f"Saving measurement data for sensor {message_received.get('bn')}")
                 self.db.insert_measurements_data("measurements", message_received)
             else:
                 logger.warning(f"Received invalid SenML message: {message_received}")

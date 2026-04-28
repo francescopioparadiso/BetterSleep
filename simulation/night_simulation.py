@@ -617,7 +617,7 @@ def delete_previous_simulation_data(config, userid, room_id, date_str, start_tim
         print(f"[!] ERROR: Something crashed while calling the delete endpoint: {e}\n")
 
 
-def run_simulation(duration_seconds=60, target_date=None, selected_user_ids=None):
+def run_simulation(duration_seconds=60, target_date=None, selected_user_ids=[1]):
     config        = load_test_config()
     user_contexts = build_user_contexts(config, selected_user_ids=selected_user_ids)
     normalized_target_date = normalize_target_date(target_date)

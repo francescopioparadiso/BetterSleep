@@ -6,6 +6,10 @@ import time
 from common.common import json_error_page, load_json_body, init_mqtt_helper
 from mongo_db import MongoDBAdapter
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(name)s %(levelname)s %(message)s',
+)
 
 
 logger = logging.getLogger(__name__)

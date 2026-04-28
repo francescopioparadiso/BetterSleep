@@ -6,6 +6,12 @@ import cherrypy
 import requests
 from postgres_db import PostgresDB
 from common import catalog_client
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(name)s %(levelname)s %(message)s',
+)
+
 logger = logging.getLogger(__name__)
 
 class UserService:

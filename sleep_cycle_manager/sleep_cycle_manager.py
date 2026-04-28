@@ -49,6 +49,7 @@ class SleepCycleManager:
     def __init__(self, conf, logger=None):
         self.logger = logger or logging.getLogger(__name__)
         self._lock  = threading.RLock()
+        self.mqtt_client = None
 
         self.catalog_client = CatalogClient(
             conf['catalogURL'], conf['serviceInfo'], conf.get('removeInterval', 10)
@@ -109,7 +110,9 @@ class SleepCycleManager:
         return endpoint
 
     def startClient(self): self.mqtt_client.start()
-    def stopClient(self):  self.mqtt_client.stop()
+    def stopClient(self):
+        if self.mqtt_client:
+            self.mqtt_client.stop()
 
     def publish(self, message, command_topic=None):
         try:
@@ -167,16 +170,17 @@ class SleepCycleManager:
                 return
 
             self.user_cache.touch_user(userid)
-            sensor_timestamp = msg['e'][0].get('t') if msg.get('e') else None
+            sensor_timestamp_raw = msg['e'][0].get('t') if msg.get('e') else None
+            sensor_timestamp = float(sensor_timestamp_raw) if sensor_timestamp_raw is not None else None
             if sensor_timestamp is not None:
-                entry.sensor_ts = int(float(sensor_timestamp))
+                entry.sensor_ts = int(sensor_timestamp)
 
             phase, live_tgt, config = entry.phase, entry.live_targets, entry.config
             actuators = self.user_cache.list_room_actuator_types(room_id)
 
         if sensor_timestamp is not None:
             try:
-                self.phase_manager.sync_from_sensor_time(float(sensor_timestamp), userid)
+                self.phase_manager.sync_from_sensor_time(sensor_timestamp, userid)
             except Exception as e:
                 self.logger.error(f"Phase sync error: {e}")
 

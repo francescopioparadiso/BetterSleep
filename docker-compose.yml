@@ -94,6 +94,7 @@ services:
     depends_on:
       - mqtt-broker
       - catalog
+      - user-service
     environment:
       TZ: "Europe/Rome"
     volumes:
@@ -129,6 +130,7 @@ services:
     depends_on:
       - mqtt-broker
       - catalog
+      - time-series
     environment:
       TZ: "Europe/Rome"
     volumes:
