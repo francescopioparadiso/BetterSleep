@@ -47,7 +47,6 @@ class PhaseManager:
         except Exception as e:
             self.logger.error(f"PhaseManager sync error (user={userid}): {e}")
 
-
     def _check_user(self, userid):
         now = self._sensor_time_per_user.get(userid)
         if now is None:
@@ -76,9 +75,30 @@ class PhaseManager:
             progress = _get_progress(now_min, wake_up_start, morn_min)
             self._apply_transition(userid, entry, "WAKE_UP", progress)
         elif _is_in_range(now_min, night_min, morn_min):
-            self._apply_static_phase(userid, entry, "SLEEP")
+            # SLEEP phase: only transition if user has been in bed for 30 minutes
+            if self._is_user_in_bed_for_duration(userid, self.manager.SLEEP_DETECT_SEC):
+                self._apply_static_phase(userid, entry, "SLEEP")
+            else:
+                # User is in bed but hasn't met 30-minute requirement, stay in WIND_DOWN
+                progress = _get_progress(now_min, wind_down_start, night_min)
+                self._apply_transition(userid, entry, "WIND_DOWN", progress)
         else:
             self._apply_static_phase(userid, entry, "DAY")
+
+    def _is_user_in_bed_for_duration(self, userid, required_seconds):
+        """Check if user has been in bed for the required duration."""
+        ps = self.manager._presence_state.get(userid, {})
+        last_seen_bed = ps.get("last_seen_bed")
+
+        if last_seen_bed is None:
+            return False
+
+        now = self._sensor_time_per_user.get(userid)
+        if now is None:
+            return False
+
+        time_in_bed = (now - last_seen_bed).total_seconds()
+        return time_in_bed >= required_seconds
 
     def _apply_static_phase(self, userid, entry, phase):
         entry.live_targets.pop("transition_start_light", None)

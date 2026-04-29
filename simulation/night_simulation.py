@@ -470,7 +470,10 @@ def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_s
     temp_sensor.publish_data(round(current_temp, 2), unit="degC", timestamp=sim_ts)
 
     vt = window.sim_start + timedelta(minutes=step)
-    presence_value = 1 if (window.sleep_start <= vt < window.sleep_end) else 0
+    # User is present starting from WIND_DOWN phase (30 minutes before sleep_start)
+    # until the end of sleep window (morning_time)
+    wind_down_start = window.sleep_start - timedelta(minutes=30)
+    presence_value = 1 if (wind_down_start <= vt < window.sleep_end) else 0
     current_phase = (mqtt_states or {}).get("phase")
     if current_phase == "DAY" and presence_value == 1:
         presence_value = 0

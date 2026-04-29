@@ -41,8 +41,8 @@ def _parse_preference_topic(topic):
 class SleepCycleManager:
     exposed = True
 
-    SLEEP_DETECT_SEC   = 1800
-    WAKE_DETECT_SEC    = 300
+    SLEEP_DETECT_SEC   = 1800  # Sleep phase starts only after 30 minutes in bed
+    WAKE_DETECT_SEC    = 300   # Wake up detection after 5 minutes out of bed
     USER_CACHE_TTL_SEC = 7200
     EVICTION_SEC       = 300
 
@@ -310,7 +310,8 @@ class SleepCycleManager:
                 return
 
             ps  = self._presence_state.setdefault(userid, {"last_seen_bed": None, "last_left_bed": None})
-            now = datetime.now()
+            # Use sensor timestamp instead of real time to support simulations
+            now = datetime.fromtimestamp(float(ts)).replace(second=0, microsecond=0)
 
             if present != 1:
                 if ps["last_left_bed"] is None:
@@ -322,6 +323,7 @@ class SleepCycleManager:
                 ps["last_left_bed"] = None
                 if ps["last_seen_bed"] is None:
                     ps["last_seen_bed"] = now
+                # Sleep phase requires the user to remain in bed for at least SLEEP_DETECT_SEC (30 minutes)
                 elif not entry.is_sleeping and (now - ps["last_seen_bed"]).total_seconds() >= self.SLEEP_DETECT_SEC:
                     entry.is_sleeping = True
                     do_start = True
