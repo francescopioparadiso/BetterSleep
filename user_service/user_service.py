@@ -1,38 +1,45 @@
-import os
-from common.common import load_json_body, json_error_page, init_mqtt_helper
 import json
 import logging
+
 import cherrypy
 import requests
-from postgres_db import PostgresDB
+
 from common import catalog_client
+from common.common import init_mqtt_helper, json_error_page, load_json_body
+from postgres_db import PostgresDB
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(name)s %(levelname)s %(message)s',
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 
 logger = logging.getLogger(__name__)
 
+
 class UserService:
     exposed = True
+
     def __init__(self, conf_user_service):
-        self.catalog_url = conf_user_service['catalogURL']
-        self.service_info = conf_user_service['serviceInfo']
-        self.remove_interval = conf_user_service.get('removeInterval', 10)
-        self.db_conf = conf_user_service['Database']
+        self.catalog_url = conf_user_service["catalogURL"]
+        self.service_info = conf_user_service["serviceInfo"]
+        self.remove_interval = conf_user_service.get("removeInterval", 10)
+        self.db_conf = conf_user_service["Database"]
         self.db = PostgresDB(self.db_conf)
-        self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
-        self.MQTT_info = conf_user_service['MQTT']
-        self.mqtt_client_publish=None
-        self.topic_publish=self.MQTT_info.get('topic_publish', [])
+        self.catalog = catalog_client.CatalogClient(
+            self.catalog_url,
+            self.service_info,
+            remove_interval=self.remove_interval,
+        )
+        self.MQTT_info = conf_user_service["MQTT"]
+        self.mqtt_client_publish = None
+        self.topic_publish = self.MQTT_info.get("topic_publish", [])
         self.init_mqtt_client()
 
         try:
             self.catalog.register()
         except Exception as e:
 
-            logger.error(f'Failed to Register with Catalog: {e}')
+            logger.error(f"Failed to Register with Catalog: {e}")
             raise Exception
 
     def init_mqtt_client(self):
@@ -49,15 +56,8 @@ class UserService:
     def startClient(self):
         self.mqtt_client_publish.start()
 
-    def start_client(self):
-        self.startClient()
-
     def stopClient(self):
         self.mqtt_client_publish.stop()
-
-    def stop_client(self):
-        self.stopClient()
-
 
     def publish(self, topic, message):
         if self.mqtt_client_publish:
@@ -68,13 +68,17 @@ class UserService:
     def _publish_cache_preferences(self, user_id, room_id=None):
         """Publish latest user+room preferences so downstream caches can refresh immediately."""
         user_id = str(user_id)
-        active_room = self.db.get_room_info(room_id) if room_id is not None else self.db.get_active_room(user_id)
+        active_room = (
+            self.db.get_room_info(room_id)
+            if room_id is not None
+            else self.db.get_active_room(user_id)
+        )
         if not active_room:
             logger.warning(f"No active room found while publishing cache preferences for user {user_id}")
             return
 
-        room_id = active_room.get('id')
-        house_id = active_room.get('house_id')
+        room_id = active_room.get("id")
+        house_id = active_room.get("house_id")
         if room_id is None or house_id is None:
             logger.warning(f"Missing room/house information for user {user_id}: {active_room}")
             return
@@ -84,9 +88,11 @@ class UserService:
             logger.warning(f"No preferences found for user {user_id}, room {room_id}")
             return
 
-        merged = preferences.get('user_preferences', preferences)
+        merged = preferences.get("user_preferences", preferences)
         user_topic = self.topic_publish[1].replace("{userID}", user_id)
-        room_topic = self.topic_publish[0].replace("{houseID}", str(house_id)).replace("{bedroomID}", str(room_id))
+        room_topic = self.topic_publish[0].replace("{houseID}", str(house_id)).replace(
+            "{bedroomID}", str(room_id)
+        )
 
         user_payload = {
             "user_id": user_id,
@@ -106,18 +112,13 @@ class UserService:
         self.publish(user_topic, user_payload)
         self.publish(room_topic, room_payload)
         logger.info(f"Published cache preference snapshot for user {user_id} room {room_id}")
-
-
-
-    # POST METHOD - Create new resources
     def POST(self, *uri, **params):
-
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
         handlers = {
-            "signup": self._post_signup,   # Changed from addUser to match Swift
-            "login": self._post_login,     # Moved login to POST to match Swift
+            "signup": self._post_signup,
+            "login": self._post_login,
             "addHouse": self._post_add_house,
             "addRoom": self._post_add_room,
             "addInvitation": self._post_add_invitation,
@@ -201,7 +202,6 @@ class UserService:
             })
         raise cherrypy.HTTPError(409, "The Room already exists")
 
-    # PUT METHOD - Update existing resources
     def PUT(self, *uri, **params):
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
@@ -215,7 +215,6 @@ class UserService:
             "setActiveRoom": self._put_set_active_room,
             "updateUserPreferences": self._put_update_user_preferences,
             "updateRoomPreferences": self._put_update_room_preferences,
-
         }
         handler = handlers.get(uri[0])
         if not handler:
@@ -239,14 +238,11 @@ class UserService:
         user_id = updated_preferences['user_id']
         logger.info(f"Updating preferences for user {user_id}: {updated_preferences}")
 
-        # Returns only the changed preferences
         changed_preferences = self.db.update_user_preferences(updated_preferences)
 
         if changed_preferences:
             logger.info(f"Successfully updated preferences for user {user_id}")
 
-            # Publish MQTT message for user cache invalidation
-            # User preferences are global (not tied to a specific room)
             topic = self.topic_publish[1].replace("{userID}", str(user_id))
             message = changed_preferences
 
@@ -267,22 +263,23 @@ class UserService:
         room_id = updated_preferences['room_id']
         logger.info(f"Updating preferences for room {room_id}: {updated_preferences}")
 
-        # Returns only the changed preferences
         changed_preferences = self.db.update_room_preferences(updated_preferences)
 
         if changed_preferences:
             logger.info(f"Successfully updated preferences for room {room_id}")
 
-            # Get the room information for MQTT publishing
             room_info = self.db.get_room_info(room_id)
             if room_info:
                 house_id = room_info['house_id']
                 user_id = room_info.get('user_id')
 
                 if user_id:
-                    # Publish MQTT message for cache invalidation
-                    # Topic: UserService/ChangePreference/House/{houseID}/Bedroom/{bedroomID}/User/{userID}/Preference/
-                    topic = self.topic_publish[0].replace("{houseID}", str(house_id)).replace("{bedroomID}", str(room_id)).replace("{userID}", str(user_id))
+                    topic = (
+                        self.topic_publish[0]
+                        .replace("{houseID}", str(house_id))
+                        .replace("{bedroomID}", str(room_id))
+                        .replace("{userID}", str(user_id))
+                    )
                     message = {
                         **changed_preferences,
                         "user_id": str(user_id),
@@ -328,7 +325,6 @@ class UserService:
         body = load_json_body()
         require_fields(body, ['room_id', 'user_id', 'house_id'])
 
-        # Then assign to the requested room
         success = self.db.assign_room(body['room_id'], body['user_id'])
         if success:
             try:
@@ -355,14 +351,11 @@ class UserService:
 
         room_id = body['room_id']
         user_id = body['user_id']
-        active = body.get('active', True)  # Default to True if not specified
+        active = body.get('active', True)
 
         if active:
             logger.info(f"Setting room {room_id} as active for user {user_id}")
-            # First deactivate all other rooms for this user across all houses
             self.db.deactivate_user_rooms(user_id)
-
-            # Then activate the requested room
             success = self.db.set_room_active(room_id, user_id)
             if success:
                 logger.info(f"Room {room_id} is now active for user {user_id}")
@@ -377,7 +370,6 @@ class UserService:
             self.db.deactivate_user_rooms(user_id)
             return json.dumps({"status": "success", "message": "All rooms deactivated for user"})
 
-    # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
@@ -513,7 +505,6 @@ class UserService:
         if not preferences:
             raise cherrypy.HTTPError(404, "User or room not found")
 
-        # Flatten legacy nested payload shape.
         merged_preferences = preferences.get('user_preferences', preferences)
         return json.dumps({"status": "success", "preferences": merged_preferences}, default=str)
 
@@ -623,16 +614,10 @@ class UserService:
 
         sensors = self._get_latest_sensor_documents(room_id)
         return json.dumps({"status": "success", "sensors": sensors}, default=str)
-    
-    
     def _get_all_active_rooms_with_associated_user(self, params):
         """Get all active rooms with the associated user information."""
         active_rooms = self.db.get_all_active_rooms_with_user()
         return json.dumps({"status": "success", "active_rooms": active_rooms}, default=str)
-
-    # Backward-compatible alias.
-    def _get_all_active_room_associeted_user(self, params):
-        return self._get_all_active_rooms_with_associated_user(params)
 
 
 

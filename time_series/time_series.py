@@ -5,12 +5,12 @@ import re
 import cherrypy
 
 from common import catalog_client
-from common.common import json_error_page, mqtt_to_regex, init_mqtt_helper
+from common.common import init_mqtt_helper, json_error_page, mqtt_to_regex
 from mongo_db import MongoDB
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(name)s %(levelname)s %(message)s',
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 
 logger = logging.getLogger(__name__)
@@ -36,14 +36,9 @@ def validate_senml(new_measurement):
         raise cherrypy.HTTPError(400, "Missing required fields inside 'e'")
     return True
 
-
-# Backward-compatible alias.
-checkSenML = validate_senml
-
-
 def _json_response(data):
-    cherrypy.response.headers['Content-Type'] = 'application/json'
-    return json.dumps(data).encode('utf-8')
+    cherrypy.response.headers["Content-Type"] = "application/json"
+    return json.dumps(data).encode("utf-8")
 
 
 class TimeSeries:
@@ -51,14 +46,20 @@ class TimeSeries:
 
     def __init__(self, conf):
         self.logger = logger
-        self.catalog_url = conf['catalogURL']
-        self.service_info = conf['serviceInfo']
-        self.remove_interval = conf.get('removeInterval', 10)
-        self.catalog = catalog_client.CatalogClient(self.catalog_url, self.service_info, remove_interval=self.remove_interval)
-        self.MQTT_info = conf['MQTT']
+        self.catalog_url = conf["catalogURL"]
+        self.service_info = conf["serviceInfo"]
+        self.remove_interval = conf.get("removeInterval", 10)
+        self.catalog = catalog_client.CatalogClient(
+            self.catalog_url,
+            self.service_info,
+            remove_interval=self.remove_interval,
+        )
+        self.MQTT_info = conf["MQTT"]
         self.mqtt_client = None
-        self.topic_subscribe_raw = self.MQTT_info['topic_subscribe']
-        self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
+        self.topic_subscribe_raw = self.MQTT_info["topic_subscribe"]
+        self.topic_subscribe_regex = [
+            re.compile(mqtt_to_regex(topic)) for topic in self.topic_subscribe_raw
+        ]
 
         try:
             self.db = MongoDB(conf)
@@ -71,7 +72,6 @@ class TimeSeries:
             logger.error(f"Error initializing TimeSeriesDBAdapter: {e}")
             raise
 
-#MQTT
     def init_mqtt_client(self):
         try:
             self.mqtt_client = init_mqtt_helper(self, self.MQTT_info, self.logger)
@@ -98,7 +98,7 @@ class TimeSeries:
                 logger.warning(f"Received invalid SenML message: {message_received}")
         elif "BedAnalitics" in topic or "BedAnalytics" in topic:
             logger.debug(f"Received sleep analytics message: {message_received}")
-            if "user_id" in message_received  :
+            if "user_id" in message_received:
                 self.db.insert_sleep_score(message_received)
                 logger.info(f"Sleep analytics saved for user {message_received.get('user_id')}")
             else:
@@ -107,17 +107,9 @@ class TimeSeries:
     def startClient(self):
         self.mqtt_client.start()
 
-    def start_client(self):
-        self.startClient()
-
     def stopClient(self):
         self.mqtt_client.stop()
 
-    def stop_client(self):
-        self.stopClient()
-
-
-# REST
     def GET(self, *uri, **params):
         """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
         if not uri:
@@ -247,10 +239,7 @@ class TimeSeries:
             "deleted_count": deleted_sleep_analytics + deleted_measurements,
         })
 
-
-
 if __name__ == "__main__":
-    # Standard CherryPy startup sequence
     try:
         with open("conf.json", "r") as f:
             full_conf = json.load(f)
@@ -264,22 +253,27 @@ if __name__ == "__main__":
         logger.error(f"Error reading configuration file: {e}")
         raise SystemExit(1)
 
-    conf = {'/': {'request.dispatch': cherrypy.dispatch.MethodDispatcher()}}
+    conf = {"/": {"request.dispatch": cherrypy.dispatch.MethodDispatcher()}}
 
     try:
         time_series_db_adapter = TimeSeries(full_conf)
-        cherrypy.tree.mount(time_series_db_adapter, '/', conf)
-        cherrypy.config.update({
-            'server.socket_host': full_conf['serviceInfo']['host'],
-            'server.socket_port': full_conf['serviceInfo']['port'],
-            'error_page.default': json_error_page
+        cherrypy.tree.mount(time_series_db_adapter, "/", conf)
+        cherrypy.config.update(
+            {
+                "server.socket_host": full_conf["serviceInfo"]["host"],
+                "server.socket_port": full_conf["serviceInfo"]["port"],
+                "error_page.default": json_error_page,
+            }
+        )
 
-        })
-
-        cherrypy.engine.subscribe('start', time_series_db_adapter.catalog.start_background_loop)
-        cherrypy.engine.subscribe('stop', time_series_db_adapter.catalog.stop_background_loop)
-        cherrypy.engine.subscribe('stop', time_series_db_adapter.stopClient)
-        cherrypy.engine.subscribe('stop', time_series_db_adapter.catalog.unregister)
+        cherrypy.engine.subscribe(
+            "start", time_series_db_adapter.catalog.start_background_loop
+        )
+        cherrypy.engine.subscribe(
+            "stop", time_series_db_adapter.catalog.stop_background_loop
+        )
+        cherrypy.engine.subscribe("stop", time_series_db_adapter.stopClient)
+        cherrypy.engine.subscribe("stop", time_series_db_adapter.catalog.unregister)
 
         cherrypy.engine.start()
         cherrypy.engine.block()

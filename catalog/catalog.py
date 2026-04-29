@@ -1,36 +1,37 @@
 import json
 import logging
-import cherrypy
 import threading
 import time
-from common.common import json_error_page, load_json_body, init_mqtt_helper
+
+import cherrypy
+
+from common.common import init_mqtt_helper, json_error_page, load_json_body
 from mongo_db import MongoDBAdapter
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(name)s %(levelname)s %(message)s',
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
-
 
 logger = logging.getLogger(__name__)
 
-
-
 def check_if_is_a_service(new_service):
     """Validate that the service contains all required fields."""
-    required_fields = ['serviceID','name','type','endpoint']
+    required_fields = ["serviceID", "name", "type", "endpoint"]
     require_fields(new_service, required_fields)
 
 
 def check_if_is_a_sensor(new_sensor):
     """Validate that the sensor contains all required fields."""
-    required_fields = ['sensorID','name','type']
+    required_fields = ["sensorID", "name", "type"]
     require_fields(new_sensor, required_fields)
+
 
 def check_if_is_an_actuator(new_actuator):
     """Validate that the actuator contains all required fields."""
-    required_fields = ['ActuatorID','name','type','endpoint']
+    required_fields = ["ActuatorID", "name", "type", "endpoint"]
     require_fields(new_actuator, required_fields)
+
 
 def require_fields(payload, required_fields):
     if not all(field in payload for field in required_fields):
@@ -38,7 +39,6 @@ def require_fields(payload, required_fields):
 
 
 class Catalog:
-
     exposed = True
 
     def __init__(self, db_adaptor, cleanup_interval_s=30, service_ttl_s=60, mqtt_conf=None):
@@ -113,9 +113,8 @@ class Catalog:
                 logger.error(f"Error stopping MQTT client: {e}")
             self.mqtt_client = None
 
-    # POST METHOD - Create new resources
     def POST(self, *uri, **params):
-        """Handle POST requests to add new Services, Devices, or Users."""
+        """Handle POST requests."""
         if not uri:
             logger.warning("POST request with no endpoint specified")
             raise cherrypy.HTTPError(400, "Endpoint not specified")
@@ -168,9 +167,8 @@ class Catalog:
             self.publish_actuator_added(new_actuator)
             return json.dumps({"status": "success", "message": "Actuator Added"})
         raise cherrypy.HTTPError(409, "The Actuator ID already exists")
-    # PUT METHOD - Update existing resources
     def PUT(self, *uri, **params):
-        """Handle PUT requests to update Services, Devices, or Users."""
+        """Handle PUT requests."""
         logger.info(f"PUT method called with uri={uri}, params={params}")
         if not uri:
             logger.warning("PUT request with no endpoint specified")
@@ -241,9 +239,8 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Actuator last_update updated"})
         raise cherrypy.HTTPError(404, "The Actuator ID does not exist")
 
-    # DELETE METHOD - Remove resources
     def DELETE(self, *uri, **params):
-        """Handle DELETE requests to remove Services, Devices, Users, or Bedrooms."""
+        """Handle DELETE requests."""
         if not uri:
             raise cherrypy.HTTPError(400, "Endpoint not specified")
 
@@ -273,7 +270,6 @@ class Catalog:
         room_id = params.get('roomID')
         if not service_id:
             raise cherrypy.HTTPError(400, "Missing 'sensorID' parameter")
-        # Pass room_id to delete_sensor to scope deletion to specific room when provided
         success = self.db.delete_sensor(int(service_id), int(room_id) if room_id else None)
         if success:
             return json.dumps({"status": "success", "message": "Sensor Deleted"})
@@ -290,9 +286,8 @@ class Catalog:
             return json.dumps({"status": "success", "message": "Actuator Deleted"})
         raise cherrypy.HTTPError(404, "Actuator not found")
 
-    # GET METHOD - Retrieve resources
     def GET(self, *uri, **params):
-        """Handle GET requests to retrieve information about Services, Devices, Users, or Bedrooms."""
+        """Handle GET requests."""
         logger.info(f"GET method called with uri={uri}, params={params}")
         if not uri:
             logger.warning("GET request with no endpoint specified")
@@ -334,10 +329,6 @@ class Catalog:
         except Exception as e:
             logger.error(f"Error retrieving TimeSeriesDB endpoint: {e}")
             raise cherrypy.HTTPError(500, "Internal Server Error")
-
-    # Backward-compatible alias for older internal references.
-    def _get_endpoint_Time_series_DB(self, params=None):
-        return self._get_endpoint_time_series_db(params)
 
     def _get_endpoint_user_service(self, params=None):
         """Get the endpoint of the UserService."""
