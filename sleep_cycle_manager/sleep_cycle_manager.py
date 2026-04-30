@@ -41,15 +41,17 @@ def _parse_preference_topic(topic):
 class SleepCycleManager:
     exposed = True
 
-    SLEEP_DETECT_SEC   = 1800  # Sleep phase starts only after 30 minutes in bed
-    WAKE_DETECT_SEC    = 300   # Wake up detection after 5 minutes out of bed
-    USER_CACHE_TTL_SEC = 7200
-    EVICTION_SEC       = 300
-
     def __init__(self, conf, logger=None):
         self.logger = logger or logging.getLogger(__name__)
         self._lock  = threading.RLock()
         self.mqtt_client = None
+
+        # Load all configurable timeouts from config file
+        self.SLEEP_DETECT_SEC = int(conf.get('sleepDetectionSec', 1800))  # 30 minutes
+        self.WAKE_DETECT_SEC = int(conf.get('wakeDetectionSec', 300))  # 5 minutes
+        self.OUT_OF_BED_AWAKE_SEC = int(conf.get('outOfBedAwakeSec', 1800))  # 30 minutes
+        self.USER_CACHE_TTL_SEC = int(conf.get('userCacheTTLSec', 7200))  # 2 hours
+        self.EVICTION_SEC = int(conf.get('evictionIntervalSec', 300))  # 5 minutes
 
         self.catalog_client = CatalogClient(
             conf['catalogURL'], conf['serviceInfo'], conf.get('removeInterval', 10)
@@ -61,8 +63,6 @@ class SleepCycleManager:
         self.topic_subscribe_regex = [re.compile(mqtt_to_regex(t)) for t in self.topic_subscribe_raw]
         self.topic_publish         = mqtt.get('topic_publish')
         self.temperature_tolerance = float(conf.get('temperatureTolerance', 0.5))
-        self.SLEEP_DETECT_SEC      = int(conf.get('sleepDetectionSec', self.SLEEP_DETECT_SEC))
-        self.WAKE_DETECT_SEC       = int(conf.get('wakeDetectionSec',  self.WAKE_DETECT_SEC))
 
         self.room_to_user_map: dict[str, str] = {}
         self._presence_state:  dict[str, dict] = {}
@@ -72,8 +72,8 @@ class SleepCycleManager:
             user_service_endpoint=user_svc,
             catalog_url=conf['catalogURL'],
             room_to_user_map=self.room_to_user_map,
-            ttl_seconds=int(conf.get('userCacheTTLSec',      self.USER_CACHE_TTL_SEC)),
-            eviction_interval=int(conf.get('evictionIntervalSec', self.EVICTION_SEC)),
+            ttl_seconds=self.USER_CACHE_TTL_SEC,
+            eviction_interval=self.EVICTION_SEC,
             logger=self.logger,
         )
         self.phase_manager = PhaseManager(
@@ -316,9 +316,17 @@ class SleepCycleManager:
             if present != 1:
                 if ps["last_left_bed"] is None:
                     ps["last_left_bed"] = now
-                elif entry.is_sleeping and (now - ps["last_left_bed"]).total_seconds() >= self.WAKE_DETECT_SEC:
-                    entry.is_sleeping, ps["last_seen_bed"], ps["last_left_bed"] = False, None, None
-                    do_finish = True
+                else:
+                    time_out_of_bed = (now - ps["last_left_bed"]).total_seconds()
+                    # If out of bed for WAKE_DETECT_SEC and was sleeping, mark as woken up
+                    if entry.is_sleeping and time_out_of_bed >= self.WAKE_DETECT_SEC:
+                        entry.is_sleeping, ps["last_seen_bed"], ps["last_left_bed"] = False, None, None
+                        do_finish = True
+                    # If out of bed for OUT_OF_BED_AWAKE_SEC, mark as AWAKE (even if wasn't sleeping)
+                    elif time_out_of_bed >= self.OUT_OF_BED_AWAKE_SEC and entry.is_sleeping:
+                        self.logger.info(f"User {userid} has been out of bed for {time_out_of_bed}s (>= {self.OUT_OF_BED_AWAKE_SEC}s) - marking as AWAKE")
+                        entry.is_sleeping = False
+                        ps["last_seen_bed"] = None
             else:
                 ps["last_left_bed"] = None
                 if ps["last_seen_bed"] is None:

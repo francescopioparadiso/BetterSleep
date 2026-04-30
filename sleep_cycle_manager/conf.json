@@ -33,6 +33,7 @@
   "transitionCurveExponent": 1.0,
   "sleepDetectionSec": 1800,
   "wakeDetectionSec": 300,
+  "outOfBedAwakeSec": 1800,
   "userCacheTTLSec": 7200,
   "evictionIntervalSec": 300
 }

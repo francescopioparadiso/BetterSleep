@@ -10,6 +10,7 @@ logging.basicConfig(
     format='[%(asctime)s] %(levelname)s: %(message)s'
 )
 logger = logging.getLogger(__name__)
+
 os.remove('test_cycle.log') if os.path.exists('test_cycle.log') else None
 
 
@@ -25,6 +26,7 @@ DEFAULT_TARGET_DATE = 1
 TEMP_CHANGE_THRESHOLD = 0.3
 HR_CHANGE_THRESHOLD = 2.0
 VIB_CHANGE_THRESHOLD = 0.002
+MAX_WAKEUPS_PER_NIGHT = 2  # Maximum number of wake-ups per night (1-2)
 
 
 class MQTTSubscriber:
@@ -278,29 +280,65 @@ def build_sleep_windows(night_str, morning_str, bases=None):
     return [build_sleep_window(night_str, morning_str, base_date, label) for label, base_date in bases]
 
 
+class SleepNightManager:
+    """Manages sleep phases and wake-ups for a single night."""
+
+    def __init__(self, sleep_start_minute, sleep_end_minute, max_wakeups=MAX_WAKEUPS_PER_NIGHT):
+        self.sleep_start_minute = sleep_start_minute
+        self.sleep_end_minute = sleep_end_minute
+        self.sleep_duration_minutes = sleep_end_minute - sleep_start_minute
+        self.max_wakeups = max_wakeups
+
+        # Schedule 1-2 random wake-ups during the night
+        # Wake-ups occur between 15% and 85% of the sleep duration
+        num_wakeups = random.randint(1, min(2, max_wakeups))
+        min_wakeup_margin = int(self.sleep_duration_minutes * 0.15)
+        max_wakeup_margin = int(self.sleep_duration_minutes * 0.85)
+        available_range = max_wakeup_margin - min_wakeup_margin
+
+        self.wakeup_minutes = set()
+        for _ in range(num_wakeups):
+            # Duration of each wake-up: 2-5 minutes
+            wakeup_duration = random.randint(2, 5)
+            # Random position for wake-up within the available range
+            wakeup_start = min_wakeup_margin + random.randint(0, max(0, available_range // (num_wakeups + 1)))
+            for m in range(wakeup_start, min(wakeup_start + wakeup_duration, self.sleep_duration_minutes)):
+                self.wakeup_minutes.add(m)
+
+    def get_sleep_phase(self, minute_of_night):
+        """Get sleep phase considering scheduled wake-ups."""
+        if minute_of_night < 0:
+            return "AWAKE"
+
+        # Check if this minute is a scheduled wake-up
+        if minute_of_night in self.wakeup_minutes:
+            return "AWAKE"
+
+        # Normal sleep cycle progression
+        cycle_number = minute_of_night // SLEEP_CYCLE_LENGTH_MINUTES
+        minute_in_cycle = minute_of_night % SLEEP_CYCLE_LENGTH_MINUTES
+
+        deep_duration = max(0, 30 - (cycle_number * 10))
+        rem_duration = min(40, 15 + (cycle_number * 10))
+
+        light1_end = 20
+        deep_end = light1_end + deep_duration
+        light2_end = 90 - rem_duration
+
+        if minute_in_cycle < light1_end:
+            return "LIGHT"
+        if minute_in_cycle < deep_end:
+            return "DEEP"
+        if minute_in_cycle < light2_end:
+            return "LIGHT"
+        return "REM"
+
+
 def get_sleep_phase(minute_of_night):
-    if minute_of_night < 0:
-        return "AWAKE"
-    if random.random() < RANDOM_AWAKE_PROBABILITY:
-        return "AWAKE"
-
-    cycle_number = minute_of_night // SLEEP_CYCLE_LENGTH_MINUTES
-    minute_in_cycle = minute_of_night % SLEEP_CYCLE_LENGTH_MINUTES
-
-    deep_duration = max(0, 30 - (cycle_number * 10))
-    rem_duration = min(40, 15 + (cycle_number * 10))
-
-    light1_end = 20
-    deep_end = light1_end + deep_duration
-    light2_end = 90 - rem_duration
-
-    if minute_in_cycle < light1_end:
-        return "LIGHT"
-    if minute_in_cycle < deep_end:
-        return "DEEP"
-    if minute_in_cycle < light2_end:
-        return "LIGHT"
-    return "REM"
+    """
+    DEPRECATED: Use SleepNightManager for new code.
+    Kept for backward compatibility.
+    """
 
 
 def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
@@ -459,7 +497,7 @@ def _update_temperature(current_temp, baseline_temp, fan_on, heater_on, thermal_
     return max(thermal_config["min_temp"], min(thermal_config["max_temp"], current_temp))
 
 
-def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_states=None):
+def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_states=None, sleep_night_manager=None):
     """
     Publish one tick of sensor data and return the computed
     (presence_value, sleep_phase, heart_rate_value, vibration_value).
@@ -480,7 +518,12 @@ def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_s
     presence_sensor.publish_data(presence_value, timestamp=sim_ts)
 
     minute_of_night = int((vt - window.sleep_start).total_seconds() / 60)
-    sleep_phase = get_sleep_phase(minute_of_night) if presence_value == 1 else "AWAKE"
+
+    # Use SleepNightManager for wake-up scheduling if available
+    if sleep_night_manager and presence_value == 1:
+        sleep_phase = sleep_night_manager.get_sleep_phase(minute_of_night)
+    else:
+        sleep_phase = "AWAKE" if presence_value != 1 else "LIGHT"
 
     heart_rate_value = get_hr_for_sleep_phase(sleep_phase, step)
     vibration_value  = get_vibration_for_sleep_phase(sleep_phase, step)
@@ -555,6 +598,9 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
     real_step_seconds = duration_seconds / steps
     current_temp      = thermal_config["starting_temp"]
 
+    # Create SleepNightManager for this night (limited 1-2 wake-ups)
+    sleep_manager = SleepNightManager(0, window.sleep_minutes, max_wakeups=MAX_WAKEUPS_PER_NIGHT)
+
     try:
         for step in range(steps):
             if stop_event.is_set():
@@ -570,7 +616,7 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
             mqtt_states  = mqtt_monitor.get_states()
 
             presence_value, sleep_phase, heart_rate_value, vibration_value = _publish_sensor_readings(
-                sensors, step, window, current_temp, sim_ts, mqtt_states
+                sensors, step, window, current_temp, sim_ts, mqtt_states, sleep_night_manager=sleep_manager
             )
 
             _log_step(
