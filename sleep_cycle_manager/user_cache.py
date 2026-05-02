@@ -174,7 +174,7 @@ class UserCache:
             entry.actuators_state[self._ACTUATOR_TYPES_FETCHED_KEY] = False
             self.logger.info(f"Actuator cache invalidated for room {room_id}")
 
-    def seed_room_user_map(self):
+    def fetch_room_user_associations(self):
         """Populate the room→user map from the user-service at startup."""
         try:
             res = requests.get(f"{self._user_endpoint}/getActiveRoomsWithUser")

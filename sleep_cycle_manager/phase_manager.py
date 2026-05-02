@@ -27,12 +27,11 @@ def _get_progress(current_min, start_min, end_min):
 
 class PhaseManager:
     def __init__(self, manager_instance, transition_window_min=30,
-                 transition_curve_exponent=1.0, prefer_fan=True):
+                 transition_curve_exponent=1.0):
         self.manager = manager_instance
         self.logger  = manager_instance.logger
         self.window  = transition_window_min
         self.transition_curve_exponent = float(transition_curve_exponent)
-        self.prefer_fan = prefer_fan
         self._sensor_time_per_user = {} # userid → datetime of last sensor time update (rounded to minute)
 
     def sync_from_sensor_time(self, unix_ts, userid):
@@ -43,11 +42,11 @@ class PhaseManager:
             if self._sensor_time_per_user.get(userid) == vt:
                 return
             self._sensor_time_per_user[userid] = vt
-            self._check_user(userid)
+            self.update_user_phase_from_sensor_time(userid)
         except Exception as e:
             self.logger.error(f"PhaseManager sync error (user={userid}): {e}")
 
-    def _check_user(self, userid):
+    def update_user_phase_from_sensor_time(self, userid):
         now = self._sensor_time_per_user.get(userid)
         if now is None:
             return
@@ -87,7 +86,7 @@ class PhaseManager:
 
     def _is_user_in_bed_for_duration(self, userid, required_seconds):
         """Check if user has been in bed for the required duration."""
-        ps = self.manager._presence_state.get(userid, {})
+        ps = self.manager.presence_state.get(userid, {})
         last_seen_bed = ps.get("last_seen_bed")
 
         if last_seen_bed is None:

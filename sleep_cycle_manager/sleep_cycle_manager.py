@@ -13,18 +13,21 @@ from phase_manager import PhaseManager
 from user_cache import UserCache
 
 
-def _resolve_temperature_action(temp, desired, actuators, prefer_fan=True, tol=0.0):
+def _resolve_temperature_action(temp, desired, actuators, tol=0.0):
     too_hot  = float(temp) > float(desired) + tol
     too_cold = float(temp) < float(desired) - tol
 
     if too_hot:
-        if prefer_fan and "fan" in actuators:   return 1, "fan"
-        if "heater"   in actuators:             return 0, "heater"
-        if "fan"      in actuators:             return 1, "fan"
+       if "fan" in actuators:
+           return 1, "fan"
+       if "heater" in actuators:
+           return 0, "heater"
 
     if too_cold:
-        if "heater" in actuators:               return 1, "heater"
-        if "fan"    in actuators:               return 0, "fan"
+        if "heater" in actuators:
+            return 1, "heater"
+        if "fan" in actuators:
+            return 0, "fan"
 
     return None, None
 
@@ -48,8 +51,7 @@ class SleepCycleManager:
 
         # Load all configurable timeouts from config file
         self.SLEEP_DETECT_SEC = int(conf.get('sleepDetectionSec', 1800))  # 30 minutes
-        self.WAKE_DETECT_SEC = int(conf.get('wakeDetectionSec', 300))  # 5 minutes
-        self.OUT_OF_BED_AWAKE_SEC = int(conf.get('outOfBedAwakeSec', 1800))  # 30 minutes
+        self.WAKE_DETECT_SEC = int(conf.get('wakeDetectionSec', 1800))  # 30 minutes
         self.USER_CACHE_TTL_SEC = int(conf.get('userCacheTTLSec', 7200))  # 2 hours
         self.EVICTION_SEC = int(conf.get('evictionIntervalSec', 300))  # 5 minutes
 
@@ -65,7 +67,7 @@ class SleepCycleManager:
         self.temperature_tolerance = float(conf.get('temperatureTolerance', 0.5))
 
         self.room_to_user_map: dict[str, str] = {}
-        self._presence_state:  dict[str, dict] = {}
+        self.presence_state:  dict[str, dict] = {}
 
         user_svc = self._get_user_service_endpoint()
         self.user_cache = UserCache(
@@ -80,7 +82,6 @@ class SleepCycleManager:
             manager_instance=self,
             transition_window_min=conf.get('transitionWindowMin', 30),
             transition_curve_exponent=conf.get('transitionCurveExponent', 1.0),
-            prefer_fan=conf.get('preferFan', True),
         )
 
         self._topic_handlers = [
@@ -96,7 +97,7 @@ class SleepCycleManager:
             self.catalog_client.unregister()
             raise SystemExit(1)
 
-        self.user_cache.seed_room_user_map()
+        self.user_cache.fetch_room_user_associations()
         self.user_cache.start_cache_eviction_loop()
 
     def _get_user_service_endpoint(self):
@@ -131,9 +132,10 @@ class SleepCycleManager:
             self.logger.error(f"Bad JSON on {topic}")
             return
 
-        for idx, rx in enumerate(self.topic_subscribe_regex):
+        for idx, rx in enumerate(self.topic_subscribe_regex):# this cicle allows us to have different handlers for different topic patterns
             if not rx.match(topic):
                 continue
+
             handler = self._topic_handlers[idx] if idx < len(self._topic_handlers) else None
             if handler:
                 handler(topic, msg)
@@ -157,7 +159,7 @@ class SleepCycleManager:
         with self._lock:
             userid = self.room_to_user_map.get(room_id)
             if not userid:
-                self.user_cache.seed_room_user_map()
+                self.user_cache.fetch_room_user_associations()
                 userid = self.room_to_user_map.get(room_id)
 
             if not userid:
@@ -285,9 +287,7 @@ class SleepCycleManager:
                         send_if_changed(dev, 0)
                 return
 
-            action, device = _resolve_temperature_action(
-                temp, desired, actuators, self.phase_manager.prefer_fan, tol
-            )
+            action, device = _resolve_temperature_action(temp, desired, actuators, tol)
             if device:
                 send_if_changed(device, action)
                 opposite = "heater" if device == "fan" else "fan"
@@ -309,8 +309,8 @@ class SleepCycleManager:
             if not entry:
                 return
 
-            ps  = self._presence_state.setdefault(userid, {"last_seen_bed": None, "last_left_bed": None})
-            # Use sensor timestamp instead of real time to support simulations
+            ps  = self.presence_state.setdefault(userid, {"last_seen_bed": None, "last_left_bed": None})
+            # Use sensor timestamp instead of real time to support simulations or time zone differences.
             now = datetime.fromtimestamp(float(ts)).replace(second=0, microsecond=0)
 
             if present != 1:
@@ -322,11 +322,6 @@ class SleepCycleManager:
                     if entry.is_sleeping and time_out_of_bed >= self.WAKE_DETECT_SEC:
                         entry.is_sleeping, ps["last_seen_bed"], ps["last_left_bed"] = False, None, None
                         do_finish = True
-                    # If out of bed for OUT_OF_BED_AWAKE_SEC, mark as AWAKE (even if wasn't sleeping)
-                    elif time_out_of_bed >= self.OUT_OF_BED_AWAKE_SEC and entry.is_sleeping:
-                        self.logger.info(f"User {userid} has been out of bed for {time_out_of_bed}s (>= {self.OUT_OF_BED_AWAKE_SEC}s) - marking as AWAKE")
-                        entry.is_sleeping = False
-                        ps["last_seen_bed"] = None
             else:
                 ps["last_left_bed"] = None
                 if ps["last_seen_bed"] is None:
