@@ -18,15 +18,17 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>DEVICE_PUBLIC_HOST</key>
+	<string>192.168.1.88</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>DEVICE_PUBLIC_HOST</key>
-	<string>192.168.1.74</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>BetterSleep uses the camera to scan a QR code containing the Mac IP address during setup.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>BetterSleep connects to services running on your local network during development.</string>
 	<key>UIApplicationSceneManifest</key>

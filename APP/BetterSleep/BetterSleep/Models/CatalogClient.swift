@@ -2,6 +2,7 @@ import Foundation
 
 actor CatalogClient {
     static let shared = CatalogClient()
+    static let manualPublicHostKey = "manualPublicHost"
 
     private let defaultPublicHost = "127.0.0.1"
     private let loopbackHosts = ["0.0.0.0", "127.0.0.1", "localhost"]
@@ -11,6 +12,13 @@ actor CatalogClient {
     private var cacheTimestampUser: Date?
     private var cacheTimestampTS: Date?
     private let cacheTTL: TimeInterval = 60
+
+    private func clearCache() {
+        cachedUserServiceURL = nil
+        cachedTimeSeriesURL = nil
+        cacheTimestampUser = nil
+        cacheTimestampTS = nil
+    }
 
     private func sanitizeHost(_ value: String?) -> String? {
         guard let value else { return nil }
@@ -25,6 +33,11 @@ actor CatalogClient {
         #if targetEnvironment(simulator)
         return defaultPublicHost
         #else
+        let savedHost = UserDefaults.standard.string(forKey: Self.manualPublicHostKey)
+        if let savedHost = sanitizeHost(savedHost) {
+            return savedHost
+        }
+
         let envHost = ProcessInfo.processInfo.environment["PUBLIC_HOST"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let envHost = sanitizeHost(envHost) {
@@ -43,6 +56,20 @@ actor CatalogClient {
 
         return defaultPublicHost
         #endif
+    }
+
+    func currentPublicHostOverride() -> String? {
+        sanitizeHost(UserDefaults.standard.string(forKey: Self.manualPublicHostKey))
+    }
+
+    func setPublicHostOverride(_ host: String?) {
+        let sanitized = sanitizeHost(host)
+        if let sanitized {
+            UserDefaults.standard.set(sanitized, forKey: Self.manualPublicHostKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.manualPublicHostKey)
+        }
+        clearCache()
     }
 
     private var catalogURL: String {

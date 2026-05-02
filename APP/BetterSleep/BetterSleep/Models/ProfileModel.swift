@@ -6,6 +6,7 @@ import Combine
 class ProfileModel: ObservableObject {
     @Published var bedtime: Date = Calendar.current.date(bySettingHour: 22, minute: 0, second: 0, of: Date()) ?? Date()
     @Published var wakeTime: Date = Calendar.current.date(bySettingHour: 7, minute: 0, second: 0, of: Date()) ?? Date()
+    @Published var serverHost: String = ""
     
     @Published var isLoading = true
     @Published var isSaving = false
@@ -14,6 +15,7 @@ class ProfileModel: ObservableObject {
     private var currentUserId: Int?
     
     private var saveTask: Task<Void, Never>?
+    private var serverHostSaveTask: Task<Void, Never>?
     
     private func baseURL() async throws -> String {
         try await CatalogClient.shared.getUserServiceURL()
@@ -31,6 +33,9 @@ class ProfileModel: ObservableObject {
         }
         if let cachedEmail = UserDefaults.standard.string(forKey: "currentUserEmail") {
             self.userEmail = cachedEmail
+        }
+        if let savedHost = UserDefaults.standard.string(forKey: CatalogClient.manualPublicHostKey) {
+            self.serverHost = savedHost
         }
     }
     
@@ -105,5 +110,45 @@ class ProfileModel: ObservableObject {
             print("Error saving schedule: \(error)")
         }
         isSaving = false
+    }
+
+    func scheduleServerHostSave() {
+        serverHostSaveTask?.cancel()
+        serverHostSaveTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 500_000_000)
+                await saveServerHost()
+            } catch {
+                // Task cancelled because the user is still typing.
+            }
+        }
+    }
+
+    func saveServerHost() async {
+        let normalized = normalizeServerHost(serverHost)
+        serverHost = normalized
+        await CatalogClient.shared.setPublicHostOverride(normalized.isEmpty ? nil : normalized)
+    }
+
+    func applyScannedServerHost(_ scannedValue: String) async {
+        let normalized = normalizeServerHost(scannedValue)
+        guard !normalized.isEmpty else { return }
+        serverHost = normalized
+        await CatalogClient.shared.setPublicHostOverride(normalized)
+    }
+
+    private func normalizeServerHost(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if let components = URLComponents(string: trimmed), let host = components.host {
+            return host
+        }
+
+        if let components = URLComponents(string: "http://\(trimmed)"), let host = components.host {
+            return host
+        }
+
+        return trimmed
     }
 }

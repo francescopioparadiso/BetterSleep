@@ -4,7 +4,7 @@
     {
       "label": "🚀 Start All Servers",
       "type": "shell",
-      "command": "docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker catalog user-service time-series bed-analytics sleep-cycle-manager",
+      "command": "/Applications/Docker.app/Contents/Resources/bin/docker compose -f \"${workspaceFolder}/docker-compose.yml\" up --build postgresUser timeseries-mongo mqtt-broker catalog user-service time-series bed-analytics sleep-cycle-manager",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -13,6 +13,22 @@
         "panel": "dedicated"
       },
       "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "🖥️ Show Mac IP QR",
+      "type": "shell",
+      "command": "/usr/bin/swift",
+      "args": [
+        "${workspaceFolder}/.vscode/show_ip_qr.swift"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "group": "app",
+        "panel": "dedicated"
+      },
       "problemMatcher": []
     },
     {

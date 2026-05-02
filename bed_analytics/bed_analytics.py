@@ -293,20 +293,55 @@ class BedAnalytics:
         return classified
 
     def _get_sleep_score(self, sleep_hours, wake_ups, perceSleepPhase, avg_temp):
-        score = 100.0
+        def clamp(value, low=0.0, high=100.0):
+            return max(low, min(high, value))
+
+        target_sleep_hours = 8.0
+        awake_share = perceSleepPhase.get("AWAKE", 0.0)
+        deep_share = perceSleepPhase.get("DEEP", 0.0)
+        rem_share = perceSleepPhase.get("REM", 0.0)
+
+        # Duration should reward nights close to 8h but also penalize oversleep.
+        duration_score = 100.0 - abs(sleep_hours - target_sleep_hours) * 12.0
         if sleep_hours < self.MIN_SLEEP_HOURS:
-            score = score - (self.MIN_SLEEP_HOURS - sleep_hours) * 10 # like we sleep 10 hours but we need at least 6.5, we lose 35 points
-        if wake_ups > self.MAX_WAKE_UPS:
-            score -= (wake_ups - self.MAX_WAKE_UPS) * 5
-        if perceSleepPhase["DEEP"] < self.MIN_DEEP_stage_percent:
-            score -= (self.MIN_DEEP_stage_percent - perceSleepPhase["DEEP"]) * 0.5
-        if perceSleepPhase["REM"] < self.MIN_REM_stage_percent:
-            score -= (self.MIN_REM_stage_percent - perceSleepPhase["REM"]) * 0.3
-        if avg_temp is not None:
+            duration_score -= (self.MIN_SLEEP_HOURS - sleep_hours) * 10.0
+        duration_score = clamp(duration_score)
+
+        # Continuity should rarely be perfect once awakenings begin.
+        continuity_score = 100.0 - wake_ups * 12.0 - max(0.0, awake_share - 3.0) * 1.5
+        continuity_score = clamp(continuity_score)
+
+        # Deep and REM are each compared to a realistic target window.
+        deep_target = 22.0
+        rem_target = 22.0
+        deep_score = 100.0 - abs(deep_share - deep_target) * 3.0
+        if deep_share < self.MIN_DEEP_stage_percent:
+            deep_score -= (self.MIN_DEEP_stage_percent - deep_share) * 2.0
+        deep_score = clamp(deep_score)
+
+        rem_score = 100.0 - abs(rem_share - rem_target) * 2.5
+        if rem_share < self.MIN_REM_stage_percent:
+            rem_score -= (self.MIN_REM_stage_percent - rem_share) * 1.5
+        rem_score = clamp(rem_score)
+
+        stage_score = (deep_score * 0.55) + (rem_score * 0.45)
+
+        if avg_temp is None:
+            temperature_score = 85.0
+        else:
             temp_diff = abs(avg_temp - self.IDEAL_TEMP)
+            temperature_score = 100.0 - temp_diff * 8.0
             if temp_diff > self.TEMP_TOLERANCE:
-                score -= (temp_diff - self.TEMP_TOLERANCE) * 3
-        score = round(max(0.0, min(100.0, score)), 1)
+                temperature_score -= (temp_diff - self.TEMP_TOLERANCE) * 6.0
+            temperature_score = clamp(temperature_score)
+
+        score = (
+            duration_score * 0.35
+            + continuity_score * 0.25
+            + stage_score * 0.30
+            + temperature_score * 0.10
+        )
+        score = round(clamp(score), 1)
 
         if score >= 85:
             quality = "Excellent"

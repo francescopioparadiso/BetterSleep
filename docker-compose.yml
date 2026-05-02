@@ -2,7 +2,6 @@ services:
   # --- Database Services ---
   postgresUser:
     image: postgres:latest
-    container_name: bs_postgres
     restart: always
     environment:
       POSTGRES_USER: admin
@@ -19,7 +18,6 @@ services:
 
   timeseries-mongo:
     image: mongo:latest
-    container_name: bs_mongo
     restart: always
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
@@ -32,11 +30,10 @@ services:
 
   mqtt-broker:
     image: eclipse-mosquitto:latest
-    container_name: bs_mqtt
     restart: always
     ports:
-      - "1883:1883"
-      - "9001:9001"
+      - "1884:1883"
+      - "9002:9001"
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
@@ -49,7 +46,6 @@ services:
     build:
       context: .
       dockerfile: catalog/dockerfile
-    container_name: bs_catalog
     restart: always
     ports:
       - "8080:8080"
@@ -66,7 +62,6 @@ services:
     build:
       context: .
       dockerfile: user_service/dockerfile
-    container_name: bs_user_service
     restart: always
     ports:
       - "9095:9095"
@@ -83,7 +78,6 @@ services:
     build:
       context: .
       dockerfile: sleep_cycle_manager/dockerfile
-    container_name: bs_sleep_cycle_manager
     restart: always
     ports:
       - "9092:9092"
@@ -101,7 +95,6 @@ services:
     build:
       context: .
       dockerfile: time_series/dockerfile
-    container_name: bs_time_series
     restart: always
     ports:
       - "9093:9093"
@@ -119,7 +112,6 @@ services:
     build:
       context: .
       dockerfile: bed_analytics/dockerfile
-    container_name: bs_bed_analytics
     restart: always
     ports:
       - "9097:9097"
@@ -140,4 +132,3 @@ volumes:
   mosquitto_data:
   mosquitto_log:
   mosquitto_config:
-

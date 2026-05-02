@@ -28,7 +28,7 @@ class SimplePublisher:
 
 if __name__ == "__main__":
 
-    port = 1883
+    port = 1884
     clientID = "testPublisher"
     broker= "localhost"
     userid = "1"

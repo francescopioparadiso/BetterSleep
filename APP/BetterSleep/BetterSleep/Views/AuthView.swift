@@ -50,6 +50,8 @@ struct AuthView: View {
     @ObservedObject var authVM: AuthModel
     @State private var email = ""
     @State private var password = ""
+    @State private var serverHost = ""
+    @State private var isShowingScanner = false
     
     // MARK: - Focus Management
     @FocusState private var focusedField: AuthField?
@@ -61,6 +63,11 @@ struct AuthView: View {
     
     private var isInputValid: Bool {
         !email.isEmpty && !password.isEmpty
+    }
+
+    private var currentServerHostLabel: String {
+        let trimmed = serverHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "No IP" : trimmed
     }
     
     var body: some View {
@@ -226,6 +233,19 @@ struct AuthView: View {
                             .disabled(signInStatus != .idle || signUpStatus != .idle || !isInputValid)
                         }
                         .font(.footnote)
+
+                        HStack(spacing: 4) {
+                            Text("\(currentServerHostLabel) is the current IP address.")
+                                .fontDesign(.rounded)
+                                .foregroundColor(.secondary)
+
+                            Button("Scan a new one") {
+                                isShowingScanner = true
+                            }
+                            .fontWeight(.semibold)
+                            .fontDesign(.rounded)
+                        }
+                        .font(.footnote)
                     }
                 }
                 
@@ -235,6 +255,50 @@ struct AuthView: View {
             .animation(.snappy, value: focusedField)
         }
         .animation(toastAnimation, value: authVM.errorMessage)
+        .onAppear {
+            serverHost = resolvedInitialServerHost()
+        }
+        .sheet(isPresented: $isShowingScanner) {
+            QRScannerView { scannedCode in
+                let normalized = normalizeServerHost(scannedCode)
+                serverHost = normalized
+                persistServerHost(normalized)
+                isShowingScanner = false
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private func resolvedInitialServerHost() -> String {
+        if let saved = UserDefaults.standard.string(forKey: CatalogClient.manualPublicHostKey),
+           !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return saved
+        }
+        if let plistHost = Bundle.main.object(forInfoDictionaryKey: "DEVICE_PUBLIC_HOST") as? String {
+            return plistHost
+        }
+        return ""
+    }
+
+    private func normalizeServerHost(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if let components = URLComponents(string: trimmed), let host = components.host {
+            return host
+        }
+        if let components = URLComponents(string: "http://\(trimmed)"), let host = components.host {
+            return host
+        }
+        return trimmed
+    }
+
+    private func persistServerHost(_ rawValue: String) {
+        let normalized = normalizeServerHost(rawValue)
+        serverHost = normalized
+        Task {
+            await CatalogClient.shared.setPublicHostOverride(normalized.isEmpty ? nil : normalized)
+        }
     }
 }
 
