@@ -40,21 +40,36 @@ def _compute_stage_stats(classified):
     return counts, stage_percent
 
 
-def _count_wakeups(classified):
+def _count_wakeups(classified, min_readings_threshold=3):
+    """
+    Counts wake-ups only if the 'AWAKE' state persists for a minimum
+    number of consecutive readings (e.g., 3 minutes).
+    """
     first_sleep_idx = next(
         (i for i, r in enumerate(classified) if r["stage"] != "AWAKE"), None
     )
+
     wake_ups = 0
     if first_sleep_idx is not None:
+        awake_streak = 0
         for i in range(first_sleep_idx + 1, len(classified)):
-            if classified[i]["stage"] == "AWAKE" and classified[i - 1]["stage"] != "AWAKE":
-                wake_ups += 1
+            if classified[i]["stage"] == "AWAKE":
+                awake_streak += 1
+            else:
+                # Only count as a wake-up if the streak was long enough
+                if awake_streak >= min_readings_threshold:
+                    wake_ups += 1
+                awake_streak = 0
+
+        # Check if they woke up at the very end of the session
+        if awake_streak >= min_readings_threshold:
+            wake_ups += 1
+
     counts, _ = _compute_stage_stats(classified)
     sleep_minutes = counts["LIGHT"] + counts["DEEP"] + counts["REM"]
-    sleep_hours   = round(sleep_minutes / 60, 1)
+    sleep_hours = round(sleep_minutes / 60, 1)
+
     return wake_ups, sleep_hours
-
-
 def _compute_hrv(hr_list):
     if len(hr_list) < 2:
         return None

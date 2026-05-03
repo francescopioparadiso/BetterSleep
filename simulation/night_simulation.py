@@ -26,7 +26,7 @@ DEFAULT_TARGET_DATE = 1
 TEMP_CHANGE_THRESHOLD = 0.3
 HR_CHANGE_THRESHOLD = 2.0
 VIB_CHANGE_THRESHOLD = 0.002
-MAX_WAKEUPS_PER_NIGHT = 2  # Maximum number of wake-ups per night (1-2)
+MAX_WAKEUPS_PER_NIGHT = 4  # Maximum number of wake-ups per night (1-4)
 
 
 class MQTTSubscriber:
@@ -358,17 +358,27 @@ def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
 
 
 def get_vibration_for_sleep_phase(sleep_phase, step):
-    if sleep_phase == "AWAKE":
-        base = 0.08 + 0.05 * abs(math.sin(step * 0.5))
-    elif sleep_phase == "LIGHT":
-        base = 0.004 + 0.003 * abs(math.sin(step * 0.4))
-    elif sleep_phase == "DEEP":
-        base = 0.001 + 0.001 * abs(math.sin(step * 0.1))
-    elif sleep_phase == "REM":
-        base = 0.003 + 0.003 * abs(math.sin(step * 0.9))
+    """
+    Simple probability-based vibration model.
+    Randomly decides if person is moving or not, with different probabilities by phase.
+    """
+    # Probability of moving in each phase
+    movement_probability = {
+        "AWAKE": 0.6,    # 60% chance of movement when awake
+        "LIGHT": 0.25,   # 25% chance of movement in light sleep
+        "DEEP": 0.05,    # 5% chance of movement in deep sleep
+        "REM": 0.15      # 15% chance of movement in REM sleep
+    }
+
+    prob = movement_probability.get(sleep_phase, 0.0)
+
+    # Randomly decide if moving now
+    if random.random() < prob:
+        # Person is moving: return high vibration with some randomness
+        return round(random.uniform(0.05, 0.12), 4)
     else:
-        base = 0.0
-    return round(base, 4)
+        # Person is still: return low vibration
+        return round(random.uniform(0.0, 0.003), 4)
 
 
 def get_user_sleep_times(catalog_url, userid):
