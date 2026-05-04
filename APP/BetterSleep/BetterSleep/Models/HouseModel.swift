@@ -33,6 +33,7 @@ class HouseModel: ObservableObject {
     // MARK: - House Actions
     func fetchHouses() async {
         isLoading = true
+        defer { isLoading = false }
         guard let userId = currentUserId else { return }
         do {
             let allMembers: [HouseMember] = try await fetchFromAPI(endpoint: "getAllHouseMembers", responseKey: "house_members")
@@ -43,7 +44,6 @@ class HouseModel: ObservableObject {
         } catch {
             print("Error fetching houses: \(error)")
         }
-        isLoading = false
     }
     
     func addHouse(name: String) async {

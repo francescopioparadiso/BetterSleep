@@ -167,6 +167,7 @@ struct HouseView: View {
     
     @State private var newHouseName = ""
     @State private var activeRoomsByHouse: [Int: Bool] = [:]
+    @State private var hasLoaded = false
     
     private var currentUserId: Int? {
         if let idString = UserDefaults.standard.string(forKey: "currentUserId"), let id = Int(idString) {
@@ -295,9 +296,9 @@ struct HouseView: View {
             }
             .navigationTitle("Houses")
             .task {
-                if shouldAutoLoad {
-                    await refreshData()
-                }
+                guard shouldAutoLoad, !hasLoaded else { return }
+                hasLoaded = true
+                await refreshData()
             }
             .onAppear {
                 Task {
