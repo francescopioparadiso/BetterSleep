@@ -2,6 +2,10 @@ import argparse
 import logging
 import math
 import os
+import random
+import time
+import threading
+import json
 from datetime import date, datetime, timedelta
 
 logging.basicConfig(
@@ -26,7 +30,8 @@ DEFAULT_TARGET_DATE = 1
 TEMP_CHANGE_THRESHOLD = 0.3
 HR_CHANGE_THRESHOLD = 2.0
 VIB_CHANGE_THRESHOLD = 0.002
-MAX_WAKEUPS_PER_NIGHT = 4  # Maximum number of wake-ups per night (1-4)
+# Default maximum number of wake-ups per night (can be overridden from conf.json)
+DEFAULT_MAX_WAKEUPS_PER_NIGHT = 4
 
 
 class MQTTSubscriber:
@@ -281,33 +286,105 @@ def build_sleep_windows(night_str, morning_str, bases=None):
 
 
 class SleepNightManager:
-    """Manages sleep phases and wake-ups for a single night."""
+    """Manages sleep phases and wake-ups for a single night.
 
-    def __init__(self, sleep_start_minute, sleep_end_minute, max_wakeups=MAX_WAKEUPS_PER_NIGHT):
+    Improvements over previous logic:
+    - number of wake-up EVENTS honors the configured max (not just minutes)
+    - scheduled wake-ups are placed without overlapping
+    - minutes outside the sleep duration are considered AWAKE
+    """
+
+    def __init__(self, sleep_start_minute, sleep_end_minute, max_wakeups=DEFAULT_MAX_WAKEUPS_PER_NIGHT, sleep_quality="fair"):
         self.sleep_start_minute = sleep_start_minute
         self.sleep_end_minute = sleep_end_minute
-        self.sleep_duration_minutes = sleep_end_minute - sleep_start_minute
-        self.max_wakeups = max_wakeups
+        self.sleep_duration_minutes = max(0, sleep_end_minute - sleep_start_minute)
+        self.max_wakeups = max(0, int(max_wakeups or 0))
 
-        # Schedule 1-2 random wake-ups during the night
-        # Wake-ups occur between 15% and 85% of the sleep duration
-        num_wakeups = random.randint(1, min(2, max_wakeups))
+        # Determine number of wake-up events (0..max_wakeups) taking into account sleep quality
+        quality = (sleep_quality or "fair").lower()
+        if self.max_wakeups <= 0:
+            num_wakeups = 0
+        else:
+            if quality == "good":
+                # good nights have 0..min(2,max_wakeups) - at most 2 wake-up events
+                upper = min(2, self.max_wakeups)
+                num_wakeups = random.randint(0, upper)
+            elif quality == "poor":
+                # poor nights: 2 to max_wakeups (at least 2 events)
+                lower = min(2, self.max_wakeups)
+                num_wakeups = random.randint(lower, self.max_wakeups)
+            else:
+                # fair / default: 1 to min(3, max_wakeups)
+                upper = min(3, self.max_wakeups)
+                num_wakeups = random.randint(1, upper)
+
         min_wakeup_margin = int(self.sleep_duration_minutes * 0.15)
         max_wakeup_margin = int(self.sleep_duration_minutes * 0.85)
-        available_range = max_wakeup_margin - min_wakeup_margin
 
         self.wakeup_minutes = set()
-        for _ in range(num_wakeups):
-            # Duration of each wake-up: 2-5 minutes
-            wakeup_duration = random.randint(2, 5)
-            # Random position for wake-up within the available range
-            wakeup_start = min_wakeup_margin + random.randint(0, max(0, available_range // (num_wakeups + 1)))
-            for m in range(wakeup_start, min(wakeup_start + wakeup_duration, self.sleep_duration_minutes)):
-                self.wakeup_minutes.add(m)
+        # Minutes where the person leaves the bed (not present) for extended periods
+        self.left_bed_minutes = set()
+        # Place wake-ups ensuring no overlap between events
+        attempts = 0
+        placed = 0
+        max_attempts = max(50, num_wakeups * 10)
+        while placed < num_wakeups and attempts < max_attempts:
+            attempts += 1
+            # Wake-up duration depends on sleep quality: good -> short, fair -> moderate, poor -> longer
+            if quality == "good":
+                wakeup_duration = random.randint(1, 3)
+            elif quality == "poor":
+                wakeup_duration = random.randint(4, 12)
+            else:
+                wakeup_duration = random.randint(2, 5)
+            if max_wakeup_margin - min_wakeup_margin <= 0:
+                start = min_wakeup_margin
+            else:
+                start = random.randint(min_wakeup_margin, max_wakeup_margin - 1)
+
+            # compute candidate minute set and ensure within sleep duration
+            candidate = set(range(start, min(start + wakeup_duration, self.sleep_duration_minutes)))
+            if not candidate:
+                continue
+            # ensure no overlap with previously placed wake-ups
+            if candidate & self.wakeup_minutes:
+                continue
+            # accept this wake-up
+            self.wakeup_minutes.update(candidate)
+            placed += 1
+
+        # Optionally schedule 'left bed' events for poor-quality nights
+        # These represent the person getting out of bed for some minutes (breaks sleep and reduces total sleep hours)
+        if quality == "poor":
+            # higher chance to leave bed once
+            if self.sleep_duration_minutes > 30 and random.random() < 0.8:
+                # choose a start late in the night (e.g. 65%-95% through sleep)
+                start_min = min_wakeup_margin + int((max_wakeup_margin - min_wakeup_margin) * 0.65)
+                end_min = min_wakeup_margin + int((max_wakeup_margin - min_wakeup_margin) * 0.95)
+                if end_min <= start_min:
+                    start = min_wakeup_margin
+                else:
+                    start = random.randint(start_min, max(start_min, end_min - 1))
+                # duration 8-20 minutes (person leaves bed early morning, then can't fall back asleep easily)
+                duration = random.randint(8, 20)
+                candidate = set(range(start, min(start + duration, self.sleep_duration_minutes)))
+                # ensure it doesn't fully overlap with existing left_bed minutes (it shouldn't at this point)
+                if candidate:
+                    self.left_bed_minutes.update(candidate)
+        elif quality == "good":
+            # good nights - small chance to briefly step out (e.g., bathroom) but short
+            if self.sleep_duration_minutes > 30 and random.random() < 0.1:
+                start = random.randint(min_wakeup_margin, max_wakeup_margin - 1)
+                duration = random.randint(1, 5)
+                self.left_bed_minutes.update(set(range(start, min(start + duration, self.sleep_duration_minutes))))
 
     def get_sleep_phase(self, minute_of_night):
         """Get sleep phase considering scheduled wake-ups."""
         if minute_of_night < 0:
+            return "AWAKE"
+
+        # Minutes outside the actual sleep duration are considered awake
+        if minute_of_night >= self.sleep_duration_minutes:
             return "AWAKE"
 
         # Check if this minute is a scheduled wake-up
@@ -341,9 +418,15 @@ def get_sleep_phase(minute_of_night):
     """
 
 
-def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
+def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0, quality="fair"):
+    """Return heart rate for given sleep phase.
+
+    The 'quality' parameter adjusts the amount of high-frequency noise: good->less noise, poor->more noise.
+    """
     low_freq = math.sin(step * 0.3) * 1.5
-    high_freq_noise = random.uniform(-4.0, 4.0)
+    # quality affects high frequency noise magnitude
+    hf_scale = 0.6 if quality == "good" else (1.6 if quality == "poor" else 1.0)
+    high_freq_noise = random.uniform(-4.0 * hf_scale, 4.0 * hf_scale)
     noise = low_freq + high_freq_noise
 
     if sleep_phase == "AWAKE":
@@ -357,7 +440,7 @@ def get_hr_for_sleep_phase(sleep_phase, step, resting_hr=58.0):
     return resting_hr
 
 
-def get_vibration_for_sleep_phase(sleep_phase, step):
+def get_vibration_for_sleep_phase(sleep_phase, step, quality="fair"):
     """
     Simple probability-based vibration model.
     Randomly decides if person is moving or not, with different probabilities by phase.
@@ -370,15 +453,18 @@ def get_vibration_for_sleep_phase(sleep_phase, step):
         "REM": 0.15      # 15% chance of movement in REM sleep
     }
 
-    prob = movement_probability.get(sleep_phase, 0.0)
+    base_prob = movement_probability.get(sleep_phase, 0.0)
+    # Adjust probability by quality: good->less movement, poor->more movement
+    quality_factor = 0.6 if quality == "good" else (1.6 if quality == "poor" else 1.0)
+    prob = min(1.0, base_prob * quality_factor)
 
     # Randomly decide if moving now
     if random.random() < prob:
         # Person is moving: return high vibration with some randomness
-        return round(random.uniform(0.05, 0.12), 4)
+        return round(random.uniform(0.05 * quality_factor, 0.12 * quality_factor), 4)
     else:
         # Person is still: return low vibration
-        return round(random.uniform(0.0, 0.003), 4)
+        return round(random.uniform(0.0, 0.003 * quality_factor), 4)
 
 
 def get_user_sleep_times(catalog_url, userid):
@@ -507,7 +593,7 @@ def _update_temperature(current_temp, baseline_temp, fan_on, heater_on, thermal_
     return max(thermal_config["min_temp"], min(thermal_config["max_temp"], current_temp))
 
 
-def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_states=None, sleep_night_manager=None):
+def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_states=None, sleep_night_manager=None, sleep_quality="fair", resting_hr=None):
     """
     Publish one tick of sensor data and return the computed
     (presence_value, sleep_phase, heart_rate_value, vibration_value).
@@ -531,12 +617,19 @@ def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_s
 
     # Use SleepNightManager for wake-up scheduling if available
     if sleep_night_manager and presence_value == 1:
-        sleep_phase = sleep_night_manager.get_sleep_phase(minute_of_night)
+        # if the person left the bed at this minute, treat as AWAKE and not present
+        if hasattr(sleep_night_manager, 'left_bed_minutes') and minute_of_night in sleep_night_manager.left_bed_minutes:
+            presence_value = 0
+            sleep_phase = "AWAKE"
+        else:
+            sleep_phase = sleep_night_manager.get_sleep_phase(minute_of_night)
     else:
         sleep_phase = "AWAKE" if presence_value != 1 else "LIGHT"
 
-    heart_rate_value = get_hr_for_sleep_phase(sleep_phase, step)
-    vibration_value  = get_vibration_for_sleep_phase(sleep_phase, step)
+    # If resting_hr provided prefer it; otherwise use default
+    resting = resting_hr if resting_hr is not None else 58.0
+    heart_rate_value = get_hr_for_sleep_phase(sleep_phase, step, resting_hr=resting, quality=sleep_quality)
+    vibration_value  = get_vibration_for_sleep_phase(sleep_phase, step, quality=sleep_quality)
 
     heart_rate_sensor.publish_data(round(heart_rate_value, 2), unit="bpm", timestamp=sim_ts)
     vibration_sensor.publish_data(round(vibration_value, 4),  unit="g",   timestamp=sim_ts)
@@ -545,8 +638,11 @@ def _publish_sensor_readings(sensors, step, window, current_temp, sim_ts, mqtt_s
 
 
 def _log_step(filepath, user, window, step, current_temp, presence_value,
-              heart_rate_value, vibration_value, sleep_phase, mqtt_states):
-    """Format, print and append one simulation-step line to the stats file."""
+              heart_rate_value, vibration_value, sleep_phase, mqtt_states, file_handle=None):
+    """Format, print and append one simulation-step line to the stats file.
+
+    If file_handle is provided, it will be used (avoids opening file on every step).
+    """
     vt_str      = (window.sim_start + timedelta(minutes=step)).strftime("%Y-%m-%d %H:%M")
     heater_str  = "ON" if mqtt_states.get("heater") == 1 else "OFF"
     fan_str     = "ON" if mqtt_states.get("fan")    == 1 else "OFF"
@@ -560,8 +656,16 @@ def _log_step(filepath, user, window, step, current_temp, presence_value,
         f"Phase={phase} | MQTT[L={light_val}, F={fan_str}, H={heater_str}]\n"
     )
     print(line, end="")
-    with open(filepath, "a") as f:
-        f.write(line)
+    if file_handle:
+        try:
+            file_handle.write(line)
+        except Exception:
+            # fallback to opening file if file handle fails
+            with open(filepath, "a") as f:
+                f.write(line)
+    else:
+        with open(filepath, "a") as f:
+            f.write(line)
 
 
 def _teardown_components(components, mqtt_monitor, userid):
@@ -586,6 +690,8 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
     )
 
     _init_output_file(filepath, user, window)
+    # Open output file once and reuse the handle to reduce IO overhead
+    out_fh = open(filepath, "a")
 
     _sim_step = [0]
 
@@ -608,8 +714,28 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
     real_step_seconds = duration_seconds / steps
     current_temp      = thermal_config["starting_temp"]
 
-    # Create SleepNightManager for this night (limited 1-2 wake-ups)
-    sleep_manager = SleepNightManager(0, window.sleep_minutes, max_wakeups=MAX_WAKEUPS_PER_NIGHT)
+    # Determine configured sleep quality and optional resting HR
+    sim_cfg = config.get("simulation", {})
+    sleep_quality = sim_cfg.get("sleep_quality", "fair")
+    resting_hr_cfg = sim_cfg.get("resting_hr")
+
+    # Create SleepNightManager for this night using configured max wakeups and sleep_quality
+    configured_max_wakeups = None
+    try:
+        configured_max_wakeups = int(sim_cfg.get("max_wakeups")) if sim_cfg.get("max_wakeups") is not None else None
+    except Exception:
+        configured_max_wakeups = None
+    sleep_manager = SleepNightManager(0, window.sleep_minutes, max_wakeups=(configured_max_wakeups if configured_max_wakeups is not None else DEFAULT_MAX_WAKEUPS_PER_NIGHT), sleep_quality=sleep_quality)
+    # Write debug info about scheduled wake-ups to the output file for verification
+    try:
+        if out_fh and hasattr(sleep_manager, 'wakeup_minutes'):
+            events = sorted(list(sleep_manager.wakeup_minutes))
+            out_fh.write(f"# Scheduled wakeup minutes (relative to sleep start): {events}\n")
+        if out_fh and hasattr(sleep_manager, 'left_bed_minutes'):
+            left_events = sorted(list(sleep_manager.left_bed_minutes))
+            out_fh.write(f"# Scheduled left-bed minutes (relative to sleep start): {left_events}\n")
+    except Exception:
+        pass
 
     try:
         for step in range(steps):
@@ -626,18 +752,22 @@ def simulate_single_user_night(user, config, window, duration_seconds, stop_even
             mqtt_states  = mqtt_monitor.get_states()
 
             presence_value, sleep_phase, heart_rate_value, vibration_value = _publish_sensor_readings(
-                sensors, step, window, current_temp, sim_ts, mqtt_states, sleep_night_manager=sleep_manager
+                sensors, step, window, current_temp, sim_ts, mqtt_states, sleep_night_manager=sleep_manager, sleep_quality=sleep_quality, resting_hr=resting_hr_cfg
             )
 
             _log_step(
                 filepath, user, window, step,
                 current_temp, presence_value, heart_rate_value, vibration_value,
-                sleep_phase, mqtt_states
+                sleep_phase, mqtt_states, file_handle=out_fh
             )
 
             time.sleep(real_step_seconds)
 
     finally:
+        try:
+            out_fh.close()
+        except Exception:
+            pass
         all_components = (*sensors, fan_actuator, heater_actuator, light_actuator)
         _teardown_components(all_components, mqtt_monitor, user.userid)
 
@@ -676,8 +806,22 @@ def delete_previous_simulation_data(config, userid, room_id, date_str, start_tim
         print(f"[!] ERROR: Something crashed while calling the delete endpoint: {e}\n")
 
 
-def run_simulation(duration_seconds=60, target_date=None, selected_user_ids=[1]):
+def run_simulation(duration_seconds=60, target_date=None, selected_user_ids=None, sleep_quality=None):
+    if selected_user_ids is None:
+        selected_user_ids = [1]
     config        = load_test_config()
+    # allow overriding sleep quality from caller/CLI
+    if sleep_quality:
+        try:
+            config.setdefault("simulation", {})["sleep_quality"] = sleep_quality
+        except Exception:
+            pass
+    # If duration_seconds is not explicitly provided, use value from conf.json
+    if duration_seconds is None:
+        try:
+            duration_seconds = int(config.get("simulation", {}).get("duration_seconds", DEFAULT_DURATION_SECONDS))
+        except Exception:
+            duration_seconds = DEFAULT_DURATION_SECONDS
     user_contexts = build_user_contexts(config, selected_user_ids=selected_user_ids)
     normalized_target_date = normalize_target_date(target_date)
     bases         = default_night_bases(normalized_target_date)
@@ -740,7 +884,7 @@ def main():
         "--duration-seconds",
         dest="duration_seconds",
         type=int,
-        default=DEFAULT_DURATION_SECONDS,
+        default=None,
         help="Real-time duration of the simulation run"
     )
     parser.add_argument(
@@ -749,6 +893,12 @@ def main():
         default="",
         help="Comma-separated list of user ids to simulate"
     )
+    parser.add_argument(
+        "--sleep-quality",
+        dest="sleep_quality",
+        default=None,
+        help="Override sleep quality for the simulation: good, fair, poor"
+    )
     args = parser.parse_args()
 
     selected_user_ids = [user_id.strip() for user_id in args.user_ids.split(",") if user_id.strip()]
@@ -756,6 +906,7 @@ def main():
         duration_seconds=args.duration_seconds,
         target_date=args.target_date,
         selected_user_ids=selected_user_ids,
+        sleep_quality=args.sleep_quality
     )
 
 

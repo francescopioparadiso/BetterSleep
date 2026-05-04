@@ -89,6 +89,20 @@ def prompt_date():
     return date_value or default_date
 
 
+def prompt_sleep_quality(default_quality="fair"):
+    """Prompt the user to choose sleep quality: good, fair, poor."""
+    default_quality = (default_quality or "fair").lower()
+    choices = ["good", "fair", "poor"]
+    prompt = f"Choose sleep quality ({'/'.join(choices)}) [{default_quality}]: "
+    while True:
+        val = input(prompt).strip().lower()
+        if not val:
+            return default_quality
+        if val in choices:
+            return val
+        print(f"Invalid choice '{val}'. Valid options: {', '.join(choices)}")
+
+
 def main():
     try:
         config = load_test_config()
@@ -99,10 +113,14 @@ def main():
         raise SystemExit(1)
 
     target_date = prompt_date()
+    # ask for sleep quality (good/fair/poor) - default from config
+    default_quality = config.get("simulation", {}).get("sleep_quality", "fair")
+    sleep_quality = prompt_sleep_quality(default_quality)
     run_simulation(
         duration_seconds=DEFAULT_DURATION_SECONDS,
         target_date=target_date,
         selected_user_ids=selected_user_ids,
+        sleep_quality=sleep_quality,
     )
 
 

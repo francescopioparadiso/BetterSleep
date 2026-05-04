@@ -1,7 +1,10 @@
 {
   "simulation": {
     "duration_seconds": 60,
-    "simulation_start": "2026-03-10 21:00"
+    "simulation_start": "2026-03-10 21:00",
+    "max_wakeups": 4,
+    "sleep_quality": "fair",
+    "resting_hr": 58
   },
   "users": [
     {
